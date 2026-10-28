@@ -1,10 +1,10 @@
 # guardscope design
 
-Status: authoritative design document. Derived from the settled decisions of the plugin-architecture, interface-contracts, one-control, framework-pivot, and generic-harness councils. Where an earlier document and this one differ, this one wins.
+Status: authoritative design document.
 
 ## 1. Overview
 
-guardscope is a measurement framework for LLM-agent runtime controls. A runtime control (a gateway, an in-process policy engine, a kernel monitor) can only evaluate actions that cross its enforcement point; a coverage claim is therefore only as good as the evidence that the action actually crossed the point. Guardscope makes this measurable: it runs a declared workload through a real agent harness via deterministic replay injection (no LLM in the loop), ingests decision records emitted by every enforcement point in the topology, reconciles those records against kernel-level ground truth observed by a Tracee eBPF sensor, and emits a path x design coverage grid in which every cell carries an evidence class. The evidence rules are fixed: decision records are claims, not facts; coverage is computed by reconciling claims against kernel observation; outcomes (`checked` / `bypassed` / `prevented`) are derived only by the reconciler and never asserted by any measured component. It is a reproducibility instrument, not a paper contribution: it exists so that a third party can re-run a pinned measurement and so that coverage can be re-measured as tool versions change.
+guardscope is a measurement framework for LLM-agent runtime controls. A runtime control (a gateway, an in-process policy engine, a kernel monitor) can only evaluate actions that cross its enforcement point; a coverage claim is therefore only as good as the evidence that the action actually crossed the point. Guardscope makes this measurable: it runs a declared workload through a real agent harness via deterministic replay injection (no LLM in the loop), ingests decision records emitted by every enforcement point in the topology, reconciles those records against kernel-level ground truth observed by a Tracee eBPF sensor, and emits a path x design coverage grid in which every cell carries an evidence class. The evidence rules are fixed: decision records are claims, not facts; coverage is computed by reconciling claims against kernel observation; outcomes (`checked` / `bypassed` / `prevented`) are derived only by the reconciler and never asserted by any measured component. It is a reproducibility instrument: it exists so that a third party can re-run a pinned measurement and so that coverage can be re-measured as tool versions change.
 
 It is for three kinds of users:
 
@@ -73,7 +73,7 @@ The reconciler enforces the limit: ingested records can support `bypassed` (kern
 | `collect()` | Dispatch-record flush |
 | `teardown()` | State isolation between grid cells; permission state must not leak |
 
-Harness-native enforcement (T4/T6) emits decision records in the main schema with the harness as the `enforcement_point`. Dispatch records use the sibling schema `dispatch-record/1` sharing the identity fields; this shared identity closes the T5 attribution gap (the two record streams previously had no shared id). **The exerciser formally implements this contract in reduced form** (`describe` / `inject` / dispatch records), so exerciser-derived cells are treated the same as harness cells and the dispatch tooling is shared. The exerciser is never called a harness: it is a path-originator fixture, an instrument on the workload side, never an evaluated component and never a row or column of the grid. It only adds provenance labels to cells.
+Harness-native enforcement (T4/T6) emits decision records in the main schema with the harness as the `enforcement_point`. Dispatch records use the sibling schema `dispatch-record/1` sharing the identity fields; this shared identity closes the attribution gap between the two record streams (which otherwise share no id). **The exerciser formally implements this contract in reduced form** (`describe` / `inject` / dispatch records), so exerciser-derived cells are treated the same as harness cells and the dispatch tooling is shared. The exerciser is never called a harness: it is a path-originator fixture, an instrument on the workload side, never an evaluated component and never a row or column of the grid. It only adds provenance labels to cells.
 
 Determinism is a set of contract clauses (replay only, no LLM, pinned loopback targets, fixed argv/paths, declared timeouts), verified by pinned hashes in the run manifest, not a separate receipt artifact.
 
@@ -227,7 +227,7 @@ Reference designs and fixtures:
 | T2 | T1 + forced network egress (default-deny at netns output) | Egress jail is environment: silent, non-emitting, hashed into the fingerprint |
 | T3 | Gateway as sole enforcement point, all tools behind it; stdio transport eliminated | Kernel sees one pooled connect per tool call; shared pooled envelope in reconciliation |
 | T4 | Harness-native permission chain | `control: null`; permission chain is harness-intrinsic, configured by `enforcement_config` |
-| T5 | Harness permission chain + gateway (two points) | Gateway is selected; chain is harness-intrinsic; the attribution gap between the two record streams is the measurement finding |
+| T5 | Harness permission chain + gateway (two points) | Gateway is selected; chain is harness-intrinsic; the attribution gap between the two record streams is what this design measures |
 | T6 | In-process policy engine (declarative rules at the harness tool-call hook) | Harness-embedded control registers with an `embedded` slot |
 | T7 | Kernel-level enforcement | Observation row: kernel observability of all 15 paths |
 
@@ -243,7 +243,7 @@ Reference designs and fixtures:
 
 Design-set review happens at each major release, with response deadlines, published criteria, and decision-log rationale. Old grids remain citable under the design set they were measured with. Composition fixtures (two user-selected controls, the defense-in-depth case) get a fast-track RFC path with re-badging after promotion, so repeated compositions can become numbered designs at low cost.
 
-Accepted limitations: merged columns are independent runs, not one run; they cannot reproduce interaction effects (one control rewriting an action so another control never sees it; the T5 finding depends on both controls running at the same time). And: two selected controls cannot be measured together in one on-matrix run until a composition design is promoted. These are documented costs, not oversights.
+Accepted limitations: merged columns are independent runs, not one run; they cannot reproduce interaction effects (one control rewriting an action so another control never sees it; such effects require both controls running in the same run). And: two selected controls cannot be measured together in one on-matrix run until a composition design is promoted. These are documented costs, not oversights.
 
 ## 8. Workloads
 
@@ -358,45 +358,26 @@ Three strict layers:
 
 **Manifest verification (declaring is not the same as conforming).** At certification, a test replay checks that every kernel-observed decision maps to a declared position; a declared-but-silent position fails the run's readiness check; an undeclared component that acts anyway shows up as a kernel-truth anomaly. Plugin manifests are versioned and signed.
 
-## 12. Migration from the existing testbed
-
-Source: the internal research testbed (kept in the original research repository; imported with its recorded run data removed from this repository). The testbed is working; the extraction preserves its behavior while moving each component to its place in the framework.
-
-| Existing component | Framework home | Notes |
-|---|---|---|
-| `trace/` (baseline.yaml + sha256, schema, compile) | Workloads: the baseline-15 pack; the shared trace package (one definition for replay injection and the exerciser) | The 15-action canonical trace becomes the default workload pack |
-| `exerciser/` (manifest, originators, driver) | The exerciser plugin (reference path-originator fixture) + path manifest in core science | Keep the hash-pinned manifest as a core artifact |
-| `runner/coverage.py` (C1-C4, coverage computation) | Core reconcile library | The AuditEntry loader becomes the v0 reader-side mapping |
-| `runner/reconcile.py`, `outcomes.py`, `runrecord.py` | Core reconcile library (C1-C6 library, run-record assembly) | Design-aware rules (e.g. `PREVENTED_CLASSES`, the T3 shared pooled envelope) become fixture-declared reconciliation parameters |
-| `runner/run.py` | Runner, re-driven by the experiment file | `--design` flags and manually started Compose stacks are replaced by load-time validated `designs` |
-| `runner/profiles/` (pi, openclaw, agentgateway, claude-sandbox, docker-mcp-gw, nemo) | Plugin-owned reconciliation profiles (shipped with each control/shim) | Migrate core-resident profiles out over two release lines |
-| `sensor/` (Tracee container, args, smoke) + `sensor/mapping/` (rules.yaml, map_events.py) | Instrument layer | Mapping version (`MAPPING_VERSION=6`) becomes part of the instrument interface version |
-| `harnesses/pi`, `harnesses/openclaw` | Reference harness adapter plugins | Determinism clauses move from adapter code into the contract |
-| `gateway/` (AGT MCP Security Gateway) + `targets/` + `compose/` (t0-t6.yaml) | Fixtures: the reference rigs realizing T0-T6 (no T7 compose rig exists; the ActPlane kernel-verifier incident is retained as the T7 record); the gateway becomes the first reference control plugin | The T5 attribution-gap finding drives the correlation carriers design |
-REMOVED-ROW
-| `env/versions.env` | Run manifest + registry pins | Version pins become recorded facts, not environment files |
-| The paper's 12 verified configurations | The reference snapshot: a published, dated, hash-pinned set of run manifests under guardscope | Grids remain citable under the design set used; the snapshot is evidence, not a demonstration |
-
-**Renames.** The testbed and the paper use "mediation" (mediation-coverage, `MEDIATED_CLASSES`, `/mediation-replay`); the framework uses "inspection" everywhere (inspection coverage, inspection boundary, inspected/bypassed, `io.inspection/action_id`). The paper keeps its own submitted terminology. Renaming mediation -> inspection in code identifiers is an M1 refactor decision at extraction time: mechanical, done once, with the v0 `AuditEntry` reader mapping preserving data compatibility. This document records the decision; it does not perform the rename.
-
-## 13. Roadmap
+## 12. Roadmap
 
 | Milestone | Contents |
 |---|---|
-| M1 | Extraction and the code-identifier rename (mediation -> inspection, mechanical, once); (the probe machinery is not imported); the two contracts (`control`, `harness`); both record schemas (`decision-record/1`, `dispatch-record/1`); the experiment-file runner with load-time validation; the C1-C4 reconcile library; the exerciser and the AGT gateway as the first two control-side plugins (the pi and OpenClaw adapters are equally in scope as the reference harness plugins); the v0 AuditEntry reader mapping |
+| M1 | The two contracts (`control`, `harness`); both record schemas (`decision-record/1`, `dispatch-record/1`); the experiment-file runner with load-time validation; the C1-C4 reconcile library; the exerciser and the AGT gateway as the first two control-side plugins (the pi and OpenClaw adapters are equally in scope as the reference harness plugins); the v0 AuditEntry reader mapping |
 | M2 | Fidelity check; C5/C6 (id consistency, denial effectiveness via exerciser-derived kernel signatures); `report --merge` with the comparability key; the registry (two tiers, expiring verdicts); the conformance kit (L1/L2); the degraded no-eBPF mode, labeled self-reported |
-| M3 | First third-party control admitted through the conformance kit; success criterion: that third party reproduces the reference tables unaided; the reference badge |
+| M3 | First third-party control admitted through the conformance kit; success criterion: that third party reproduces a published reference measurement unaided; the reference badge |
 | M4+ | Scenario packs; LLM-driven path discovery on the exerciser substrate (Mode R); decay-tracking mode (re-running pinned snapshots across control versions, the measurement the framework exists to enable) |
+
+**Reference snapshot**: a published, dated, hash-pinned set of run manifests that anyone can re-run. The reference badge (M3) is earned by reproducing it.
 
 **Privilege tiers** (what a user needs to install): Tier 0 harness-native (no privileges), Tier 1 gateway designs (plain Docker), Tier 2 kernel/eBPF (privileged, opt-in, restricted kernel families). The degraded no-eBPF mode is the default path and is labeled self-reported/unverified. Multiple harnesses per run-set are allowed (switching the harness does not complicate attribution).
 
 **CI scope (v1).** Determinism test (same trace twice, identical decision stream), schema conformance, and exerciser smoke on one pinned kernel; a manually maintained kernel capability matrix documents the rest, including the two known-failing families. No promise of hosted multi-kernel CI.
 
-**Release gates (before any public release).** Adapter licensing check; responsible-release review of the exerciser (it is a deterministic bypass-path suite); the framework name stays neutral and distinct from any paper title.
+**Release gates (before any public release).** Adapter licensing check; responsible-release review of the exerciser (it is a deterministic bypass-path suite); the framework name stays neutral.
 
 **Framework conditionality.** The replication kit (M1/M2) is unconditional; the plugin-contract layer beyond it is justified by the longitudinal decay study commitment. If that commitment stops, fall back to the kit rather than maintaining contract features nobody uses.
 
-Scope rule from the framework-direction decision: v1 ships only what has an existing consumer among the two harnesses and the controls in scope. Out of v1: GUI, hosted service, auto-discovery, non-Linux sensors, multi-node, LLM-driven workloads, a topology DSL, arbitrary third-party profile parsing. Deferred, documented, non-blocking: causation/hop chains and a second correlation id, `preflight` as a separate operation (folded into configure validation plus ready), streaming/drain APIs beyond collect-with-flush-ack, capability negotiation (the runner statically compares `describe()` output), health-check operations, multi-slot plugins, monotonic-clock fields, standalone determinism receipts (pinned hashes live in the run manifest), migration tooling beyond v0 reading, a second workload, richer decision values (`ask`, `throttle`, `not_evaluated`).
+Scope rule: v1 ships only what has an existing consumer among the two harnesses and the controls in scope. Out of v1: GUI, hosted service, auto-discovery, non-Linux sensors, multi-node, LLM-driven workloads, a topology DSL, arbitrary third-party profile parsing. Deferred, documented, non-blocking: causation/hop chains and a second correlation id, `preflight` as a separate operation (folded into configure validation plus ready), streaming/drain APIs beyond collect-with-flush-ack, capability negotiation (the runner statically compares `describe()` output), health-check operations, multi-slot plugins, monotonic-clock fields, standalone determinism receipts (pinned hashes live in the run manifest), schema-migration tooling beyond v0 reading, a second workload, richer decision values (`ask`, `throttle`, `not_evaluated`).
 
 ## Open questions
 
