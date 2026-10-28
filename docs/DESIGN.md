@@ -46,7 +46,7 @@ The rule: **plugins are everything the framework measures or exercises; the core
 
 | Operation | Meaning |
 |---|---|
-| `describe()` | Static manifest: slot kinds supported; `record_source: native \| ingested`; correlation capability claims (`echoes_meta`, `echoes_header`, probe-verified, never trusted); observable action classes; `can_enforce: enforce \| observe` (an observe-only control can never produce `prevented`); supported schema versions |
+| `describe()` | Static manifest: slot kinds supported; `record_source: native \| ingested`; correlation capability claims (`echoes_meta`, `echoes_header`, verified by the fidelity check, never trusted); observable action classes; `can_enforce: enforce \| observe` (an observe-only control can never produce `prevented`); supported schema versions |
 | `provision(slot)` | Slot-typed: `container` (image + compose service), `attached_process` (configure an existing host/process), `log_ingest` (register a vendor log source; the shim case). Returns `{handle, attach}`; the attach descriptor is per-slot and carries the runner-assigned `stream_id` plus typed env (`GATEWAY_URL`, `MCP_GATEWAY_URL`, `GATEWAY_TOOL_ROUTES`, `GATEWAY_FS`). No global singleton env |
 | `configure(policy_descriptor)` | Idempotent, reversible; returns a policy fingerprint that must match `policy.policy_hash` in emitted records |
 | `ready()` | Readiness must prove that enforcement works, not just that the container is running: it passes only when a runner-issued test action (one the loaded policy must deny) produces its decision record. A started container is not ready; opening the capture window too early silently produces false `bypassed` results |
@@ -56,7 +56,7 @@ The rule: **plugins are everything the framework measures or exercises; the core
 **Shims are not a separate tier.** A shim implements the same contract with `record_source: ingested` and mandatory per-record provenance (`adapter`, `adapter_version`, `raw_ref`: source + line/offset pointing back at the vendor log line). Two conformance levels:
 
 - **L1 (translation):** schema-valid records from a recorded canonical-run log set + reconciliation to expected outcomes.
-- **L2 (native):** full lifecycle + correlation probe; a `native` badge requires L2 plus at least one harness-run path.
+- **L2 (native):** full lifecycle + correlation check; a `native` badge requires L2 plus at least one harness-run path.
 
 The reconciler enforces the limit: ingested records can support `bypassed` (kernel evidence alone proves it), but a `checked` verdict based only on ingested records is `derived` evidence and is degraded unless the kernel corroborates it. The L1/L2 evidence limit must stay visible in every cell.
 
@@ -162,7 +162,7 @@ Sibling schema sharing the identity fields with `decision-record/1`: `run_id`, `
 
 - Controls are workload-blind. A control must never record an `action_id` learned from configuration; ids are echoed from the protocol carrier or emitted as null. Null means traffic from outside the workload; its volume is reported per stream, never dropped silently. A control that strips ids on inspectable traffic is a reportable defect.
 - Every join records `attribution_method: id | target_identity | process_tree | time_window`. No method, including id echo, grounds `checked` without kernel corroboration.
-- **Fidelity probe** (conformance kit, gating): send a marked call through the control per transport; assert the id appears in the emitted record; publish per-control, per-transport capability flags (e.g. "product X preserves `_meta`"). Capability preservation is a measured, per-control capability, never a contract assumption.
+- **Fidelity check** (conformance kit, gating): send a marked call through the control per transport; assert the id appears in the emitted record; publish per-control, per-transport capability flags (e.g. "product X preserves `_meta`"). Capability preservation is a measured, per-control capability, never a contract assumption.
 
 ## 6. Experiment file
 
@@ -373,7 +373,7 @@ Source: the internal research testbed (kept in the original research repository;
 | `sensor/` (Tracee container, args, smoke) + `sensor/mapping/` (rules.yaml, map_events.py) | Instrument layer | Mapping version (`MAPPING_VERSION=6`) becomes part of the instrument interface version |
 | `harnesses/pi`, `harnesses/openclaw` | Reference harness adapter plugins | Determinism clauses move from adapter code into the contract |
 | `gateway/` (AGT MCP Security Gateway) + `targets/` + `compose/` (t0-t6.yaml) | Fixtures: the reference rigs realizing T0-T6 (no T7 compose rig exists; the ActPlane kernel-verifier incident is retained as the T7 record); the gateway becomes the first reference control plugin | The T5 attribution-gap finding drives the correlation carriers design |
-| REMOVED-ROW
+REMOVED-ROW
 | `env/versions.env` | Run manifest + registry pins | Version pins become recorded facts, not environment files |
 | The paper's 12 verified configurations | The reference snapshot: a published, dated, hash-pinned set of run manifests under guardscope | Grids remain citable under the design set used; the snapshot is evidence, not a demonstration |
 
@@ -383,8 +383,8 @@ Source: the internal research testbed (kept in the original research repository;
 
 | Milestone | Contents |
 |---|---|
-| M1 | Extraction and the code-identifier rename (mediation -> inspection, mechanical, once); the two contracts (`control`, `harness`); both record schemas (`decision-record/1`, `dispatch-record/1`); the experiment-file runner with load-time validation; the C1-C4 reconcile library; the exerciser and the AGT gateway as the first two control-side plugins (the pi and OpenClaw adapters are equally in scope as the reference harness plugins); the v0 AuditEntry reader mapping |
-| M2 | Fidelity probe; C5/C6 (id consistency, denial effectiveness via exerciser-derived kernel signatures); `report --merge` with the comparability key; the registry (two tiers, expiring verdicts); the conformance kit (L1/L2); the degraded no-eBPF mode, labeled self-reported |
+| M1 | Extraction and the code-identifier rename (mediation -> inspection, mechanical, once); (the probe machinery is not imported); the two contracts (`control`, `harness`); both record schemas (`decision-record/1`, `dispatch-record/1`); the experiment-file runner with load-time validation; the C1-C4 reconcile library; the exerciser and the AGT gateway as the first two control-side plugins (the pi and OpenClaw adapters are equally in scope as the reference harness plugins); the v0 AuditEntry reader mapping |
+| M2 | Fidelity check; C5/C6 (id consistency, denial effectiveness via exerciser-derived kernel signatures); `report --merge` with the comparability key; the registry (two tiers, expiring verdicts); the conformance kit (L1/L2); the degraded no-eBPF mode, labeled self-reported |
 | M3 | First third-party control admitted through the conformance kit; success criterion: that third party reproduces the reference tables unaided; the reference badge |
 | M4+ | Scenario packs; LLM-driven path discovery on the exerciser substrate (Mode R); decay-tracking mode (re-running pinned snapshots across control versions, the measurement the framework exists to enable) |
 
