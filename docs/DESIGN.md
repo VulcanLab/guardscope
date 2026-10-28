@@ -189,7 +189,8 @@ Minimal example:
 schema: 1
 control: agent-governance-gateway   # or null
 designs: [t1, t3]
-# harness and workload omitted: prepared defaults, recorded in the run manifest
+harness: pi
+workload: baseline-15
 ```
 
 `control: null` with an enforcement-capable harness is shown differently from the T0 baseline (no selected control, intrinsic enforcement active).
@@ -200,9 +201,10 @@ designs: [t1, t3]
 schema: 1
 control: null
 designs: [t5]
+harness: pi
+workload: baseline-15
 fixture:
   name: my-two-gateway-stack
-  off_matrix: true
   composition:
     - plugin: gateway-a
     - plugin: gateway-b
