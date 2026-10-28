@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "id": "openclaw",
+  "version": "2026.9.3",
+  "kind": "harness-adapter",
+  "emitted_schema_versions": [
+    "dispatch-record/1"
+  ],
+  "correlation": {
+    "echoes_meta": false,
+    "echoes_header": false
+  },
+  "supported_designs": [
+    "t0",
+    "t1",
+    "t2",
+    "t3",
+    "t5",
+    "t6"
+  ],
+  "hostable_enforcement_points": [
+    "dispatch_plugins"
+  ],
+  "notes": "t4 pending the dispatch-hook investigation; validated on pi only in v1"
+}

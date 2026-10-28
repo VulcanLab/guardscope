@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://guardscope.dev/schemas/experiment/1",
+  "title": "experiment/1",
+  "description": "The experiment file: the only user-facing configuration format (DESIGN.md 6). Four user-facing fields; these are the experimental variables.",
+  "$comment": "DESIGN.md 6. The $id host is a placeholder (DESIGN.md 'Open questions'). There are NO grid or matrix fields: a grid is a batch loop over single-design runs (DESIGN.md 10), and additionalProperties:false makes any such field a load-time error. 'control' is a single nullable plugin id, never a list: one selected control per run (DESIGN.md 3 'One selected control per run'), so two controls are inexpressible on-matrix; two-control deployments are expressed only through the fixture composition block, which requires control:null (gated in framework/experiment.py semantic validation).",
+  "type": "object",
+  "required": ["schema", "control", "designs"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": {
+      "$comment": "DESIGN.md 4 'Stamps and versioning': bare literal 1.",
+      "const": 1
+    },
+    "control": {
+      "$comment": "DESIGN.md 6: required, nullable. null means no selected control, intrinsic enforcement active. One plugin id; selection counts plugins, never positions (DESIGN.md 3).",
+      "type": ["string", "null"],
+      "minLength": 1
+    },
+    "designs": {
+      "$comment": "DESIGN.md 6: required, explicit, validated. The runner never infers designs; one run per design.",
+      "type": "array",
+      "items": {
+        "$comment": "DESIGN.md 7: designs T0-T7 are core, versioned with the major release. t7 is the kernel-level observation row.",
+        "enum": ["t0", "t1", "t2", "t3", "t4", "t5", "t6", "t7"]
+      },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "harness": {
+      "$comment": "DESIGN.md 6: user-specified; default is the prepared default harness (recorded as a fact, not requested as a choice).",
+      "type": "string",
+      "minLength": 1
+    },
+    "workload": {
+      "$comment": "DESIGN.md 6: user-specified; default is the prepared default pack (baseline-15).",
+      "type": "string",
+      "minLength": 1
+    },
+    "fixture": {
+      "$comment": "DESIGN.md 6: optional override of the reference rig. A composition block declares two controls and requires control:null (DESIGN.md 6 'Composition'); it auto-sets off_matrix:true, which is why off_matrix is not a writable field here (DESIGN.md 6: 'the flag need not be written explicitly').",
+      "type": "object",
+      "required": ["name"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "composition": {
+          "$comment": "DESIGN.md 6 'Composition': two controls, off-matrix by construction (DESIGN.md 7: two selected controls run only as off-matrix composition fixtures).",
+          "type": "array",
+          "minItems": 2,
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "required": ["plugin"],
+            "additionalProperties": false,
+            "properties": {
+              "plugin": {"type": "string", "minLength": 1},
+              "position": {"type": "string", "minLength": 1},
+              "note": {"type": "string"}
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "id": "exerciser",
+  "version": "1",
+  "kind": "harness-adapter",
+  "positions": [
+    {
+      "id": "mode-h",
+      "note": "hosted: the originator library runs inside the real harness's extension mechanism; lands only if the extension-mechanism timebox succeeds (DESIGN.md 8)"
+    },
+    {
+      "id": "mode-c",
+      "note": "co-resident: the driver runs as a second process in the harness's compose service while the real harness replays with the design's controls active"
+    },
+    {
+      "id": "mode-r",
+      "note": "standalone: driver alone, for the T0 reference row and the T7 observation row"
+    }
+  ],
+  "emitted_schema_versions": ["dispatch-record/1"],
+  "correlation": {
+    "echoes_meta": false,
+    "echoes_header": false
+  },
+  "supported_designs": ["t0", "t1", "t2", "t3", "t4", "t5", "t6", "t7"],
+  "notes": "Reduced form of the harness adapter contract (DESIGN.md 3): describe/inject plus dispatch records only. The exerciser is a path-originator fixture on the workload side, never an evaluated component and never a row or column of the grid; it hosts no enforcement points."
+}

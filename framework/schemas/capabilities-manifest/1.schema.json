@@ -1,0 +1,118 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://guardscope.dev/schemas/capabilities-manifest/1",
+  "title": "capabilities-manifest/1",
+  "description": "The identity/capabilities block shipped inside a plugin package (DESIGN.md 4 'Stamps and versioning'; DESIGN.md 11 'Plugin manifest'). Claims are immutable per version; declaring is not the same as conforming (conformance verdicts live in the registry, not here).",
+  "$comment": "DESIGN.md 3 (describe() content), 4, 11. The $id host is a placeholder (DESIGN.md 'Open questions'). Fields are grouped per kind; framework/contracts.py enforces which fields each kind must carry. 'positions' declares the N enforcement-point positions of a multi-position product (DESIGN.md 3 'Multi-position products'); 'hostable_enforcement_points' is the harness-adapter field for T4/T6-style enforcement the harness can host (DESIGN.md 3, 7).",
+  "type": "object",
+  "required": ["schema", "id", "version", "kind"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": {
+      "$comment": "DESIGN.md 4 'Stamps and versioning': bare literal 1.",
+      "const": 1
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]*$"
+    },
+    "version": {"type": "string", "minLength": 1},
+    "kind": {
+      "$comment": "DESIGN.md 2: the three plugin kinds that carry capability manifests. Renderers and workload-adjacent packs use their own blocks; workloads have no enforcement points (DESIGN.md 8).",
+      "enum": ["control", "harness-adapter", "workload"]
+    },
+    "slot_kinds": {
+      "$comment": "DESIGN.md 3 provision(slot): slot kinds supported.",
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {"enum": ["container", "attached_process", "log_ingest", "embedded"]}
+    },
+    "positions": {
+      "$comment": "DESIGN.md 3 'Multi-position products': one plugin per deployed artifact, N declared positions bound to slots by fixtures. Each position lists the designs it can occupy.",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["id"],
+        "additionalProperties": false,
+        "properties": {
+          "id": {"type": "string", "minLength": 1},
+          "designs": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {"enum": ["t0", "t1", "t2", "t3", "t4", "t5", "t6", "t7"]}
+          },
+          "note": {"type": "string"}
+        }
+      }
+    },
+    "record_source": {
+      "$comment": "DESIGN.md 3 describe(): native | ingested; ingested means the shim case with mandatory raw_ref provenance (DESIGN.md 3 'Shims are not a separate tier').",
+      "enum": ["native", "ingested"]
+    },
+    "observable_action_classes": {
+      "$comment": "DESIGN.md 3 describe(): the action classes this control can observe (the six-class core taxonomy, DESIGN.md 2).",
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "stdio_tool_call",
+          "http_tool_call",
+          "direct_network",
+          "process_spawn",
+          "file_write",
+          "credential_access"
+        ]
+      }
+    },
+    "can_enforce": {
+      "$comment": "DESIGN.md 3 describe(): an observe-only control can never produce 'prevented'.",
+      "enum": ["enforce", "observe"]
+    },
+    "emitted_schema_versions": {
+      "$comment": "DESIGN.md 4 and 11: which record schema versions the plugin emits; the run manifest records which format versions were used for everything in the run.",
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "enum": ["decision-record/1", "dispatch-record/1"]
+      }
+    },
+    "correlation": {
+      "$comment": "DESIGN.md 3 describe() and 5: capability claims (echoes_meta, echoes_header), verified by the fidelity check, never trusted.",
+      "type": "object",
+      "required": ["echoes_meta", "echoes_header"],
+      "additionalProperties": false,
+      "properties": {
+        "echoes_meta": {
+          "$comment": "DESIGN.md 5: preserves the MCP tools/call params._meta namespaced ids.",
+          "type": "boolean"
+        },
+        "echoes_header": {
+          "$comment": "DESIGN.md 5: preserves the x-inspection-* HTTP headers.",
+          "type": "boolean"
+        }
+      }
+    },
+    "supported_designs": {
+      "$comment": "DESIGN.md 6: the designs this plugin can occupy/support. For controls: which of t0-t7 they can occupy; for harness adapters: supported T-modes. Checked at experiment load time against every requested design.",
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {"enum": ["t0", "t1", "t2", "t3", "t4", "t5", "t6", "t7"]}
+    },
+    "hostable_enforcement_points": {
+      "$comment": "DESIGN.md 3 (harness describe()) and 7 (T4/T6): the enforcement points the harness can host intrinsically. control:null with t4/t6 requires a non-empty declaration here.",
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1}
+    },
+    "notes": {
+      "$comment": "Free-text factual notes (e.g. the exerciser's reduced contract form, DESIGN.md 3).",
+      "type": "string"
+    }
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "id": "pi",
+  "version": "1.0.4",
+  "kind": "harness-adapter",
+  "emitted_schema_versions": ["dispatch-record/1"],
+  "correlation": {
+    "echoes_meta": false,
+    "echoes_header": false
+  },
+  "supported_designs": ["t0", "t1", "t2", "t3", "t4", "t5", "t6"],
+  "hostable_enforcement_points": ["tool_call_permission_chain"],
+  "notes": "Hostable enforcement point: pi's tool_call permission chain (T4) and the in-process policy engine at the tool-call hook (T6; harnesses/pi/config/t6-policy.json). Replay injection runs inside the pi agent process via the extension-command surface; no LLM. Id-echo claims are false in v1: the adapter does not set correlation carriers yet (C5, M2)."
+}
