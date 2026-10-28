@@ -43,12 +43,15 @@ import sys
 import time
 from pathlib import Path
 
+import yaml
+
 HERE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(HERE / "runner"))
 
 import reconcile as rec_mod  # noqa: E402
 import runrecord as rr_mod  # noqa: E402
 import coverage as cov_mod  # noqa: E402
+import outcomes as out_mod  # noqa: E402
 
 SIX_CLASSES = rec_mod.SIX_CLASSES
 BASELINE = HERE / "trace" / "traces" / "baseline.yaml"
@@ -380,8 +383,161 @@ def enforcement_artifacts(design: str, gateway_dir: Path | None,
 # --- one full run ----------------------------------------------------------------
 
 
+NO_SENSOR_NOTE = ("degraded no-eBPF mode (DESIGN.md 9): no kernel sensor "
+                  "ran; every outcome this run reports is a self-reported "
+                  "claim, unverified")
+
+
+def assemble_sensorless(spec_path: Path, profile: dict, replay: dict,
+                        target_logs: list[dict] | None,
+                        container_id: str | None, versions: dict,
+                        harness: str, run_id: str, design: str = "t0",
+                        gateway_log: Path | None = None,
+                        gateway_policy: Path | None = None,
+                        window_slack_ns: int = 1_000_000_000
+                        ) -> tuple[dict, dict, dict]:
+    """Assemble the run record + manifest for a degraded no-sensor run
+    (DESIGN.md 9: "Degraded no-eBPF mode ... every output it produces is
+    labeled self-reported / unverified. The claimed-vs-verified distinction
+    is preserved even without the sensor").
+
+    The kernel-dependent stages are SKIPPED and recorded as skipped, never
+    silent: the R1-R5 reconciliation needs kernel ground truth (R3/R4/R5
+    and the effective counts are kernel-derived), so the record's
+    reconciliation section records status skipped-no-sensor with a note,
+    and effective_counts stays null — claims never self-upgrade. What still
+    computes: the replay layer, the served layer availability, the
+    decision-log coverage (C1-C4, kernel-free), and the instance-level
+    outcome classification from the replay statuses. `prevented` entries
+    are replay-status claims without kernel corroboration: each is
+    annotated as an unverified claim (prevented = deny record + verified
+    absence of the kernel signature; without the sensor there is nothing
+    to verify absence against).
+
+    Returns (run_record, manifest, report) with the same shape as
+    rr_mod.assemble so run_one's tail is shared; report.status is
+    "skipped-no-sensor" (the audit view), while run_one reports the
+    pipeline status separately.
+    """
+    spec = rec_mod.load_spec(spec_path)
+    rules = yaml.safe_load((HERE / "sensor" / "mapping" / "rules.yaml")
+                            .read_text())
+    pinned = rr_mod.pinned_versions(versions, harness, rules)
+
+    # decision-log coverage (C1-C4): kernel-free, same computation a
+    # sensor run performs over the enforcement-point record
+    coverage_report = None
+    if design != "t0":
+        if gateway_log is None:
+            raise ValueError("design != t0 requires the enforcement-point "
+                             "decisions log even without the sensor")
+        decisions, parse_problems = cov_mod.load_decisions(gateway_log)
+        w = replay.get("window_epoch_ns") or {}
+        coverage_report = cov_mod.compute(
+            spec, decisions, parse_problems, design,
+            (int(w["start"]), int(w["end"])) if w else None,
+            window_slack_ns)
+        pinned["gateway_package"] = versions.get("GATEWAY_PACKAGE", "unknown")
+        pinned["gateway_package_version"] = versions.get(
+            "GATEWAY_PACKAGE_VERSION", "unknown")
+        pinned["gateway_policy_version"] = versions.get(
+            "GATEWAY_POLICY_VERSION", "unknown")
+
+    # instance-level outcomes from the replay + coverage layers only;
+    # prevented entries are marked unverified claims (kernel corroboration
+    # is impossible without the sensor; DESIGN.md 9)
+    outcomes = out_mod.compute(spec, replay, coverage_report, design)
+    for row in outcomes["per_action"]:
+        if row["outcome"] == "prevented":
+            row["note"] = ("unverified claim: no kernel sensor ran in this "
+                           "run (degraded no-eBPF mode); prevented requires "
+                           "kernel verification (DESIGN.md 9)")
+
+    sys.path.insert(0, str(HERE / "trace"))
+    from hash_spec import canonical_hash as ch, raw_hash as rh  # noqa: E402
+
+    gt_counts = {c: sum(1 for a in spec["actions"] if a["class"] == c)
+                 for c in rec_mod.SIX_CLASSES}
+    created = rr_mod.now_iso()
+    run_record = {
+        "schema": rr_mod.SCHEMA,
+        "run_id": run_id,
+        "created": created,
+        "harness": harness,
+        "design": design,
+        "prevented_classes": sorted(
+            rec_mod.PREVENTED_CLASSES.get(design, set())),
+        "profile": profile["profile"],
+        "container_id": container_id,
+        "sensor": {"present": False, "mode": "no-sensor",
+                   "note": NO_SENSOR_NOTE},
+        "spec": {
+            "name": spec["meta"]["name"], "version": spec["meta"]["version"],
+            "path": str(spec_path),
+            "canonical_sha256": ch(spec_path), "raw_sha256": rh(spec_path),
+        },
+        "mapping": {"version": rules.get("version"),
+                    "rules": "sensor/mapping/rules.yaml",
+                    "note": "no kernel events captured; the mapping layer "
+                            "did not run"},
+        "window_epoch_ns": replay.get("window_epoch_ns"),
+        "ground_truth_counts": gt_counts,
+        "effective_counts": None,   # kernel-derived; never a claim
+        "replay": {"ok": replay.get("ok"),
+                   "executed": replay.get("executed"),
+                   "failed": replay.get("failed"),
+                   "per_action": replay.get("results")},
+        "served": {"available": bool(target_logs), "per_action": {}},
+        "kernel": {"sensor_present": False,
+                   "note": "no kernel evidence (degraded mode): R3/R4 "
+                           "kernel accounting and C6 denial verification "
+                           "cannot run"},
+        "reconciliation": {"status": "skipped-no-sensor", "checks": [],
+                           "leftovers": [],
+                           "note": "R1-R5 need kernel ground truth; skipped "
+                                   "in the degraded no-eBPF mode "
+                                   "(DESIGN.md 9). Replay, served-layer "
+                                   "availability, decision-log coverage "
+                                   "(C1-C4), and outcome classification "
+                                   "still computed."},
+        "coverage": coverage_report,
+        "outcomes": outcomes,
+        "pinned": pinned,
+    }
+    manifest = {
+        "schema": rr_mod.MANIFEST_SCHEMA,
+        "run_id": run_id,
+        "harness": harness,
+        "design": design,
+        "created": created,
+        "spec_sha256": run_record["spec"]["canonical_sha256"],
+        "mapping_version": pinned["mapping_version"],
+        "sensor_present": False,
+        "degraded": ["sensor-absent"],
+        "reconciliation": "skipped-no-sensor",
+        "coverage": (coverage_report or {}).get("status")
+                    if design != "t0" else None,
+        "versions": pinned,
+        "timing": {"window_epoch_ns": replay.get("window_epoch_ns"),
+                   "runrecord_created": created},
+    }
+    report = {
+        "schema": "inspection-reconciliation/1",
+        "status": "skipped-no-sensor",
+        "harness": profile["harness"],
+        "profile": profile["profile"],
+        "note": NO_SENSOR_NOTE,
+        "window_epoch_ns": replay.get("window_epoch_ns"),
+        "ground_truth_counts": gt_counts,
+        "effective_counts": None,
+        "checks": [],
+        "leftovers": [],
+    }
+    return run_record, manifest, report
+
+
 def run_one(harness: str, run_id: str, runs_dir: Path, timeout_s: float | None = None,
-            design: str = "t0") -> dict:
+            design: str = "t0", sensor: bool = True) -> dict:
     cfg = harness_cfg(harness, design)
     prefix = cfg["prefix"]
     tracee = f"{prefix}-tracee"
@@ -448,63 +604,70 @@ def run_one(harness: str, run_id: str, runs_dir: Path, timeout_s: float | None =
     compiled_dir.mkdir()
     shutil.copyfile(compiled, compiled_dir / Path(compiled).name)
 
-    print(f"[{run_id}] capturing Tracee events ...", file=sys.stderr)
-    time.sleep(TRACEE_FLUSH_GRACE_S)   # Tracee flushes in batches (M6: up to ~1 s lag)
-    capture_tracee(out_dir / "tracee-events.json", tracee)
-    sh([sys.executable, str(MAP_EVENTS), "--rules", str(RULES),
-        "--in", str(out_dir / "tracee-events.json"),
-        "--out", str(out_dir / "mapped-actions.jsonl")], check=True)
-
-    # Defensive recapture: if the first docker-logs snapshot raced Tracee's
-    # batch flush entirely (observed live 2026-09-10: a run's full window
-    # missing from the captured stream), wait longer and re-capture ONCE —
-    # docker logs only appends, so the re-capture is a superset.
-    cid = container_id(cfg["container"])
-    if in_window_mapped(out_dir / "mapped-actions.jsonl",
-                        result["window_epoch_ns"], cid) == 0:
-        print(f"[{run_id}] no in-window events for the harness container; "
-              f"Tracee flush lag suspected — re-capturing after "
-              f"{TRACEE_RECAPTURE_WAIT_S}s", file=sys.stderr)
-        time.sleep(TRACEE_RECAPTURE_WAIT_S)
+    if sensor:
+        print(f"[{run_id}] capturing Tracee events ...", file=sys.stderr)
+        time.sleep(TRACEE_FLUSH_GRACE_S)   # Tracee flushes in batches (M6: up to ~1 s lag)
         capture_tracee(out_dir / "tracee-events.json", tracee)
         sh([sys.executable, str(MAP_EVENTS), "--rules", str(RULES),
             "--in", str(out_dir / "tracee-events.json"),
             "--out", str(out_dir / "mapped-actions.jsonl")], check=True)
-
-    # Fast two-phase runs (openclaw t4-t6: ~1-2 s end to end) can finish
-    # inside Tracee's 30-90 s batch-flush lag: the in-window stdio writes of
-    # the lazily spawned MCP sessions surface only in a later batch, while
-    # earlier classes and the pre-window handshakes are already present
-    # (observed live 2026-10-08). If the enforcement-point record shows stdio
-    # tool calls but the kernel window has none, wait out the flush lag and
-    # re-capture once (docker logs appends: the re-capture is a superset).
-    if design in ("t4", "t5", "t6"):
-        mapped_recs = [json.loads(l) for l in open(out_dir / "mapped-actions.jsonl")]
-        win = result["window_epoch_ns"]
-        in_win_stdio = sum(
-            1 for r in mapped_recs
-            if r.get("class") == "stdio_tool_call" and r.get("ts")
-            and win["start"] <= r["ts"] <= win["end"]
-            and (cid is None or r.get("container") == cid))
-        stdio_calls_made = 0
-        dec_f = DEFAULT_RUNS_DIR / harness / "decisions.jsonl"
-        if dec_f.is_file():
-            for l in open(dec_f):
-                try: d = json.loads(l)
-                except Exception: continue
-                if d.get("tool_name") in ("write_file", "read_file", "list_directory"):
-                    stdio_calls_made += 1
-        if stdio_calls_made > 0 and in_win_stdio == 0:
-            wait_s = int(TRACEE_RECAPTURE_WAIT_S) * 9   # ~90 s: the documented batch lag
-            print(f"[{run_id}] in-window stdio writes missing while the "
-                  f"enforcement record shows {stdio_calls_made} stdio tool "
-                  f"calls; Tracee batch flush lag — re-capturing after {wait_s} s",
-                  file=sys.stderr)
-            time.sleep(wait_s)
+    else:
+        # degraded no-eBPF mode (DESIGN.md 9): the sensor container is not
+        # up (compose without --profile sensor); no kernel evidence is
+        # captured and nothing downstream may treat this run as verified
+        print(f"[{run_id}] degraded no-sensor mode: no kernel capture "
+              f"(outcomes will be self-reported claims)", file=sys.stderr)
+    cid = container_id(cfg["container"])
+    if sensor:
+        # Defensive recapture: if the first docker-logs snapshot raced Tracee's
+        # batch flush entirely (observed live 2026-09-10: a run's full window
+        # missing from the captured stream), wait longer and re-capture ONCE —
+        # docker logs only appends, so the re-capture is a superset.
+        if in_window_mapped(out_dir / "mapped-actions.jsonl",
+                            result["window_epoch_ns"], cid) == 0:
+            print(f"[{run_id}] no in-window events for the harness container; "
+                  f"Tracee flush lag suspected — re-capturing after "
+                  f"{TRACEE_RECAPTURE_WAIT_S}s", file=sys.stderr)
+            time.sleep(TRACEE_RECAPTURE_WAIT_S)
             capture_tracee(out_dir / "tracee-events.json", tracee)
             sh([sys.executable, str(MAP_EVENTS), "--rules", str(RULES),
                 "--in", str(out_dir / "tracee-events.json"),
                 "--out", str(out_dir / "mapped-actions.jsonl")], check=True)
+
+        # Fast two-phase runs (openclaw t4-t6: ~1-2 s end to end) can finish
+        # inside Tracee's 30-90 s batch-flush lag: the in-window stdio writes of
+        # the lazily spawned MCP sessions surface only in a later batch, while
+        # earlier classes and the pre-window handshakes are already present
+        # (observed live 2026-10-08). If the enforcement-point record shows stdio
+        # tool calls but the kernel window has none, wait out the flush lag and
+        # re-capture once (docker logs appends: the re-capture is a superset).
+        if design in ("t4", "t5", "t6"):
+            mapped_recs = [json.loads(l) for l in open(out_dir / "mapped-actions.jsonl")]
+            win = result["window_epoch_ns"]
+            in_win_stdio = sum(
+                1 for r in mapped_recs
+                if r.get("class") == "stdio_tool_call" and r.get("ts")
+                and win["start"] <= r["ts"] <= win["end"]
+                and (cid is None or r.get("container") == cid))
+            stdio_calls_made = 0
+            dec_f = DEFAULT_RUNS_DIR / harness / "decisions.jsonl"
+            if dec_f.is_file():
+                for l in open(dec_f):
+                    try: d = json.loads(l)
+                    except Exception: continue
+                    if d.get("tool_name") in ("write_file", "read_file", "list_directory"):
+                        stdio_calls_made += 1
+            if stdio_calls_made > 0 and in_win_stdio == 0:
+                wait_s = int(TRACEE_RECAPTURE_WAIT_S) * 9   # ~90 s: the documented batch lag
+                print(f"[{run_id}] in-window stdio writes missing while the "
+                      f"enforcement record shows {stdio_calls_made} stdio tool "
+                      f"calls; Tracee batch flush lag — re-capturing after {wait_s} s",
+                      file=sys.stderr)
+                time.sleep(wait_s)
+                capture_tracee(out_dir / "tracee-events.json", tracee)
+                sh([sys.executable, str(MAP_EVENTS), "--rules", str(RULES),
+                    "--in", str(out_dir / "tracee-events.json"),
+                    "--out", str(out_dir / "mapped-actions.jsonl")], check=True)
 
     pull_target_logs(out_dir / "target-logs", cfg)
 
@@ -521,23 +684,42 @@ def run_one(harness: str, run_id: str, runs_dir: Path, timeout_s: float | None =
 
     # reconcile + run record (C7/C8 libraries; run-record written even on fail)
     profile = rec_mod.load_profile(HERE / "runner" / "profiles" / f"{harness}.yaml")
-    run_record, manifest, report = rr_mod.assemble(
-        BASELINE, profile, rec_mod.load_replay(out_dir / "replay-result.json"),
-        rec_mod.load_mapped(out_dir / "mapped-actions.jsonl"),
-        rec_mod.load_target_logs([str(out_dir / "target-logs")]),
-        cid, rr_mod.load_versions(VERSIONS),
-        harness, run_id, design=design,
-        gateway_log=gateway_dir / "decisions.jsonl" if gateway_dir else None,
-        gateway_policy=(gateway_dir / "policy.yaml" if (gateway_dir / "policy.yaml").is_file()
-                        else gateway_dir / "policy.json" if (gateway_dir / "policy.json").is_file()
-                        else None) if gateway_dir else None,
-        window_slack_ns=int(profile.get("window_slack_ns", 1_000_000_000)))
+    if sensor:
+        run_record, manifest, report = rr_mod.assemble(
+            BASELINE, profile, rec_mod.load_replay(out_dir / "replay-result.json"),
+            rec_mod.load_mapped(out_dir / "mapped-actions.jsonl"),
+            rec_mod.load_target_logs([str(out_dir / "target-logs")]),
+            cid, rr_mod.load_versions(VERSIONS),
+            harness, run_id, design=design,
+            gateway_log=gateway_dir / "decisions.jsonl" if gateway_dir else None,
+            gateway_policy=(gateway_dir / "policy.yaml" if (gateway_dir / "policy.yaml").is_file()
+                            else gateway_dir / "policy.json" if (gateway_dir / "policy.json").is_file()
+                            else None) if gateway_dir else None,
+            window_slack_ns=int(profile.get("window_slack_ns", 1_000_000_000)))
+    else:
+        # degraded no-eBPF mode: the kernel-dependent assembly is replaced
+        # by the sensorless one (R1-R5 skipped-with-note, outcomes labeled
+        # self-reported; DESIGN.md 9)
+        run_record, manifest, report = assemble_sensorless(
+            BASELINE, profile, rec_mod.load_replay(out_dir / "replay-result.json"),
+            rec_mod.load_target_logs([str(out_dir / "target-logs")]),
+            cid, rr_mod.load_versions(VERSIONS),
+            harness, run_id, design=design,
+            gateway_log=gateway_dir / "decisions.jsonl" if gateway_dir else None,
+            gateway_policy=(gateway_dir / "policy.yaml" if (gateway_dir / "policy.yaml").is_file()
+                            else gateway_dir / "policy.json" if (gateway_dir / "policy.json").is_file()
+                            else None) if gateway_dir else None,
+            window_slack_ns=int(profile.get("window_slack_ns", 1_000_000_000)))
     artifacts = {
-        "tracee-events": out_dir / "tracee-events.json",
-        "mapped-actions": out_dir / "mapped-actions.jsonl",
         "replay-result": out_dir / "replay-result.json",
         "replay-log": out_dir / "replay-log.jsonl",
     }
+    if sensor:
+        # a degraded run retains no kernel artifacts (they do not exist);
+        # check_artifacts() on such a manifest reports them missing, which
+        # is the honest artifact state for a self-reported run
+        artifacts["tracee-events"] = out_dir / "tracee-events.json"
+        artifacts["mapped-actions"] = out_dir / "mapped-actions.jsonl"
     artifacts.update(enforcement_artifacts(design, gateway_dir, out_dir))
     rr_mod.add_artifact_hashes(manifest, artifacts)
     (out_dir / "run-record.json").write_text(
@@ -559,10 +741,18 @@ def run_one(harness: str, run_id: str, runs_dir: Path, timeout_s: float | None =
     print(f"[{run_id}] reconciliation: {report['status']}; coverage: {cov_status}; "
           f"outcomes: {out_status}; "
           f"effective counts: {report['effective_counts']}", file=sys.stderr)
+    # the returned status is the pipeline status: a degraded run that ran
+    # its (reduced, self-reported) pipeline cleanly is a completed run; the
+    # run record keeps the audit distinction (reconciliation: skipped-no-
+    # sensor, sensor.present: false) and the framework labels the run
+    # self-reported (DESIGN.md 9)
+    pipeline_status = ("pass" if cov_status == "pass" and out_status == "pass"
+                      else "fail") if not sensor else report["status"]
     return {"run_id": run_id, "harness": harness, "design": design,
             "out_dir": str(out_dir),
-            "status": report["status"], "coverage": cov_status,
+            "status": pipeline_status, "coverage": cov_status,
             "outcomes": out_status,
+            "sensor_present": sensor,
             "effective_counts": report["effective_counts"],
             "ground_truth_counts": run_record["ground_truth_counts"],
             "spec_sha256": run_record["spec"]["canonical_sha256"]}
@@ -573,19 +763,22 @@ def run_one(harness: str, run_id: str, runs_dir: Path, timeout_s: float | None =
 
 def run_design(harness: str, design: str, run_id: str,
                runs_dir: Path | None = None,
-               timeout_s: float | None = None) -> dict:
+               timeout_s: float | None = None,
+               sensor: bool = True) -> dict:
     """Minimal programmatic entry for one full run: validate the harness +
     design pairing, then delegate to run_one with the prepared defaults.
     The CLI keeps its own argument handling and calls run_one exactly as
     before (behavior-preserving); this entry exists so the execution layer
     (framework/execute.py) drives the runner through one named function
-    instead of CLI-only plumbing."""
+    instead of CLI-only plumbing. sensor=False drives the degraded no-eBPF
+    path (DESIGN.md 9): no sensor container, no kernel evidence, every
+    output self-reported."""
     if harness not in HARNESSES:
         raise ValueError(f"unknown harness {harness!r} "
                          f"(known: {sorted(HARNESSES)})")
     harness_cfg(harness, design)   # validates the design + pairing
     return run_one(harness, run_id, Path(runs_dir) if runs_dir is not None
-                   else DEFAULT_RUNS_DIR, timeout_s, design)
+                   else DEFAULT_RUNS_DIR, timeout_s, design, sensor=sensor)
 
 
 # --- reproducibility (rerun) ------------------------------------------------------
@@ -910,6 +1103,11 @@ def main() -> int:
     p.add_argument("--run-id", required=True)
     p.add_argument("--runs-dir", type=Path, default=DEFAULT_RUNS_DIR)
     p.add_argument("--timeout", type=float, default=None)
+    p.add_argument("--no-sensor", action="store_true",
+                   help="degraded no-eBPF mode (DESIGN.md 9): run without "
+                        "the sensor (compose up WITHOUT --profile sensor); "
+                        "no kernel evidence, every outcome is a "
+                        "self-reported claim")
 
     p = sub.add_parser("rerun", help="N consecutive runs + reproducibility verdict")
     p.add_argument("--harness", required=True, choices=sorted(HARNESSES))
@@ -942,7 +1140,7 @@ def main() -> int:
 
     if args.cmd == "run":
         summary = run_one(args.harness, args.run_id, args.runs_dir, args.timeout,
-                          args.design)
+                          args.design, sensor=not args.no_sensor)
         print(json.dumps(summary, indent=1))
         cov_ok = summary["coverage"] == "pass"
         return 0 if summary["status"] == "pass" and cov_ok else 1

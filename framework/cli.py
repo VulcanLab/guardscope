@@ -1,4 +1,4 @@
-"""guardscope CLI (experiment-file side): validate, plan, and run.
+"""guardscope CLI (experiment-file side): validate, plan, run, and report.
 
 Usage:
   python -m framework.cli validate <experiment-file>
@@ -7,14 +7,26 @@ Usage:
   python -m framework.cli plan <experiment-file>
       Print the expanded run descriptors (one per requested design) as JSON.
   python -m framework.cli run <experiment-file> [--out-root runs]
+      [--no-sensor]
       Execute the experiment (DESIGN.md 9): one live run per requested
       design, then the framework run manifest (decision records mapped to
       decision-record/1, recomputed C1-C4 coverage with the consistency
       assertion, C5 id consistency when dispatch records and the native
-      decision stream are present, findings, evidence class) written to
-      <out-root>/<experiment-id>/execution.json. Requires the Linux
-      testbed host (Docker, compose, arm64); prints one summary line per
-      design.
+      decision stream are present, C6 denial effectiveness when kernel
+      evidence exists, findings, outcome counts with the verified flag,
+      evidence class) written to <out-root>/<experiment-id>/execution.json.
+      Requires the Linux testbed host (Docker, compose, arm64); prints one
+      summary line per design. --no-sensor is the degraded no-eBPF mode
+      (DESIGN.md 9): the sensor is not brought up (compose without
+      --profile sensor), every output is labeled self-reported, and C6 is
+      skipped with a note.
+  python -m framework.cli report <execution.json>... [--runs-root runs]
+      [--strict] [--allow-incomparable] [--out merged.json]
+      Merge single-control execution manifests into report-level grids
+      (DESIGN.md 10): columns are (control, design) runs, grouped by the
+      comparability key; the JSON report is the contract and a short human
+      summary is printed to stdout (to stderr when the JSON itself goes to
+      stdout, i.e. when --out is omitted).
   python -m framework.cli fidelity <config-file>
       Validate a correlation-fidelity-check config (DESIGN.md 5: the marked
       tools/call per transport through a control) and print the plan.
@@ -27,6 +39,7 @@ Exit codes: 0 ok, 1 load-time validation error or failed run, 2 usage.
 import argparse
 import json
 import sys
+from pathlib import Path
 
 from framework.experiment import ExperimentError, load_experiment, resolve
 
@@ -41,9 +54,59 @@ def main(argv=None) -> int:
         if name == "run":
             p.add_argument("--out-root", default="runs",
                            help="root for run artifacts and execution.json")
+            p.add_argument("--no-sensor", action="store_true",
+                           help="degraded no-eBPF mode (DESIGN.md 9): run "
+                                "without the sensor (compose up WITHOUT "
+                                "--profile sensor); outputs are labeled "
+                                "self-reported")
+    p = sub.add_parser(
+        "report",
+        help="merge execution manifests into report-level grids "
+             "(DESIGN.md 10)")
+    p.add_argument("manifests", nargs="*",
+                   help="execution.json manifest path(s)")
+    p.add_argument("--runs-root", default=None,
+                   help="convenience: glob <runs-root>/*/execution.json")
+    p.add_argument("--strict", action="store_true",
+                   help="hard-fail on any comparability-key mismatch")
+    p.add_argument("--allow-incomparable", action="store_true",
+                   help="force one grid; affected columns are marked "
+                        "non-comparable per cell (DESIGN.md 10)")
+    p.add_argument("--out", type=Path, default=None,
+                   help="write the merged JSON report here (default: stdout)")
     p = sub.add_parser("fidelity")
     p.add_argument("file", help="fidelity-check config (YAML or JSON)")
     args = ap.parse_args(argv)
+
+    if args.command == "report":
+        from framework.report import MergeError, merge_reports, render_summary
+        paths = [Path(m) for m in args.manifests]
+        if args.runs_root:
+            paths += sorted(Path(args.runs_root).glob("*/execution.json"))
+        if not paths:
+            print("error: report needs execution.json manifest path(s) "
+                  "or --runs-root", file=sys.stderr)
+            return 2
+        missing = [str(p) for p in paths if not p.is_file()]
+        if missing:
+            print(f"error: no such execution manifest: "
+                  f"{', '.join(missing)}", file=sys.stderr)
+            return 1
+        try:
+            report = merge_reports(paths, strict=args.strict,
+                                   allow_incomparable=args.allow_incomparable)
+        except MergeError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        text = json.dumps(report, indent=1, sort_keys=True) + "\n"
+        if args.out:
+            args.out.parent.mkdir(parents=True, exist_ok=True)
+            args.out.write_text(text, encoding="utf-8")
+            print(render_summary(report))          # the human summary
+        else:
+            print(text, end="")                   # the JSON contract
+            print(render_summary(report), file=sys.stderr)
+        return 0
 
     if args.command == "fidelity":
         from framework.fidelity import (FidelityConfigError,
@@ -74,7 +137,8 @@ def main(argv=None) -> int:
     if args.command == "run":
         from framework.execute import execute_experiment
         try:
-            result = execute_experiment(args.file, out_root=args.out_root)
+            result = execute_experiment(args.file, out_root=args.out_root,
+                                        sensor=not args.no_sensor)
         except (ExperimentError, OSError, RuntimeError, ValueError) as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 1
@@ -90,6 +154,8 @@ def main(argv=None) -> int:
             "evidence_class": s.evidence_class,
             "degraded": s.degraded,
             "c5": (s.c5 or {}).get("status"),
+            "c6": (s.c6 or {}).get("status"),
+            "outcome_counts_verified": (s.outcome_counts or {}).get("verified"),
             "findings": [f.get("id") for f in s.findings],
             "run_dir": s.run_dir,
         } for s in result.runs]

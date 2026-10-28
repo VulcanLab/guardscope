@@ -22,8 +22,17 @@ runner machinery:
    C1-C4 coverage recomputed over the mapped records (framework/reconcile)
    with a consistency assertion against the coverage the run itself
    computed (a mismatch is a finding, never silently trusted, DESIGN.md 9),
-   the evidence class (harness-run; DESIGN.md 9 output), and degraded
-   flags.
+   C5 id consistency (framework/c5.py) and C6 denial effectiveness
+   (framework/c6.py) with their findings, the outcome counts with a
+   verified flag (kernel corroboration; DESIGN.md 9: the primary reported
+   numbers come from verified results only), the evidence class, and
+   degraded flags.
+
+Degraded no-eBPF mode (DESIGN.md 9: the default path for users without
+kernel privileges): sensor=False skips the runner's sensor entirely; every
+output of such a run is labeled self-reported / unverified, C6 is skipped
+with a note (never a finding), and `prevented` outcome entries are marked
+as unverified claims (claims never self-upgrade).
 
 The execution path assumes the Linux testbed host (Docker, compose, arm64);
 unit tests inject a fake run_executor so nothing here calls Docker.
@@ -56,8 +65,11 @@ BASELINE_SPEC = REPO_ROOT / "trace" / "traces" / "baseline.yaml"
 
 # DESIGN.md 9: evidence class of a run driven through the real harness.
 # Exerciser-run cells are a separate path (DESIGN.md 8) and are not produced
-# by this module.
+# by this module. A run without kernel evidence (the degraded no-eBPF mode)
+# is self-reported (DESIGN.md 9: "every output it produces is labeled
+# self-reported / unverified").
 EVIDENCE_CLASS = "harness-run"
+EVIDENCE_CLASS_SELF_REPORTED = "self-reported"
 
 
 def _profile_window_slack(harness: str) -> int:
@@ -126,6 +138,8 @@ class RunSummary:
     ground_truth_counts: dict | None = None
     spec_sha256: str | None = None
     c5: dict | None = None
+    c6: dict | None = None
+    outcome_counts: dict | None = None
 
     def to_dict(self) -> dict:
         return {
@@ -153,6 +167,8 @@ class RunSummary:
             "ground_truth_counts": self.ground_truth_counts,
             "spec_sha256": self.spec_sha256,
             "c5": self.c5,
+            "c6": self.c6,
+            "outcome_counts": self.outcome_counts,
         }
 
 
@@ -261,10 +277,14 @@ def fixture_fingerprint(descriptor: RunDescriptor) -> dict:
 
 
 def default_run_executor(descriptor: RunDescriptor, run_id: str,
-                         out_root: Path) -> dict:
+                         out_root: Path, sensor: bool = True) -> dict:
     """Drive one run through the existing runner machinery (runner/run.py
     run_design: compile -> replay -> capture -> map -> reconcile -> record)
     and return the run outcome the manifest assembly needs.
+
+    sensor=False drives the runner's degraded no-eBPF path (run_design
+    sensor=False: no sensor container is expected, no kernel evidence is
+    captured; DESIGN.md 9) for hosts without kernel privileges.
 
     Runs on the Linux testbed host only (Docker, compose, arm64). The
     outcome dict is the documented contract between the runner side and the
@@ -283,7 +303,14 @@ def default_run_executor(descriptor: RunDescriptor, run_id: str,
       decision_stream                  producer identity for the mapping:
                                        slot_id, plugin, plugin_version,
                                        product, product_version
-      sensor_present                   the sensor ran in this run
+      sensor_present                   the sensor actually produced kernel
+                                       evidence in this run (detected from
+                                       the run dir's artifacts below; there is
+                                       no separate sensor-health artifact —
+                                       run_one hard-fails a broken sensor
+                                       capture, and a non-empty
+                                       tracee-events.json is the started-
+                                       and-captured evidence)
       effective_counts, ground_truth_counts, spec_sha256
       dispatch_records                the adapter's dispatch-record/1 stream
                                      (M2a: runs/<id>/dispatch-records.jsonl,
@@ -301,7 +328,8 @@ def default_run_executor(descriptor: RunDescriptor, run_id: str,
     import run as run_mod  # runner/run.py (sys.path holds the runner dir)
 
     summary = run_mod.run_design(descriptor.harness, descriptor.design,
-                                 run_id, runs_dir=Path(out_root))
+                                 run_id, runs_dir=Path(out_root),
+                                 sensor=sensor)
     out_dir = Path(summary["out_dir"])
     run_record_path = out_dir / "run-record.json"
     run_record = (json.loads(run_record_path.read_text(encoding="utf-8"))
@@ -355,7 +383,10 @@ def default_run_executor(descriptor: RunDescriptor, run_id: str,
         "window_epoch_ns": replay.get("window_epoch_ns"),
         "decision_log": str(decision_log) if has_log else None,
         "decision_stream": stream,
-        "sensor_present": True,   # run_design fails a run with a broken sensor
+        # size check only: the raw capture can be gigabytes (a full read
+        # would spike memory after the run already completed)
+        "sensor_present": sensor and (out_dir / "tracee-events.json").is_file()
+                        and (out_dir / "tracee-events.json").stat().st_size > 0,
         "effective_counts": summary.get("effective_counts"),
         "ground_truth_counts": summary.get("ground_truth_counts"),
         "spec_sha256": summary.get("spec_sha256"),
@@ -504,6 +535,78 @@ def _c5_report(outcome: dict, run_id: str, window, slack: int,
                   inspected_action_ids=inspected_action_ids)
 
 
+def _c6_report(outcome: dict, run_id: str, window, slack: int,
+               records: list[dict]) -> dict:
+    """Run C6 (denial effectiveness, DESIGN.md 9) over one run's deny
+    records against the run's kernel evidence. Sensor absent (the degraded
+    no-eBPF mode) => skipped with a note, never a finding: there is no
+    kernel evidence to verify absence against, and claims never
+    self-upgrade. With the sensor present but no mapped-actions stream,
+    run_c6 itself skips with a note."""
+    from framework.c6 import run_c6
+
+    if not outcome.get("sensor_present", True):
+        return {"id": "C6", "status": "skipped",
+                "note": ("no kernel sensor in this run (degraded no-eBPF "
+                         "mode): denial effectiveness cannot be verified "
+                         "against kernel evidence; C6 not run (a skip with "
+                         "a note, never a finding; DESIGN.md 9)"),
+                "denies": {"records": 0}, "per_deny": [], "findings": []}
+
+    # the native decision stream joins the mapped v0 records (the same two
+    # streams C5 uses; a deny may appear in either or both)
+    out_dir = Path(outcome["out_dir"])
+    native_path = Path(outcome.get("native_decision_records")
+                       or (out_dir / "gateway" / "decision-records.jsonl"))
+    all_records = list(records)
+    if native_path.is_file() and native_path.read_text(encoding="utf-8").strip():
+        native, _ = _load_jsonl(native_path)
+        all_records += native
+    window_pair = ((int(window["start"]), int(window["end"]))
+                   if window else None)
+    return run_c6(out_dir, all_records, window=window_pair,
+                  window_slack_ns=slack, run_id=run_id)
+
+
+def _outcome_counts(outcome: dict, out_dir: Path,
+                    sensor_present: bool) -> dict | None:
+    """The run's instance-level outcome counts (runner outcomes.json), with
+    the DESIGN.md 9 verified/unverified distinction: outcome counts are
+    verified only when kernel corroboration exists (the sensor produced
+    evidence); in a sensor-less run they are claimed-only (`verified:
+    false`), and every `prevented` entry carries a per-action note that it
+    is an unverified claim — prevented requires deny + verified absence of
+    the kernel signature, and claims never self-upgrade."""
+    hinted = outcome.get("outcomes")
+    path = Path(hinted) if hinted else out_dir / "outcomes.json"
+    if not path.is_file():
+        return None
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return None
+    per_class: dict[str, dict[str, int]] = {}
+    rows = doc.get("per_action") or []
+    for row in rows:
+        per_class.setdefault(row.get("class", "?"), {}).setdefault(
+            row.get("outcome", "?"), 0)
+        per_class[row.get("class", "?")][row.get("outcome", "?")] += 1
+    counts = {"schema": doc.get("schema"),
+              "status": doc.get("status"),
+              "counts": doc.get("counts"),
+              "per_class": per_class,
+              "verified": bool(sensor_present)}
+    if not sensor_present:
+        counts["prevented_unverified"] = [
+            {"id": row.get("id"), "class": row.get("class"),
+             "note": ("unverified claim: no kernel sensor ran in this run "
+                      "(degraded no-eBPF mode); prevented requires kernel "
+                      "verification (DESIGN.md 9) and claims never "
+                      "self-upgrade")}
+            for row in rows if row.get("outcome") == "prevented"]
+    return counts
+
+
 def _assemble_run_summary(descriptor: RunDescriptor, outcome: dict,
                           run_id: str, out_root: Path,
                           spec: dict) -> RunSummary:
@@ -552,7 +655,8 @@ def _assemble_run_summary(descriptor: RunDescriptor, outcome: dict,
                 })
 
     degraded: list[str] = []
-    if not outcome.get("sensor_present", True):
+    sensor_present = bool(outcome.get("sensor_present", True))
+    if not sensor_present:
         degraded.append(SENSOR_ABSENT)
 
     # C5 (DESIGN.md 9): id consistency between the harness dispatch records
@@ -569,6 +673,19 @@ def _assemble_run_summary(descriptor: RunDescriptor, outcome: dict,
     if c5.get("status") == "fail":
         findings += [dict(f) for f in c5.get("findings") or []]
 
+    # C6 (DESIGN.md 9): denial effectiveness — every deny record is checked
+    # against the run's kernel evidence. Findings (a deny with the action's
+    # kernel signature present, C6-ineffective) join the run's findings; a
+    # sensor-less run skips C6 with a note, never a finding.
+    c6 = _c6_report(outcome, run_id, window, slack, records)
+    if c6.get("status") == "fail":
+        findings += [dict(f) for f in c6.get("findings") or []]
+
+    # the run's outcome counts, with the DESIGN.md 9 verified flag: in a
+    # sensor-less run they are claims (verified: false) and every prevented
+    # entry is marked an unverified claim
+    outcome_counts = _outcome_counts(outcome, out_dir, sensor_present)
+
     return RunSummary(
         run_id=run_id,
         design=descriptor.design,
@@ -584,7 +701,10 @@ def _assemble_run_summary(descriptor: RunDescriptor, outcome: dict,
         decision_records=str(decision_records_path),
         decision_record_count=len(records),
         fixture_fingerprint=fixture_fingerprint(descriptor),
-        evidence_class=EVIDENCE_CLASS,
+        # DESIGN.md 9: without kernel evidence every output is
+        # self-reported / unverified (the degraded no-eBPF mode)
+        evidence_class=(EVIDENCE_CLASS if sensor_present
+                        else EVIDENCE_CLASS_SELF_REPORTED),
         degraded=degraded,
         status=outcome.get("status", "unknown"),
         coverage=recomputed,
@@ -594,6 +714,8 @@ def _assemble_run_summary(descriptor: RunDescriptor, outcome: dict,
         ground_truth_counts=outcome.get("ground_truth_counts"),
         spec_sha256=outcome.get("spec_sha256"),
         c5=c5,
+        c6=c6,
+        outcome_counts=outcome_counts,
     )
 
 
@@ -612,16 +734,37 @@ def _fresh_run_id(out_root: Path, base: str) -> str:
     return run_id
 
 
+def _sensor_aware_default_executor(sensor: bool):
+    """The default executor bound to the requested sensor mode (sensor=False
+    is the degraded no-eBPF mode, DESIGN.md 9). The flag is passed as a
+    keyword only when the executor accepts one: the runner-side
+    default_run_executor does; an injected executor keeping the plain
+    (descriptor, run_id, out_root) contract (the test fakes) is called
+    unchanged — fakes report sensor presence through their outcome dict
+    (`sensor_present`), which is what the assembly actually consumes."""
+    import inspect
+
+    def executor(descriptor: RunDescriptor, run_id: str, out_root: Path) -> dict:
+        fn = default_run_executor   # module attribute: tests monkeypatch it
+        if "sensor" in inspect.signature(fn).parameters:
+            return fn(descriptor, run_id, out_root, sensor=sensor)
+        return fn(descriptor, run_id, out_root)
+
+    return executor
+
+
 def execute_experiment(experiment_path, *, run_executor=None,
-                        out_root="runs") -> ExecutionResult:
+                        out_root="runs", sensor: bool = True) -> ExecutionResult:
     """Load, validate, and execute an experiment file (DESIGN.md 6, 9).
 
     One run per requested design, driven through `run_executor(descriptor,
     run_id, out_root)` (default: the runner machinery via
-    default_run_executor, testbed host only). Per run the framework writes
-    decision-records.jsonl (the v0 AuditEntry log mapped to
-    decision-record/1) under <out_root>/<run-id>/ and records the run
-    summary in the execution manifest written to
+    default_run_executor, testbed host only). sensor=False drives the
+    degraded no-eBPF mode (DESIGN.md 9): the default executor runs the
+    runner's sensor-less path and every run is labeled self-reported /
+    degraded. Per run the framework writes decision-records.jsonl (the v0
+    AuditEntry log mapped to decision-record/1) under <out_root>/<run-id>/
+    and records the run summary in the execution manifest written to
     <out_root>/<experiment-id>/execution.json.
 
     Load-time errors (ExperimentError and friends) propagate unchanged; a
@@ -633,7 +776,9 @@ def execute_experiment(experiment_path, *, run_executor=None,
     experiment_path = Path(experiment_path)
     experiment = load_experiment(experiment_path)
     plan = resolve(experiment)
-    executor = run_executor or default_run_executor
+    # the default executor is bound to the sensor mode here (a fake
+    # run_executor keeps its (descriptor, run_id, out_root) contract)
+    executor = run_executor or _sensor_aware_default_executor(sensor)
     out_root = Path(out_root)
     experiment_id = experiment_path.stem
 

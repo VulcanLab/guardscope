@@ -1,0 +1,67 @@
+{
+ "artifacts": {
+  "gateway-decisions": {
+   "bytes": 1430,
+   "path": "runs/t1-pi-t1-2/gateway/decisions.jsonl",
+   "sha256": "685d72bc2b7ae792a934e387f4f82d002b847d523b5930a72c9bbba6b5bea120"
+  },
+  "gateway-policy": {
+   "bytes": 937,
+   "path": "runs/t1-pi-t1-2/gateway/policy.yaml",
+   "sha256": "5fae2bdbd4ba160efb50aa28d65ff73230790f8ba34a4ba7fbedb03be4d36bda"
+  },
+  "mapped-actions": {
+   "bytes": 1903269285,
+   "path": "runs/t1-pi-t1-2/mapped-actions.jsonl",
+   "sha256": "bbf5e76b7ba5715e336a51ea3208df1aa2c1644b6cadee1b518c2891adffff04"
+  },
+  "replay-log": {
+   "bytes": 3696,
+   "path": "runs/t1-pi-t1-2/replay-log.jsonl",
+   "sha256": "6291e7a0d521d94eaf8bd4e11936f7f7eb23b2657c9e57d762abe70c9ecd5e17"
+  },
+  "replay-result": {
+   "bytes": 4810,
+   "path": "runs/t1-pi-t1-2/replay-result.json",
+   "sha256": "0d682489f81a88620f52c4e1c20061a5c594770e3de20520173df87e52bf92aa"
+  },
+  "tracee-events": {
+   "bytes": 9316160338,
+   "path": "runs/t1-pi-t1-2/tracee-events.json",
+   "sha256": "fb8bacc2648796a95c553fb29c8e95d1123d6d02b3a0912f939d54e9d07bec37"
+  }
+ },
+ "coverage": "pass",
+ "created": "2026-10-28T07:23:43.648886+00:00",
+ "design": "t1",
+ "harness": "pi",
+ "mapping_version": 6,
+ "reconciliation": "pass",
+ "run_id": "t1-pi-t1-2",
+ "schema": "inspection-run-manifest/1",
+ "spec_sha256": "8e268f5bb692eeedf038c772c25566d1edf1a333a8ea0fa1f5839447a392af4c",
+ "timing": {
+  "runrecord_created": "2026-10-28T07:23:43.648886+00:00",
+  "window_epoch_ns": {
+   "end": 1793171837564000000,
+   "start": 1793171837286000000
+  }
+ },
+ "versions": {
+  "compose": "5.6.0",
+  "docker": "29.8.2",
+  "gateway_package": "agent-os-kernel",
+  "gateway_package_version": "3.7.0",
+  "gateway_policy_version": "1",
+  "harness": "pi",
+  "harness_image": "node:24-bookworm-slim",
+  "harness_image_digest": "sha256:2fe369e969550cde8e867afc3fe370b260140cab4a23d467074295b42163d553",
+  "harness_version": "1.0.4",
+  "kernel": "7.0.0-1013-aws",
+  "kernel_arch": "aarch64",
+  "mapping_version": 6,
+  "tracee_image": "aquasec/tracee",
+  "tracee_image_digest": "sha256:cfbbfee972e64a644f6b1bac74ee26998e6e12442697be4c797ae563553a2a5b",
+  "tracee_version": "v0.24.1"
+ }
+}

@@ -1,0 +1,54 @@
+{
+ "artifacts": {
+  "mapped-actions": {
+   "bytes": 5230112,
+   "path": "runs/t0-pi-t0-2/mapped-actions.jsonl",
+   "sha256": "e9fbf957346bdf59bc92abf6eb0645afea1730c10d7a5a37362f6725de35c3f0"
+  },
+  "replay-log": {
+   "bytes": 3435,
+   "path": "runs/t0-pi-t0-2/replay-log.jsonl",
+   "sha256": "3b72806de9372953dbbc1715cce8a04b28fe1c512a91ace7084a1e44ab5c096b"
+  },
+  "replay-result": {
+   "bytes": 4477,
+   "path": "runs/t0-pi-t0-2/replay-result.json",
+   "sha256": "75436059056824bbaa64f31a8a03f42a26ce9600292379ea30211704fda7db1f"
+  },
+  "tracee-events": {
+   "bytes": 22657565,
+   "path": "runs/t0-pi-t0-2/tracee-events.json",
+   "sha256": "7ecb10d7c645e5adb9fce298a5953c19f782525f9b39ef9786d725087ae60ce0"
+  }
+ },
+ "coverage": null,
+ "created": "2026-10-28T07:04:28.833701+00:00",
+ "design": "t0",
+ "harness": "pi",
+ "mapping_version": 6,
+ "reconciliation": "pass",
+ "run_id": "t0-pi-t0-2",
+ "schema": "inspection-run-manifest/1",
+ "spec_sha256": "8e268f5bb692eeedf038c772c25566d1edf1a333a8ea0fa1f5839447a392af4c",
+ "timing": {
+  "runrecord_created": "2026-10-28T07:04:28.833701+00:00",
+  "window_epoch_ns": {
+   "end": 1793171064695000000,
+   "start": 1793171064499000000
+  }
+ },
+ "versions": {
+  "compose": "5.6.0",
+  "docker": "29.8.2",
+  "harness": "pi",
+  "harness_image": "node:24-bookworm-slim",
+  "harness_image_digest": "sha256:2fe369e969550cde8e867afc3fe370b260140cab4a23d467074295b42163d553",
+  "harness_version": "1.0.4",
+  "kernel": "7.0.0-1013-aws",
+  "kernel_arch": "aarch64",
+  "mapping_version": 6,
+  "tracee_image": "aquasec/tracee",
+  "tracee_image_digest": "sha256:cfbbfee972e64a644f6b1bac74ee26998e6e12442697be4c797ae563553a2a5b",
+  "tracee_version": "v0.24.1"
+ }
+}

@@ -94,6 +94,27 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def pinned_versions(versions: dict, harness: str, rules: dict) -> dict:
+    """The pinned-version block shared by every run record (kernel-sensor
+    runs and the degraded no-sensor path alike): harness image + the
+    runner-managed sensor pins + kernel + tooling + mapping version."""
+    vkeys = VERSION_KEYS[harness]
+    return {
+        "harness": harness,
+        "harness_version": versions.get(vkeys["version"], "unknown"),
+        "harness_image": versions.get(vkeys["image"], "unknown"),
+        "harness_image_digest": versions.get(vkeys["image_digest"], "unknown"),
+        "tracee_version": versions.get("TRACEE_VERSION", "unknown"),
+        "tracee_image": versions.get("TRACEE_IMAGE", "unknown"),
+        "tracee_image_digest": versions.get("TRACEE_DIGEST", "unknown"),
+        "kernel": versions.get("KERNEL_VERSION", "unknown"),
+        "kernel_arch": versions.get("KERNEL_ARCH", "unknown"),
+        "docker": versions.get("DOCKER_VERSION", "unknown"),
+        "compose": versions.get("COMPOSE_VERSION", "unknown"),
+        "mapping_version": rules.get("version"),
+    }
+
+
 def assemble(spec_path: Path, profile: dict, replay: dict, mapped: list[dict],
              target_logs: list[dict] | None, container_id: str | None,
              versions: dict, harness: str, run_id: str,
@@ -115,25 +136,7 @@ def assemble(spec_path: Path, profile: dict, replay: dict, mapped: list[dict],
 
     rules = yaml.safe_load((HERE / "sensor" / "mapping" / "rules.yaml").read_text())
 
-    vkeys = VERSION_KEYS[harness]
-    harness_version = versions.get(vkeys["version"], "unknown")
-    harness_image = versions.get(vkeys["image"], "unknown")
-    harness_digest = versions.get(vkeys["image_digest"], "unknown")
-
-    pinned = {
-        "harness": harness,
-        "harness_version": harness_version,
-        "harness_image": harness_image,
-        "harness_image_digest": harness_digest,
-        "tracee_version": versions.get("TRACEE_VERSION", "unknown"),
-        "tracee_image": versions.get("TRACEE_IMAGE", "unknown"),
-        "tracee_image_digest": versions.get("TRACEE_DIGEST", "unknown"),
-        "kernel": versions.get("KERNEL_VERSION", "unknown"),
-        "kernel_arch": versions.get("KERNEL_ARCH", "unknown"),
-        "docker": versions.get("DOCKER_VERSION", "unknown"),
-        "compose": versions.get("COMPOSE_VERSION", "unknown"),
-        "mapping_version": rules.get("version"),
-    }
+    pinned = pinned_versions(versions, harness, rules)
 
     # --- T1-4: inspection coverage from the enforcement point ----------------
     # design t0 (bare harness) has no enforcement point: no coverage section.
