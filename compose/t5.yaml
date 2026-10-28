@@ -1,0 +1,153 @@
+# compose/t5.yaml — deployment design T5: harness-native enforcement combined
+# with the gateway (main.tex Table 1). T4's harness permission chain is the
+# first enforcement point; T1's MCP Security Gateway is the second. The
+# http-stdio MCP server forwards its tool calls THROUGH the gateway
+# (MCP_GATEWAY_URL), so the http tool calls cross BOTH points; the fs tools
+# stay harness-native only. The finding under measurement: the seam — the two
+# points' records share no correlation key, so a checked http tool call
+# cannot be attributed to a concrete decision across the seam.
+#
+# Outcomes per action class (main.tex §5.2, ✓/× resolved for the v1
+# permissions-only configuration — no sandbox, no egress):
+#   stdio_tool_call     checked     (harness permission chain)
+#   http_tool_call      checked     (BOTH points: permission chain + gateway)
+#   direct_network      bypassed    (no egress; unevaluated by either point)
+#   process_spawn       bypassed
+#   file_write          bypassed
+#   credential_access   bypassed
+#
+# Both enforcement-point records are captured per run: the harness decisions
+# (the coverage input, inspected set = both tool classes) and the gateway's
+# decisions + deployed policy (the seam record, manifest-retained).
+#
+# The canonical trace spec is unchanged from T0–T4 — only the topology
+# differs, keeping T5 coverage comparable to T0–T4.
+#
+# The Tracee sensor runs OUTSIDE the deployed topology (no t5net attachment):
+# bring up the topology FIRST, wait for the harness containers to be healthy,
+# then start the sensor (Tracee container-cache startup race —
+# sensor/README.md):
+#   docker compose -f compose/t5.yaml up -d --build
+#   docker compose -f compose/t5.yaml --profile sensor up -d tracee
+
+name: inspection-t5
+
+services:
+  http-endpoint:
+    build:
+      context: ../targets
+      dockerfile: http-endpoint/Dockerfile
+    image: inspection/http-endpoint
+    container_name: t5-http-endpoint
+    networks: [t5net]
+    volumes:
+      - target-logs:/var/log/targets
+    restart: unless-stopped
+
+  # T1's gateway (second enforcement point for the http tool class): the
+  # http-stdio MCP server forwards its tool calls here (MCP_GATEWAY_URL), the
+  # gateway's upstream performs the raw request. T1's allow-all policy.
+  mcp-http:
+    build:
+      context: ../targets
+      dockerfile: mcp-http/Dockerfile
+    image: inspection/mcp-http
+    container_name: t5-mcp-http
+    networks: [t5net]
+    environment:
+      HTTP_ENDPOINT_URL: http://http-endpoint:8080
+    volumes:
+      - target-logs:/var/log/targets
+    restart: unless-stopped
+
+  gateway:
+    build:
+      context: ..
+      dockerfile: gateway/Dockerfile
+    image: inspection/gateway
+    container_name: t5-gateway
+    networks: [t5net]
+    environment:
+      UPSTREAM_URL: http://mcp-http:8091/mcp
+      GATEWAY_LOG_DIR: /var/log/gateway
+      GATEWAY_AGENT_ID: t5-replay
+    volumes:
+      - gateway-logs:/var/log/gateway
+    depends_on: [mcp-http]
+    restart: unless-stopped
+
+  net-peer:
+    build:
+      context: ../targets
+      dockerfile: net-peer/Dockerfile
+    image: inspection/net-peer
+    container_name: t5-net-peer
+    networks: [t5net]
+    volumes:
+      - target-logs:/var/log/targets
+    restart: unless-stopped
+
+  tracee:
+    build:
+      context: ../sensor
+      dockerfile: Dockerfile.tracee
+    image: inspection/tracee
+    container_name: t5-tracee
+    privileged: true
+    pid: host
+    cgroup: host
+    volumes:
+      - /etc/os-release:/etc/os-release-host:ro
+      - /var/run:/var/run:ro
+      - tracee-data:/tmp/tracee
+    profiles: [sensor]
+    restart: unless-stopped
+
+  openclaw:
+    build:
+      context: ..
+      dockerfile: harnesses/openclaw/Dockerfile
+    image: inspection/openclaw
+    container_name: t5-openclaw
+    networks: [t5net]
+    ports:
+      - "127.0.0.1:28789:18789"
+    environment:
+      TARGET_LOG_DIR: /var/log/targets
+      REPLAY_LOG_DIR: /workspace/replay
+      # T4/T5 on OpenClaw: the before_tool_call hook is the enforcement point
+      # (T4_MODE=1 allow-all); the http-stdio server (spawned per mcp.servers)
+      # inherits MCP_GATEWAY_URL, so the http tool calls cross BOTH points.
+      T4_MODE: "1"
+      MCP_GATEWAY_URL: http://gateway:8090/mcp
+    volumes:
+      - target-logs:/var/log/targets
+      - ../runs/openclaw:/workspace/replay
+      - ../harnesses/openclaw/config/openclaw-t4.json:/opt/inspection-replay/openclaw-t4.json:ro
+    restart: unless-stopped
+
+  pi:
+    build:
+      context: ..
+      dockerfile: harnesses/pi/Dockerfile
+    image: inspection/pi
+    container_name: t5-pi
+    networks: [t5net]
+    environment:
+      TARGET_LOG_DIR: /var/log/targets
+      REPLAY_LOG_DIR: /workspace/replay
+      T4_MODE: "1"                          # harness-native enforcement point
+      MCP_GATEWAY_URL: http://gateway:8090/mcp   # T5: http tool calls also cross the gateway
+    volumes:
+      - target-logs:/var/log/targets
+      - ../runs/pi:/workspace/replay
+      - ../harnesses/pi/config/mcp.json:/root/.pi/agent/mcp.json:ro
+    restart: unless-stopped
+
+networks:
+  t5net: {}
+
+volumes:
+  target-logs: {}
+  gateway-logs: {}
+  tracee-data: {}

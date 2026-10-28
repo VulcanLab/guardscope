@@ -1,0 +1,122 @@
+# compose/t6.yaml — deployment design T6: in-process enforcement
+# (main.tex Table 1). Same placement as T4 — the policy engine lives in the
+# harness process — but the mechanism is a POLICY ENGINE: declarative rules
+# over tool names and argument values (Progent-style symbolic semantics),
+# evaluated at pi's tool_call hook; denials block (fail-closed). The policy
+# (harnesses/pi/config/t6-policy.json) is mounted into the container and
+# captured per run as the auditable policy artifact.
+#
+# Outcomes per action class (main.tex §5.2, v1 configuration):
+#   stdio_tool_call     checked     (in-process engine evaluates tool calls)
+#   http_tool_call      checked     (same)
+#   direct_network      bypassed    (process-level, invisible by construction)
+#   process_spawn       bypassed
+#   file_write          bypassed
+#   credential_access   bypassed
+#
+# Note: T6's measured coverage column matches T4's — the placement fixes the
+# outcomes; the designs differ in MECHANISM (policy engine vs permission
+# mode) and in INSPECTABLE FEATURES (argument-level rules; the decisions
+# record carries the matched rule and inspected arguments). The Progent
+# product itself is validated against this design by a separate
+# behavioral measurement, not by this topology.
+#
+# The canonical trace spec is unchanged from T0–T5 — only the enforcement
+# mechanism differs.
+#
+# The Tracee sensor runs OUTSIDE the deployed topology (no t6net attachment):
+# bring up the topology FIRST, wait for the harness containers to be healthy,
+# then start the sensor (Tracee container-cache startup race —
+# sensor/README.md):
+#   docker compose -f compose/t6.yaml up -d --build
+#   docker compose -f compose/t6.yaml --profile sensor up -d tracee
+
+name: inspection-t6
+
+services:
+  http-endpoint:
+    build:
+      context: ../targets
+      dockerfile: http-endpoint/Dockerfile
+    image: inspection/http-endpoint
+    container_name: t6-http-endpoint
+    networks: [t6net]
+    volumes:
+      - target-logs:/var/log/targets
+    restart: unless-stopped
+
+  net-peer:
+    build:
+      context: ../targets
+      dockerfile: net-peer/Dockerfile
+    image: inspection/net-peer
+    container_name: t6-net-peer
+    networks: [t6net]
+    volumes:
+      - target-logs:/var/log/targets
+    restart: unless-stopped
+
+  tracee:
+    build:
+      context: ../sensor
+      dockerfile: Dockerfile.tracee
+    image: inspection/tracee
+    container_name: t6-tracee
+    privileged: true
+    pid: host
+    cgroup: host
+    volumes:
+      - /etc/os-release:/etc/os-release-host:ro
+      - /var/run:/var/run:ro
+      - tracee-data:/tmp/tracee
+    profiles: [sensor]
+    restart: unless-stopped
+
+  openclaw:
+    build:
+      context: ..
+      dockerfile: harnesses/openclaw/Dockerfile
+    image: inspection/openclaw
+    container_name: t6-openclaw
+    networks: [t6net]
+    ports:
+      - "127.0.0.1:28789:18789"
+    environment:
+      TARGET_LOG_DIR: /var/log/targets
+      REPLAY_LOG_DIR: /workspace/replay
+      # T6 on OpenClaw: the in-process policy engine decides at the
+      # before_tool_call hook (fail-closed); the policy and the variant config
+      # (mcp.servers) are mounted read-only.
+      T6_MODE: "1"
+    volumes:
+      - target-logs:/var/log/targets
+      - ../runs/openclaw:/workspace/replay
+      - ../harnesses/openclaw/config/t6-policy.json:/opt/inspection/t6-policy.json:ro
+      - ../harnesses/openclaw/config/openclaw-t4.json:/opt/inspection-replay/openclaw-t4.json:ro
+    restart: unless-stopped
+
+  pi:
+    build:
+      context: ..
+      dockerfile: harnesses/pi/Dockerfile
+    image: inspection/pi
+    container_name: t6-pi
+    networks: [t6net]
+    environment:
+      TARGET_LOG_DIR: /var/log/targets
+      REPLAY_LOG_DIR: /workspace/replay
+      T6_MODE: "1"                          # T6: in-process policy engine
+      T6_POLICY_PATH: /opt/inspection/t6-policy.json
+    volumes:
+      - target-logs:/var/log/targets
+      - ../runs/pi:/workspace/replay
+      - ../harnesses/pi/config/mcp.json:/root/.pi/agent/mcp.json:ro
+      - ../harnesses/pi/config/t6-policy.json:/opt/inspection/t6-policy.json:ro
+    restart: unless-stopped
+
+networks:
+  t6net: {}
+
+volumes:
+  target-logs: {}
+  tracee-data: {}

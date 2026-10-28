@@ -1,0 +1,477 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentic-security/inspection/exerciser/record.schema.json",
+  "title": "Exerciser action record / run manifest",
+  "description": "Schemas for the two artifacts each run writes: one action-log record per executed action (action-log.jsonl) and the run manifest (run-manifest.json). Records deliberately carry NO classification/outcome field (caught/bypassed/allowed/denied/inspected): the exerciser is policy-blind and never self-reports whether an action was caught; classification happens only in the reconcile step against Tracee. Timing fields (started/ended_epoch_ns) and process-identity fields (pid, *_pid) are excluded from the run's action-log digest so two runs with the same config produce identical digests.",
+  "$ref": "#/$defs/action_record",
+  "$defs": {
+    "action_record": {
+      "type": "object",
+      "required": [
+        "schema",
+        "run_id",
+        "id",
+        "class",
+        "op",
+        "target",
+        "arguments",
+        "variant",
+        "origin_channel",
+        "origin_channel_detail",
+        "status",
+        "started_epoch_ns",
+        "ended_epoch_ns",
+        "provenance",
+        "originator"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "schema": {
+          "const": "exerciser-action-record/1"
+        },
+        "run_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^a[0-9]{3,}$"
+        },
+        "class": {
+          "enum": [
+            "stdio_tool_call",
+            "http_tool_call",
+            "direct_network",
+            "process_spawn",
+            "file_write",
+            "credential_access"
+          ]
+        },
+        "op": {
+          "type": "string",
+          "minLength": 1
+        },
+        "target": {
+          "type": "string",
+          "minLength": 1
+        },
+        "arguments": {
+          "type": "object"
+        },
+        "variant": {
+          "enum": [
+            "default",
+            "ordinary",
+            "outliving",
+            "daemon"
+          ],
+          "description": "Origin variant used for this instance (process_spawn only has non-default variants)."
+        },
+        "origin_channel": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "enum": [
+            "ok",
+            "error"
+          ]
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "detail": {
+          "type": "object",
+          "description": "Per-originator result details (argv, bytes, http status, submitted_pid, ...). Free-form by design: it reports what the originator did, never what an enforcement point thought about it."
+        },
+        "started_epoch_ns": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ended_epoch_ns": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "provenance": {
+          "const": "exerciser",
+          "description": "Every record identifies its originator as the exerciser. Placement is attached per RUN (run manifest placement field), not per record; records reference it via run_id."
+        },
+        "originator": {
+          "type": "object",
+          "required": [
+            "exerciser_version",
+            "function",
+            "action_index"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "exerciser_version": {
+              "type": "string",
+              "minLength": 1
+            },
+            "function": {
+              "type": "string",
+              "minLength": 1
+            },
+            "action_index": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "deferred": {
+              "type": "boolean",
+              "description": "True when the record completed at submission and the effect lands later (outliving/daemon variants); the deferred join result is in the run manifest."
+            }
+          }
+        },
+        "origin_channel_detail": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Variant/routing detail (spawn variant, gateway route); origin_channel stays the manifest's canonical label."
+        }
+      }
+    },
+    "run_manifest": {
+      "type": "object",
+      "required": [
+        "schema",
+        "run_id",
+        "created",
+        "exerciser",
+        "trace",
+        "path_manifest",
+        "plan",
+        "selection",
+        "window_epoch_ns",
+        "placement",
+        "action_log",
+        "deferred_join",
+        "summary"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "schema": {
+          "const": "exerciser-run-manifest/1"
+        },
+        "run_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "created": {
+          "type": "string",
+          "minLength": 1
+        },
+        "exerciser": {
+          "type": "object",
+          "required": [
+            "version",
+            "manifest_sha256",
+            "git"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "version": {
+              "type": "string",
+              "minLength": 1
+            },
+            "manifest_sha256": {
+              "type": "string",
+              "minLength": 8
+            },
+            "git": {
+              "type": "object",
+              "required": [
+                "available",
+                "commit",
+                "dirty"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "available": {
+                  "type": "boolean"
+                },
+                "commit": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "dirty": {
+                  "type": [
+                    "boolean",
+                    "null"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "trace": {
+          "type": "object",
+          "required": [
+            "path",
+            "canonical_sha256",
+            "raw_sha256",
+            "sidecar_verified"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "canonical_sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "raw_sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "sidecar_verified": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            }
+          }
+        },
+        "path_manifest": {
+          "type": "object",
+          "required": [
+            "path",
+            "sha256",
+            "sidecar_verified",
+            "matches_spec"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "sidecar_verified": {
+              "type": "boolean"
+            },
+            "matches_spec": {
+              "type": "boolean"
+            }
+          }
+        },
+        "plan": {
+          "type": "object",
+          "required": [
+            "source",
+            "content"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "source": {
+              "type": "string"
+            },
+            "sha256": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "content": {
+              "type": "object"
+            }
+          }
+        },
+        "selection": {
+          "type": "object",
+          "required": [
+            "mode",
+            "select",
+            "executed_ids"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "mode": {
+              "enum": [
+                "all",
+                "escape",
+                "twins"
+              ]
+            },
+            "select": {
+              "type": [
+                "array",
+                "null"
+              ],
+              "items": {
+                "type": "string"
+              }
+            },
+            "executed_ids": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "window_epoch_ns": {
+          "type": "object",
+          "required": [
+            "start",
+            "end"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "start": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "end": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "placement": {
+          "type": "object",
+          "required": [
+            "descriptor",
+            "attached",
+            "note"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "descriptor": {
+              "type": [
+                "object",
+                "null"
+              ],
+              "description": "Concrete placement descriptor attached per run by the placement wrapper (runtime, container_id, netns, uid, pid_namespace, attached_by, attached_at) \u2014 the harness-trust-domain placement is a later concern; null is the v1 placeholder."
+            },
+            "attached": {
+              "type": "boolean"
+            },
+            "note": {
+              "type": "string"
+            }
+          }
+        },
+        "action_log": {
+          "type": "object",
+          "required": [
+            "path",
+            "records",
+            "ok",
+            "failed",
+            "digest",
+            "digest_algorithm",
+            "digest_excludes"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "records": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "ok": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "failed": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "digest": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$",
+              "description": "SHA-256 over all action records with the digest_excludes fields removed: two runs with the same config produce identical digests."
+            },
+            "digest_algorithm": {
+              "const": "sha256"
+            },
+            "digest_excludes": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "digest_note": {
+              "type": "string"
+            }
+          }
+        },
+        "deferred_join": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "pid",
+              "kind",
+              "joined",
+              "exit_code"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "pid": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "kind": {
+                "enum": [
+                  "outliving",
+                  "daemon"
+                ]
+              },
+              "joined": {
+                "type": "boolean"
+              },
+              "exit_code": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "note": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "summary": {
+          "type": "object",
+          "required": [
+            "ok",
+            "executed",
+            "failed"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "ok": {
+              "type": "boolean"
+            },
+            "executed": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "failed": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
+      }
+    }
+  }
+}

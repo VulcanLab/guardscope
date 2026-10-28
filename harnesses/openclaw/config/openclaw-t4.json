@@ -1,0 +1,25 @@
+// OpenClaw gateway config for the T4/T6 deployments (harness-native / in-process
+// enforcement). Variant of openclaw.json: registers the two toy MCP servers so
+// canonical tool calls execute as real MCP tools of the harness. The gateway
+// token matches compose (OPENCLAW_GATEWAY_TOKEN) for the driver. Installed by
+// the entrypoint when T4_MODE/T6_MODE is set (merged over the baked config so
+// the plugins-install registry state is preserved).
+{
+  "gateway": {
+    "mode": "local",
+    "bind": "lan",
+    "auth": { "mode": "token", "token": "inspection-t0-token" }
+  },
+  "tools": {
+    // the default profile filters plugin-owned tools (incl. bundle-mcp) after
+    // registration; allow them back so /tools/invoke can resolve the canonical
+    // MCP tool calls (issue openclaw/openclaw#47683, tools.profile filtering)
+    "alsoAllow": ["group:plugins"]
+  },
+  "mcp": {
+    "servers": {
+      "toy-mcp-fs": { "command": "python3", "args": ["-u", "/opt/inspection/mcp-fs/server.py"] },
+      "toy-mcp-http": { "command": "python3", "args": ["-u", "/opt/inspection/mcp-http-stdio/server.py"] }
+    }
+  }
+}

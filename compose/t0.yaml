@@ -1,0 +1,95 @@
+# compose/t0.yaml — T0 topology, M3 slice: C4 side-effect targets + C5 Tracee sensor.
+#
+# Standalone network targets (hostnames match the canonical trace spec
+# trace/traces/baseline.yaml targets: http://http-endpoint:8080, net-peer:9000/9001).
+#
+# The Tracee sensor runs OUTSIDE the deployed topology (no t0net attachment,
+# no published ports): it observes container activity through host
+# pid/cgroup namespaces, so target containers need no privileged mode.
+# Start it explicitly:  docker compose -f compose/t0.yaml --profile sensor up -d
+#
+# Arriving in later milestones:
+#   M4/M5: openclaw / opencode harness services on t0net — these run the
+#     MCP stdio server (targets/mcp-stdio), seed credentials
+#     (targets/credentials/seed.sh) and workspace (targets/fs/setup.sh)
+#     in-container, and mount the same target-logs volume.
+
+name: inspection-t0
+
+services:
+  http-endpoint:
+    build:
+      context: ../targets
+      dockerfile: http-endpoint/Dockerfile
+    image: inspection/http-endpoint
+    container_name: t0-http-endpoint
+    networks: [t0net]
+    volumes:
+      - target-logs:/var/log/targets
+    restart: unless-stopped
+
+  net-peer:
+    build:
+      context: ../targets
+      dockerfile: net-peer/Dockerfile
+    image: inspection/net-peer
+    container_name: t0-net-peer
+    networks: [t0net]
+    volumes:
+      - target-logs:/var/log/targets
+    restart: unless-stopped
+
+  tracee:
+    build:
+      context: ../sensor
+      dockerfile: Dockerfile.tracee
+    image: inspection/tracee
+    container_name: t0-tracee
+    privileged: true
+    pid: host
+    cgroup: host
+    volumes:
+      - /etc/os-release:/etc/os-release-host:ro
+      - /var/run:/var/run:ro
+      - tracee-data:/tmp/tracee
+    profiles: [sensor]
+    restart: unless-stopped
+
+  openclaw:
+    build:
+      context: ..
+      dockerfile: harnesses/openclaw/Dockerfile
+    image: inspection/openclaw
+    container_name: t0-openclaw
+    networks: [t0net]
+    ports:
+      - "127.0.0.1:28789:18789"   # driver: POST /tools/invoke -> replay_trace (host 28789; 18789 reserved by real deployments)
+    environment:
+      TARGET_LOG_DIR: /var/log/targets
+      REPLAY_LOG_DIR: /workspace/replay
+    volumes:
+      - target-logs:/var/log/targets
+      - ../runs/openclaw:/workspace/replay   # replay log retained per-run (M7 refines)
+    restart: unless-stopped
+
+  pi:
+    build:
+      context: ..
+      dockerfile: harnesses/pi/Dockerfile
+    image: inspection/pi
+    container_name: t0-pi
+    networks: [t0net]
+    environment:
+      TARGET_LOG_DIR: /var/log/targets
+      REPLAY_LOG_DIR: /workspace/replay
+    volumes:
+      - target-logs:/var/log/targets
+      - ../runs/pi:/workspace/replay   # replay log/result retained per-run (M7 refines)
+    restart: unless-stopped
+
+networks:
+  t0net: {}
+
+volumes:
+  target-logs: {}
+  tracee-data: {}

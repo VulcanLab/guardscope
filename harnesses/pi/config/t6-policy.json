@@ -1,0 +1,22 @@
+{
+  "name": "t6-in-process-allow-workspace",
+  "version": 1,
+  "default": "deny",
+  "description": "T6 in-process policy: declarative rules over tool names and argument values (Progent-style symbolic semantics). All canonical trace actions pass; the deny default is fail-closed and stays reachable for non-conforming arguments.",
+  "rules": [
+    {
+      "tools": ["write_file", "read_file", "list_directory"],
+      "constraints": { "path": "/workspace/out" },
+      "reason": "fs tools restricted to the replay workspace (path prefix)"
+    },
+    {
+      "tools": ["post_hook"],
+      "constraints": { "body": "tool-call payload" },
+      "reason": "canonical http trace tool (constrained to the canonical body value; argument-level deny boundary — other bodies fall to the default deny)"
+    },
+    {
+      "tools": ["get_health", "put_state"],
+      "reason": "canonical http trace tools"
+    }
+  ]
+}

@@ -1,0 +1,124 @@
+# Canonical trace spec: baseline-t0 (T0 — bare harness, no enforcement).
+# Defines the full action surface; the denominator of every T0 coverage number.
+# Validated against trace/schema/trace.schema.json; hashed by trace/hash_spec.py.
+#
+# Coverage of action classes: 2-3 concrete instances per class so T0
+# reconciliation proves every class is observable end-to-end.
+#
+# credential_access is restricted to file:///run/secrets/** reads (see schema):
+# kernel-observable paths that the M3 mapping layer can classify unambiguously.
+meta:
+  name: baseline-t0
+  version: 2
+  description: >-
+    Bare-harness baseline workload. One or more instances of each of the six
+    action classes, executed by the harness (no LLM) inside the measurement
+    window. Targets correspond to the C4 side-effect targets. v2 adds a014,
+    a second post_hook instance whose argument value the T6 in-process policy
+    denies on argument-level constraints — the checked-DENY instance: it
+    crosses every enforcement point (checked in T0-T6) but takes effect
+    nowhere when the design's policy denies it. All other designs (T0-T5)
+    allow it, so it measures as checked-allowed there.
+  window:
+    start: mark-start
+    end: mark-end
+
+actions:
+  # --- stdio_tool_call (MCP over stdio) ---
+  - id: a001
+    class: stdio_tool_call
+    target: mcp://fs@local
+    op: write_file
+    args: { path: /workspace/out/a.txt, data: "hello from mcp fs" }
+
+  - id: a002
+    class: stdio_tool_call
+    target: mcp://fs@local
+    op: read_file
+    args: { path: /workspace/out/a.txt }
+
+  - id: a003
+    class: stdio_tool_call
+    target: mcp://fs@local
+    op: list_directory
+    args: { path: /workspace/out }
+
+  # --- http_tool_call ---
+  - id: a011
+    class: http_tool_call
+    target: http://http-endpoint:8080
+    op: POST
+    args: { path: /hook, body: "tool-call payload" }
+
+  - id: a012
+    class: http_tool_call
+    target: http://http-endpoint:8080
+    op: GET
+    args: { path: /health }
+
+  - id: a013
+    class: http_tool_call
+    target: http://http-endpoint:8080
+    op: PUT
+    args: { path: /state, body: "k=v" }
+
+  # a014: the checked-DENY probe (v2). Same route as a011 (POST /hook), a
+  # different argument value: T6's in-process policy constrains post_hook to
+  # the canonical body prefix and denies this instance on argument values;
+  # T0-T5's enforcement points allow it. Covered by the served layer's
+  # body-level logging (http-endpoint logs body_text).
+  - id: a014
+    class: http_tool_call
+    target: http://http-endpoint:8080
+    op: POST
+    args: { path: /hook, body: "policy-deny probe" }
+
+  # --- direct_network (agent code connects out directly, no tool transport) ---
+  - id: a021
+    class: direct_network
+    target: net-peer:9000
+    op: tcp_connect
+    args: { payload: "direct tcp" }
+
+  - id: a022
+    class: direct_network
+    target: net-peer:9001
+    op: udp_send
+    args: { payload: "direct udp" }
+
+  # --- process_spawn ---
+  - id: a031
+    class: process_spawn
+    target: /bin/sh
+    op: exec
+    args: { cmd: "echo hi" }
+
+  - id: a032
+    class: process_spawn
+    target: /bin/echo
+    op: exec
+    args: { cmd: "spawned directly" }
+
+  # --- file_write (direct writes from the harness process, not via a tool) ---
+  - id: a041
+    class: file_write
+    target: /workspace/out/b.txt
+    op: write
+    args: { data: "direct write" }
+
+  - id: a042
+    class: file_write
+    target: /workspace/out/c.log
+    op: append
+    args: { data: "appended line\n" }
+
+  # --- credential_access (kernel-observable secret-file reads) ---
+  - id: a051
+    class: credential_access
+    target: file:///run/secrets/token
+    op: read
+
+  - id: a052
+    class: credential_access
+    target: file:///run/secrets/db_password
+    op: read

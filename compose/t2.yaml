@@ -1,0 +1,189 @@
+# compose/t2.yaml — deployment design T2: Gateway + forced network egress
+# (main.tex Table 1). T1's topology (AGT MCP Security Gateway on every
+# harness http_tool_call) plus a NETWORK-FORCED default-deny egress policy on
+# the harness containers (main.tex: enforced at the container network layer,
+# so it holds regardless of the harness configuration).
+#
+# Outcomes per action class (main.tex §5.2):
+#   http_tool_call      checked     (crosses the gateway, as in T1)
+#   direct_network      PREVENTED   (attempt fires; net-peer never serves —
+#                                   the egress jail rejects at the output hook)
+#   stdio_tool_call     bypassed    (local transport, stays inside the netns
+#                                   — the bypass T2 leaves open)
+#   process_spawn       bypassed
+#   file_write          bypassed
+#   credential_access   bypassed
+#
+# Enforcement: two one-shot egress-jail services share each harness netns
+# (network_mode: "service:<harness>", CAP_NET_ADMIN), apply a default-deny
+# nftables output policy allowing ONLY gateway:8090 (and loopback for the
+# embedded DNS), then exit. The runner gates the replay on their clean exit
+# (run.py docker-waits them), so a run never starts uninspected. Rules persist
+# in the kernel netns; the unprivileged harness uid cannot remove them.
+#
+# The canonical trace spec is unchanged from T0/T1 — only the topology
+# differs, keeping T2 coverage comparable to T0/T1.
+#
+# The Tracee sensor runs OUTSIDE the deployed topology (no t2net attachment):
+# bring up the topology FIRST, wait for the harness containers to be healthy,
+# then start the sensor (Tracee container-cache startup race —
+# sensor/README.md):
+#   docker compose -f compose/t2.yaml up -d --build
+#   docker compose -f compose/t2.yaml --profile sensor up -d tracee
+
+# The canonical trace spec is unchanged from T0/T1 — only the topology
+# differs, keeping T2 coverage comparable to T0/T1.
+#
+# Direct connections from harness code to the net-peer target are REJECTED by
+# the egress jail (prevented); stdio MCP, spawns, file writes, and credential
+# reads stay inside the harness netns and deliberately BYPASS the gateway —
+# the local-transport escape T2 leaves open (main.tex Table 1).
+#
+#   harness ──MCP over HTTP:8090──▶ t2-gateway ──MCP over HTTP:8091──▶ t2-mcp-http
+#                                     │ (MCPGateway.intercept_tool_call,      │ raw HTTP:8080
+#                                     │  audit -> gateway-logs volume)        ▼
+#                                     │                                  t2-http-endpoint
+#   harness ──▶ net-peer (REJECTED by the netns output policy: prevented)
+#   harness ── raw exec/fs/secrets (NO gateway, NO egress — inside the netns)
+#
+# The Tracee sensor runs OUTSIDE the deployed topology (no t2net attachment).
+
+name: inspection-t2
+
+services:
+  http-endpoint:
+    build:
+      context: ../targets
+      dockerfile: http-endpoint/Dockerfile
+    image: inspection/http-endpoint
+    container_name: t2-http-endpoint
+    networks: [t2net]
+    volumes:
+      - target-logs:/var/log/targets
+    restart: unless-stopped
+
+  mcp-http:
+    build:
+      context: ../targets
+      dockerfile: mcp-http/Dockerfile
+    image: inspection/mcp-http
+    container_name: t2-mcp-http
+    networks: [t2net]
+    environment:
+      HTTP_ENDPOINT_URL: http://http-endpoint:8080
+    volumes:
+      - target-logs:/var/log/targets
+    restart: unless-stopped
+
+  gateway:
+    build:
+      context: ..
+      dockerfile: gateway/Dockerfile
+    image: inspection/gateway
+    container_name: t2-gateway
+    networks: [t2net]
+    environment:
+      UPSTREAM_URL: http://mcp-http:8091/mcp
+      GATEWAY_LOG_DIR: /var/log/gateway
+      GATEWAY_AGENT_ID: t2-replay
+    volumes:
+      - gateway-logs:/var/log/gateway
+    depends_on: [mcp-http]
+    restart: unless-stopped
+
+  net-peer:
+    build:
+      context: ../targets
+      dockerfile: net-peer/Dockerfile
+    image: inspection/net-peer
+    container_name: t2-net-peer
+    networks: [t2net]
+    volumes:
+      - target-logs:/var/log/targets
+    restart: unless-stopped
+
+  tracee:
+    build:
+      context: ../sensor
+      dockerfile: Dockerfile.tracee
+    image: inspection/tracee
+    container_name: t2-tracee
+    privileged: true
+    pid: host
+    cgroup: host
+    volumes:
+      - /etc/os-release:/etc/os-release-host:ro
+      - /var/run:/var/run:ro
+      - tracee-data:/tmp/tracee
+    profiles: [sensor]
+    restart: unless-stopped
+
+  openclaw:
+    build:
+      context: ..
+      dockerfile: harnesses/openclaw/Dockerfile
+    image: inspection/openclaw
+    container_name: t2-openclaw
+    networks: [t2net]
+    ports:
+      - "127.0.0.1:28789:18789"   # driver: POST /tools/invoke -> replay_trace
+    environment:
+      TARGET_LOG_DIR: /var/log/targets
+      REPLAY_LOG_DIR: /workspace/replay
+      GATEWAY_URL: http://gateway:8090      # T2: http_tool_call via the gateway
+    volumes:
+      - target-logs:/var/log/targets
+      - ../runs/openclaw:/workspace/replay
+    depends_on: [gateway]
+    restart: unless-stopped
+
+  pi:
+    build:
+      context: ..
+      dockerfile: harnesses/pi/Dockerfile
+    image: inspection/pi
+    container_name: t2-pi
+    networks: [t2net]
+    environment:
+      TARGET_LOG_DIR: /var/log/targets
+      REPLAY_LOG_DIR: /workspace/replay
+      GATEWAY_URL: http://gateway:8090      # T2: http_tool_call via the gateway
+    volumes:
+      - target-logs:/var/log/targets
+      - ../runs/pi:/workspace/replay
+    depends_on: [gateway]
+    restart: unless-stopped
+
+  # --- forced egress (T2): one-shot jail per harness netns -----------------
+  # Shares the harness netns (network_mode: service:<harness>), applies the
+  # default-deny nftables output policy, exits. The runner docker-waits both
+  # jails before replaying the trace.
+  egress-jail-pi:
+    build:
+      context: ../targets
+      dockerfile: egress-jail/Dockerfile
+    image: inspection/egress-jail
+    container_name: t2-egress-jail-pi
+    network_mode: "service:pi"
+    cap_add: [NET_ADMIN]
+    depends_on: [pi, gateway]
+    restart: "no"
+
+  egress-jail-openclaw:
+    build:
+      context: ../targets
+      dockerfile: egress-jail/Dockerfile
+    image: inspection/egress-jail
+    container_name: t2-egress-jail-openclaw
+    network_mode: "service:openclaw"
+    cap_add: [NET_ADMIN]
+    depends_on: [openclaw, gateway]
+    restart: "no"
+
+networks:
+  t2net: {}
+
+volumes:
+  target-logs: {}
+  gateway-logs: {}
+  tracee-data: {}

@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentic-security/inspection/exerciser/plan-schema.json",
+  "title": "Exerciser run plan",
+  "description": "Selects per-action origin variant (outliving vs ordinary vs daemon spawn; only process_spawn has variants) and timing (fixed inter-action delay; the canonical trace spec carries no spacing field, so the default is 0.0 — back-to-back, mirroring the harness replay). The driver cross-checks action ids and variant applicability against the trace spec (JSON Schema cannot cross-reference files).",
+  "type": "object",
+  "required": ["schema"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": {"const": "exerciser-plan/1"},
+    "inter_action_delay_s": {
+      "type": "number",
+      "minimum": 0,
+      "default": 0,
+      "description": "Fixed delay in seconds slept between consecutive actions (not after the last). Wall clock never branches the action sequence."
+    },
+    "join_timeout_s": {
+      "type": "number",
+      "minimum": 0,
+      "default": 10,
+      "description": "Bounded wait for outstanding (outliving/daemon) children before the driver exits; v1 joins every child so no process outlives the run."
+    },
+    "routes": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "http": {
+          "enum": ["raw", "gateway"],
+          "default": "raw",
+          "description": "raw: plain HTTP request to the trace's own endpoint (T0 harness fetch shape); gateway: MCP tools/call JSON-RPC POST to the gateway /mcp endpoint (T1+ harness route)."
+        },
+        "gateway_url": {
+          "type": "string",
+          "pattern": "^https?://[A-Za-z0-9._:-]+(:[0-9]{1,5})?",
+          "description": "Required with http=gateway (or set via the harness env knob GATEWAY_URL)."
+        }
+      }
+    },
+    "stdio_server_cmd": {
+      "type": "array",
+      "items": {"type": "string"},
+      "minItems": 1,
+      "description": "MCP stdio tool-server argv for the stdio twins (default: env MCP_SERVER_CMD, else python3 -u <repo>/targets/mcp-stdio/server.py; the harness container bakes /opt/inspection/mcp-fs/server.py)."
+    },
+    "actions": {
+      "type": "object",
+      "description": "Per-action overrides keyed by canonical action id (cross-checked against the trace spec by the driver).",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["variant"],
+        "additionalProperties": false,
+        "properties": {
+          "variant": {
+            "enum": ["ordinary", "outliving", "daemon"],
+            "description": "Origin variant; only process_spawn actions accept a variant (driver-enforced)."
+          }
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {"routes": {"required": ["http"], "properties": {"http": {"const": "gateway"}}}}
+      },
+      "then": {
+        "properties": {"routes": {"required": ["gateway_url"]}}
+      }
+    }
+  ]
+}

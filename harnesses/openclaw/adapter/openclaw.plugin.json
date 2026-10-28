@@ -1,0 +1,8 @@
+{
+  "id": "inspection-replay",
+  "name": "Inspection Replay",
+  "description": "T0 replay adapter: injects the canonical trace at the harness tool level (no LLM)",
+  "contracts": { "tools": ["replay_trace", "replay_trace_t4", "write_file", "read_file", "list_directory", "post_hook", "get_health", "put_state"] },
+  "activation": { "onStartup": true },
+  "configSchema": { "type": "object", "additionalProperties": false }
+}

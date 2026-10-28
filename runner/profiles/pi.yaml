@@ -1,0 +1,203 @@
+# Reconciliation profile: Pi harness (M6, C7).
+#
+# A profile carries everything reconciliation needs that is harness-specific:
+#   noise             — in-scope kernel records that are harness/runtime/driver
+#                       infrastructure, not workload (allowlist; excluded from
+#                       per-class accounting AND leftover detection)
+#   expected_extras   — kernel observations that ARE workload side-effects but
+#                       belong to no canonical action (e.g. the MCP server
+#                       spawn, or a file open caused by a stdio tool call);
+#                       attributed, not counted against the spec
+#   multiplicity      — documented kernel-level multiplicities (see
+#                       harnesses/pi/README.md): how many kernel observations
+#                       one canonical action produces
+#
+# Noise rules apply to BOTH mapped and unmapped records. A `where` key absent
+# from a rule is a wildcard; all present keys must match. Matchers: event,
+# class, process (substring), path / path_prefix / path_basename / path_glob,
+# port, flags_contain (open(2) flag tokens), argv_contains (joined argv
+# substring), retval_nonzero.
+
+profile: pi/v1
+harness: pi
+container_name: t0-pi
+
+# Slack (ns) added to both ends of the replay window before scoping.
+# Tracee flushes events in batches; the LAST action's kernel events can land
+# slightly after the sampled window end (observed 139 us on the original local host).
+# Keep this well below the spacing between consecutive runs.
+window_slack_ns: 1000000000
+
+# served-target names as they appear in the shared target-logs volume
+# (the MCP stdio server logs under its SERVER_NAME, not the class name)
+served_targets:
+  http: http-endpoint
+  stdio: toy-mcp-fs
+  network: net-peer
+
+noise:
+  - id: exec-path-probe
+    reason: >
+      node/pi resolve commands through PATH; Tracee records every execve
+      attempt, so ENOENT probes appear as failed execve records (pi-specific:
+      4 records per resolved binary for the pi shim and the MCP python3
+      spawn). Only successful execs are spawns.
+    where: { event: execve, retval_nonzero: true }
+
+  - id: driver-cleanup-execs
+    reason: >
+      driver-side docker-exec cleanup inside the container (stale replay
+      artifacts rm -f, chown of the replay dir back to the host uid).
+    where:
+      event: execve
+      argv_contains: ["rm -f ", "chown "]
+
+  - id: runtime-execs
+    reason: container runtime / docker exec helper processes
+    where:
+      event: execve
+      process_contains: [runc, conmon, crun, chown, chmod, rm, ls, head, cat, stat]
+
+  - id: oom-score-adj
+    reason: runtime/driver /proc/*/oom_score_adj tuning writes
+    where: { event: security_file_open, path_glob: "/proc/*/oom_score_adj" }
+
+  - id: docker-exec-helpers
+    reason: >
+      driver-side docker exec helper commands (chmod/ls/head/cat/...) appear
+      as in-container execve; Tracee 0.24 often reports them with an EMPTY
+      processName and argv, so they cannot be matched by process (observed
+      live 2026-09-10). Workload spawn targets are /bin/sh and /bin/echo.
+    where:
+      event: execve
+      path_basename: [chmod, ls, head, cat, stat, tail, grep, mkdir, rm, chown]
+
+  - id: runtime-file-opens
+    reason: >
+      container-runtime file opens inside the window: docker exec spawns
+      runc / runc:[1:CHILD] which reads the container rootfs (/ and /runc)
+      to start the exec process (observed live 2026-09-10).
+    where:
+      event: security_file_open
+      process_contains: [runc]
+
+  - id: infra-read-opens
+    reason: >
+      interpreter/runtime/library/config read-opens (python3 + node startup,
+      pi extension loading) are infrastructure; file READS are not a canonical
+      action class, so they never map and must be allowlisted by prefix.
+    where:
+      event: security_file_open
+      flags_contain: [O_RDONLY]
+      path_prefix:
+        - /usr/
+        - /lib/
+        - /lib64/
+        - /etc/
+        - /opt/inspection        # harness-baked adapter / MCP server / seeds
+        - /home/node/
+        - /root/                # pi container runs as root
+        - /workspace/replay     # driver-staged compiled trace (bare dir too)
+
+  - id: infra-paths
+    reason: instrumentation paths (sensor output, target logs, replay dir)
+    where:
+      path_prefix: [/proc/, /sys/, /dev/, /tmp/tracee, /var/log/targets, /workspace/replay]
+
+  - id: tool-file-reads
+    reason: >
+      MCP fs read_file/list_directory opens of workspace files (read-mode):
+      file reads are not a canonical action class, so these stay unmapped by
+      design. Deliberately narrow: READ-mode only, so a broken file_write
+      mapping (write opens falling through to unmapped) still fails.
+    where:
+      class: unmapped
+      event: security_file_open
+      flags_contain: [O_RDONLY]
+      path_prefix: [/workspace/out]  # no trailing slash: list_directory opens the bare dir
+
+  - id: node-socket-churn
+    reason: >
+      node/libuv worker-thread socket churn: DNS on the embedded resolver,
+      and ingress DNS replies whose dst_port is the ephemeral CLIENT port.
+      The port-based mapping already defines the workload ports; any network
+      event it leaves unmapped is non-workload by definition (mapping port
+      lists are version-pinned; if they drift, bump the mapping version).
+    where:
+      class: unmapped
+      event: [connect, sendto, sendmsg, net_packet_udp]
+
+  - id: node-compile-cache
+    reason: >
+      node 24's V8 compile cache (pi 1.0.4): reads/writes under
+      /tmp/node-compile-cache during startup and module loads — runtime
+      infrastructure, not workload (observed on the 1.0.4 bump, 2026-10-06).
+    where:
+      path_prefix: [/tmp/node-compile-cache]
+
+  - id: jiti-adapter-cache
+    reason: >
+      pi loads the TS adapter via jiti, which compiles it into
+      /tmp/jiti/adapter-replay.<hash>.mjs on every run (write + read opens):
+      harness instrumentation.
+    where:
+      path_prefix: [/tmp/jiti/]
+
+  - id: pipe-writes
+    reason: >
+      unmapped write() calls are pipe/socket/file transport traffic: stdio
+      tool calls are the fd-1 writes from the registered MCP server proc
+      (mapped as stdio_tool_call); file writes are keyed on
+      security_file_open (mapped as file_write). Residual risk, documented:
+      a broken server registry degrades stdio per-action evidence to the
+      served layer (the write-count envelope still applies to mapped
+      records).
+    where: { class: unmapped, event: write }
+
+expected_extras:
+  - id: pi-lifecycle-spawns
+    reason: >
+      the driver execs one pi RPC process per run: the pi shim and its node
+      exec chain (PATH candidates + resolved node binaries) are harness
+      lifecycle, not canonical actions.
+    class: process_spawn
+    where:
+      any_of:
+        - { argv_contains: ["--mode rpc"] }
+        - { path_basename: [pi, node] }
+
+  - id: mcp-server-spawn
+    reason: >
+      the MCP tool server is spawned as a harness child (stdio transport);
+      its successful execve maps as process_spawn but belongs to no canonical
+      action. In T4 the harness MCP config spawns it at pi startup (plus the
+      toy-mcp-http server); either can land inside the window.
+    class: process_spawn
+    where:
+      any_of:
+        - { argv_contains: ["mcp-stdio/server.py"] }
+        - { argv_contains: ["mcp-http-stdio/server.py"] }
+        - { path_basename: [python3, python3.12, python3.11] }
+
+  - id: mcp-write-file-opens
+    reason: >
+      an MCP write_file tool call opens the target file from the SERVER
+      process in write mode: the kernel observation maps as file_write but
+      belongs to the stdio action (a001).
+    class: file_write
+    where: { path: /workspace/out/a.txt, due_to: a001 }
+
+multiplicity:
+  # stdio: 1 response write per JSON-RPC request + 1 initialize handshake
+  stdio_handshake_extra_writes: 1
+  # node fetch pools connections: n http actions may share 1..n connects;
+  # observed connect count must be within [min, n_actions]
+  http_connects_min: 1
+  # raw TCP: one connect per tcp_connect action (no pooling on net.connect)
+  tcp_connects_per_action: 1
+  # UDP: each datagram may appear twice (egress/loopback capture)
+  udp_max_per_action: 2
+  # direct file writes / MCP server-side opens: double security_file_open
+  file_write_opens_per_action: [1, 2]
+  # credential reads: each read opens the secret file twice
+  credential_opens_per_action: [1, 2]

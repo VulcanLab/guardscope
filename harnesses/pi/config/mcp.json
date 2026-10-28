@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "toy-mcp-fs": {
+      "command": "python3",
+      "args": ["-u", "/opt/inspection/mcp-fs/server.py"],
+      "exposure": "direct"
+    },
+    "toy-mcp-http": {
+      "command": "python3",
+      "args": ["-u", "/opt/inspection/mcp-http-stdio/server.py"],
+      "exposure": "direct"
+    }
+  }
+}

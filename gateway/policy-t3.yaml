@@ -1,0 +1,25 @@
+# T3 gateway policy (allow-all for ALL trace tools behind the gateway).
+#
+# Design T3 ("gateway as sole enforcement point, all tools behind it"): the
+# fs tools (targets/mcp-fs-http) are proxied through the gateway alongside
+# the HTTP tools, so the tool surface doubles and the allow-list covers both.
+# As in T1, every tool call in the canonical trace is allowed, so the
+# inspected-class coverage number isolates the topology from policy content.
+#
+# Tool names map 1:1 onto canonical actions: post_hook/get_health/put_state
+# onto a011-a013 (http_tool_call) and write_file/read_file/list_directory
+# onto a001-a003 (stdio_tool_call; their `op` IS the tool name). Each
+# AuditEntry identifies exactly one canonical action in both classes.
+apiVersion: governance.toolkit/v1
+name: t3-all-tools-behind-gateway
+allowed_tools:
+  - write_file       # a001 (stdio_tool_call, proxied via the gateway)
+  - read_file        # a002 (stdio_tool_call, proxied via the gateway)
+  - list_directory   # a003 (stdio_tool_call, proxied via the gateway)
+  - post_hook        # a011 POST /hook
+  - get_health       # a012 GET /health
+  - put_state        # a013 PUT /state
+denied_tools: []
+sensitive_tools: []
+max_tool_calls: 1000   # per-agent budget; far above the trace size (14 actions)
+blocked_patterns: []

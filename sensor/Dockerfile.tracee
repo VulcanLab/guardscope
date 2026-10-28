@@ -1,0 +1,8 @@
+# Thin wrapper around the pinned upstream Tracee image so the canonical
+# invocation (tracee-args.sh) ships inside the container.
+# Digest = aquasec/tracee:latest observed v0.24.1, validated in the M3 smoke
+# run on the original local host 2026-09-10; also recorded in ../env/versions.env.
+FROM aquasec/tracee@sha256:cfbbfee972e64a644f6b1bac74ee26998e6e12442697be4c797ae563553a2a5b
+
+COPY tracee-args.sh /tracee-args.sh
+ENTRYPOINT ["/bin/sh", "/tracee-args.sh"]

@@ -1,0 +1,209 @@
+# compose/t3.yaml — deployment design T3: Gateway as sole enforcement point,
+# all tools behind it (main.tex Table 1). T2's topology (gateway + forced
+# egress) plus the fs tool server proxied BEHIND the gateway: the harness's
+# stdio transport is eliminated (GATEWAY_FS=1 routes the fs tools as MCP
+# tools/call over HTTP to the gateway; no MCP server child is spawned), and
+# the gateway routes fs tools to targets/mcp-fs-http (UPSTREAM_FS_URL).
+#
+# Outcomes per action class (main.tex §5.2):
+#   http_tool_call      checked     (crosses the gateway)
+#   stdio_tool_call     checked     (proxied via the gateway — T3's addition)
+#   direct_network      PREVENTED   (attempt fires; net-peer never serves)
+#   process_spawn       bypassed    (inside the harness netns)
+#   file_write          bypassed    (direct harness writes stay in-netns)
+#   credential_access   bypassed    (direct harness reads stay in-netns)
+#
+# Kernel-level finding (reconciled as such, runner/reconcile.py): at the
+# kernel, ALL tool calls now look identical — pooled connects to gateway:8090
+# — the gateway collapses the transport distinction the kernel could see in
+# T0–T2. Per-action tool-call evidence moves to the served + decision layers.
+#
+# Enforcement: two one-shot egress-jail services share each harness netns
+# (network_mode: "service:<harness>", CAP_NET_ADMIN), apply a default-deny
+# nftables output policy allowing ONLY gateway:8090 (and loopback for the
+# embedded DNS), then exit. The runner gates the replay on their clean exit
+# (run.py docker-waits them), so a run never starts uninspected. Rules persist
+# in the kernel netns; the unprivileged harness uid cannot remove them.
+#
+# The canonical trace spec is unchanged from T0–T2 — only the topology
+# differs, keeping T3 coverage comparable to T0–T2.
+#
+# The Tracee sensor runs OUTSIDE the deployed topology (no t3net attachment):
+# bring up the topology FIRST, wait for the harness containers to be healthy,
+# then start the sensor (Tracee container-cache startup race —
+# sensor/README.md):
+#   docker compose -f compose/t3.yaml up -d --build
+#   docker compose -f compose/t3.yaml --profile sensor up -d tracee
+#
+# Direct connections from harness code to the net-peer target are REJECTED by
+# the egress jail (prevented); direct spawns/file writes/credential reads
+# stay inside the harness netns and deliberately BYPASS the gateway — the
+# process-level escape T3 leaves open (main.tex Table 1).
+#
+#   harness ──MCP over HTTP:8090──▶ t3-gateway ──▶ t3-mcp-http    (http tools)
+#                                     │ (MCPGateway.intercept_tool_call,   │ raw HTTP:8080
+#                                     │  audit -> gateway-logs volume)      ▼
+#                                     └──▶ t3-mcp-fs-http (fs tools)   t3-http-endpoint
+#   harness ──▶ net-peer (REJECTED by the netns output policy: prevented)
+#   harness ── raw exec/fs/secrets (NO gateway, NO egress — inside the netns)
+#
+# The Tracee sensor runs OUTSIDE the deployed topology (no t3net attachment).
+
+name: inspection-t3
+
+services:
+  http-endpoint:
+    build:
+      context: ../targets
+      dockerfile: http-endpoint/Dockerfile
+    image: inspection/http-endpoint
+    container_name: t3-http-endpoint
+    networks: [t3net]
+    volumes:
+      - target-logs:/var/log/targets
+    restart: unless-stopped
+
+  mcp-http:
+    build:
+      context: ../targets
+      dockerfile: mcp-http/Dockerfile
+    image: inspection/mcp-http
+    container_name: t3-mcp-http
+    networks: [t3net]
+    environment:
+      HTTP_ENDPOINT_URL: http://http-endpoint:8080
+    volumes:
+      - target-logs:/var/log/targets
+    restart: unless-stopped
+
+  # T3: the fs tool server, proxied behind the gateway (its stdio transport
+  # is eliminated at the harness — targets/mcp-fs-http/server.py). Same
+  # served-log target name ("toy-mcp-fs") as the stdio server, so R2 and the
+  # profiles' served_targets are unchanged across designs.
+  mcp-fs-http:
+    build:
+      context: ../targets
+      dockerfile: mcp-fs-http/Dockerfile
+    image: inspection/mcp-fs-http
+    container_name: t3-mcp-fs-http
+    networks: [t3net]
+    volumes:
+      - target-logs:/var/log/targets
+    restart: unless-stopped
+
+  gateway:
+    build:
+      context: ..
+      dockerfile: gateway/Dockerfile
+    image: inspection/gateway
+    container_name: t3-gateway
+    networks: [t3net]
+    environment:
+      UPSTREAM_URL: http://mcp-http:8091/mcp
+      UPSTREAM_FS_URL: http://mcp-fs-http:8092/mcp    # T3: fs tools behind the gateway
+      GATEWAY_POLICY: /opt/inspection/gateway/policy-t3.yaml
+      GATEWAY_LOG_DIR: /var/log/gateway
+      GATEWAY_AGENT_ID: t3-replay
+    volumes:
+      - gateway-logs:/var/log/gateway
+    depends_on: [mcp-http, mcp-fs-http]
+    restart: unless-stopped
+
+  net-peer:
+    build:
+      context: ../targets
+      dockerfile: net-peer/Dockerfile
+    image: inspection/net-peer
+    container_name: t3-net-peer
+    networks: [t3net]
+    volumes:
+      - target-logs:/var/log/targets
+    restart: unless-stopped
+
+  tracee:
+    build:
+      context: ../sensor
+      dockerfile: Dockerfile.tracee
+    image: inspection/tracee
+    container_name: t3-tracee
+    privileged: true
+    pid: host
+    cgroup: host
+    volumes:
+      - /etc/os-release:/etc/os-release-host:ro
+      - /var/run:/var/run:ro
+      - tracee-data:/tmp/tracee
+    profiles: [sensor]
+    restart: unless-stopped
+
+  openclaw:
+    build:
+      context: ..
+      dockerfile: harnesses/openclaw/Dockerfile
+    image: inspection/openclaw
+    container_name: t3-openclaw
+    networks: [t3net]
+    ports:
+      - "127.0.0.1:28789:18789"   # driver: POST /tools/invoke -> replay_trace
+    environment:
+      TARGET_LOG_DIR: /var/log/targets
+      REPLAY_LOG_DIR: /workspace/replay
+      GATEWAY_URL: http://gateway:8090      # T3: all tool calls via the gateway
+      GATEWAY_FS: "1"                       # T3: fs tools proxied (no stdio child)
+    volumes:
+      - target-logs:/var/log/targets
+      - ../runs/openclaw:/workspace/replay
+    depends_on: [gateway]
+    restart: unless-stopped
+
+  pi:
+    build:
+      context: ..
+      dockerfile: harnesses/pi/Dockerfile
+    image: inspection/pi
+    container_name: t3-pi
+    networks: [t3net]
+    environment:
+      TARGET_LOG_DIR: /var/log/targets
+      REPLAY_LOG_DIR: /workspace/replay
+      GATEWAY_URL: http://gateway:8090      # T3: all tool calls via the gateway
+      GATEWAY_FS: "1"                       # T3: fs tools proxied (no stdio child)
+    volumes:
+      - target-logs:/var/log/targets
+      - ../runs/pi:/workspace/replay
+    depends_on: [gateway]
+    restart: unless-stopped
+
+  # --- forced egress (T2): one-shot jail per harness netns -----------------
+  # Shares the harness netns (network_mode: service:<harness>), applies the
+  # default-deny nftables output policy, exits. The runner docker-waits both
+  # jails before replaying the trace.
+  egress-jail-pi:
+    build:
+      context: ../targets
+      dockerfile: egress-jail/Dockerfile
+    image: inspection/egress-jail
+    container_name: t3-egress-jail-pi
+    network_mode: "service:pi"
+    cap_add: [NET_ADMIN]
+    depends_on: [pi, gateway]
+    restart: "no"
+
+  egress-jail-openclaw:
+    build:
+      context: ../targets
+      dockerfile: egress-jail/Dockerfile
+    image: inspection/egress-jail
+    container_name: t3-egress-jail-openclaw
+    network_mode: "service:openclaw"
+    cap_add: [NET_ADMIN]
+    depends_on: [openclaw, gateway]
+    restart: "no"
+
+networks:
+  t3net: {}
+
+volumes:
+  target-logs: {}
+  gateway-logs: {}
+  tracee-data: {}

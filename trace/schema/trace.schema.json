@@ -1,0 +1,119 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentic-security/inspection/trace.schema.json",
+  "title": "Canonical trace spec (inspection-coverage testbed)",
+  "description": "Harness-neutral, versioned definition of an agent action trace (C1). Each action is one unit in the denominator of the per-class coverage computation. Compilers (C2) translate this spec into per-harness replay inputs; reconciliation (C7) compares observed events against it per action class.",
+  "type": "object",
+  "required": ["meta", "actions"],
+  "additionalProperties": false,
+  "properties": {
+    "meta": {
+      "type": "object",
+      "required": ["name", "version", "window"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "version": { "type": "integer", "minimum": 1 },
+        "description": { "type": "string" },
+        "window": {
+          "description": "Measurement-window delimiters emitted by the replay adapter around trace execution; reconciliation only considers events inside the window.",
+          "type": "object",
+          "required": ["start", "end"],
+          "additionalProperties": false,
+          "properties": {
+            "start": { "type": "string", "minLength": 1 },
+            "end": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    },
+    "actions": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/action" }
+    }
+  },
+  "$defs": {
+    "action": {
+      "type": "object",
+      "required": ["id", "class", "target", "op"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^a[0-9]{3,}$",
+          "description": "Stable action identifier; unique within the spec (enforced by tests, since JSON Schema cannot cross-reference values)."
+        },
+        "class": {
+          "enum": [
+            "stdio_tool_call",
+            "http_tool_call",
+            "direct_network",
+            "process_spawn",
+            "file_write",
+            "credential_access"
+          ]
+        },
+        "target": { "type": "string", "minLength": 1 },
+        "op": { "type": "string", "minLength": 1 },
+        "args": { "type": "object" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "class": { "const": "stdio_tool_call" } } },
+          "then": {
+            "properties": {
+              "target": { "pattern": "^mcp://[A-Za-z0-9._-]+@[A-Za-z0-9._-]+$", "description": "mcp://<server-name>@<transport-location>" },
+              "op": { "description": "MCP tool name exposed by the referenced server" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "class": { "const": "http_tool_call" } } },
+          "then": {
+            "properties": {
+              "target": { "pattern": "^https?://[A-Za-z0-9._-]+(:[0-9]{1,5})?$" },
+              "op": { "enum": ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD"] }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "class": { "const": "direct_network" } } },
+          "then": {
+            "properties": {
+              "target": { "pattern": "^[A-Za-z0-9._-]+:[0-9]{1,5}$", "description": "host:port reached directly from agent code, bypassing any tool transport" },
+              "op": { "enum": ["tcp_connect", "udp_send"] }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "class": { "const": "process_spawn" } } },
+          "then": {
+            "properties": {
+              "target": { "pattern": "^/", "description": "absolute path of the spawned executable" },
+              "op": { "const": "exec" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "class": { "const": "file_write" } } },
+          "then": {
+            "properties": {
+              "target": { "pattern": "^/", "description": "absolute path of the written file" },
+              "op": { "enum": ["write", "append"] }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "class": { "const": "credential_access" } } },
+          "then": {
+            "properties": {
+              "target": { "pattern": "^file:///", "description": "v1 restricts credential reads to kernel-observable file paths (/run/secrets/**) so the mapping layer can classify them unambiguously; env-var and HTTP secret sources are deferred" },
+              "op": { "const": "read" }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

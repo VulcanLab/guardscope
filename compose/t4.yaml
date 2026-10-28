@@ -1,0 +1,131 @@
+# compose/t4.yaml — deployment design T4: harness-native enforcement
+# (main.tex Table 1). Bare-harness topology; the enforcement point lives
+# INSIDE the harness: pi's tool_call permission chain evaluates every tool
+# call issued through its pipeline.
+#
+# Outcomes per action class (main.tex §5.2, ✓/× resolved for the v1
+# permissions-only configuration — no sandbox in T4 v1):
+#   stdio_tool_call     checked     (issued as MCP tools through pi's pipeline;
+#                                   the tool_call hook evaluates them and
+#                                   writes the enforcement-point record)
+#   http_tool_call      checked     (same, via the mcp-http-stdio MCP server)
+#   direct_network      bypassed    (agent code outside the tool pipeline —
+#                                   no egress restriction, so it takes effect)
+#   process_spawn       bypassed
+#   file_write          bypassed
+#   credential_access   bypassed
+#
+# Harness changes (pi only; the T4 enforcement surface is harness-specific):
+#   - pi bumped to 1.0.4 (ctx-level tool pipeline; T4 needs the scripted
+#     provider + tool_call hook of the 1.x extension API)
+#   - the harness MCP config (~/.pi/agent/mcp.json, mounted below) registers
+#     the fs server (toy-mcp-fs) and the http server (toy-mcp-http,
+#     targets/mcp-http-stdio) so the tool-call actions execute as MCP tools
+#   - the adapter runs in T4_MODE=1: the /inspection-replay command executes
+#     the process-level actions directly (the bypass) and the driver then
+#     sends a second prompt, which starts the agent run — a scripted provider
+#     issues the tool-call actions as a model would, through pi's pipeline
+#   - the enforcement-point record is the adapter's decisions.jsonl (on the
+#     replay volume), parsed by the same coverage loader as the gateway's
+#
+# OpenClaw runs in T0 mode here: its T4 enforcement surface (hook API) is
+# under investigation; T4 is validated on the pi harness in v1.
+#
+# The canonical trace spec is unchanged from T0–T3 — only the topology
+# differs, keeping T4 coverage comparable to T0–T3.
+#
+# The Tracee sensor runs OUTSIDE the deployed topology (no t4net attachment):
+# bring up the topology FIRST, wait for the harness containers to be healthy,
+# then start the sensor (Tracee container-cache startup race —
+# sensor/README.md):
+#   docker compose -f compose/t4.yaml up -d --build
+#   docker compose -f compose/t4.yaml --profile sensor up -d tracee
+
+name: inspection-t4
+
+services:
+  http-endpoint:
+    build:
+      context: ../targets
+      dockerfile: http-endpoint/Dockerfile
+    image: inspection/http-endpoint
+    container_name: t4-http-endpoint
+    networks: [t4net]
+    volumes:
+      - target-logs:/var/log/targets
+    restart: unless-stopped
+
+  net-peer:
+    build:
+      context: ../targets
+      dockerfile: net-peer/Dockerfile
+    image: inspection/net-peer
+    container_name: t4-net-peer
+    networks: [t4net]
+    volumes:
+      - target-logs:/var/log/targets
+    restart: unless-stopped
+
+  tracee:
+    build:
+      context: ../sensor
+      dockerfile: Dockerfile.tracee
+    image: inspection/tracee
+    container_name: t4-tracee
+    privileged: true
+    pid: host
+    cgroup: host
+    volumes:
+      - /etc/os-release:/etc/os-release-host:ro
+      - /var/run:/var/run:ro
+      - tracee-data:/tmp/tracee
+    profiles: [sensor]
+    restart: unless-stopped
+
+  openclaw:
+    build:
+      context: ..
+      dockerfile: harnesses/openclaw/Dockerfile
+    image: inspection/openclaw
+    container_name: t4-openclaw
+    networks: [t4net]
+    ports:
+      - "127.0.0.1:28789:18789"
+    environment:
+      TARGET_LOG_DIR: /var/log/targets
+      REPLAY_LOG_DIR: /workspace/replay
+      # T4 on OpenClaw: the before_tool_call hook is the enforcement point
+      # (T4_MODE=1 allow-all permission chain; the T6_MODE policy-engine
+      # variant is compose/t6.yaml). The entrypoint merges the variant config
+      # registering the toy MCP servers.
+      T4_MODE: "1"
+    volumes:
+      - target-logs:/var/log/targets
+      - ../runs/openclaw:/workspace/replay
+      - ../harnesses/openclaw/config/t6-policy.json:/opt/inspection/t6-policy.json:ro
+      - ../harnesses/openclaw/config/openclaw-t4.json:/opt/inspection-replay/openclaw-t4.json:ro
+    restart: unless-stopped
+
+  pi:
+    build:
+      context: ..
+      dockerfile: harnesses/pi/Dockerfile
+    image: inspection/pi
+    container_name: t4-pi
+    networks: [t4net]
+    environment:
+      TARGET_LOG_DIR: /var/log/targets
+      REPLAY_LOG_DIR: /workspace/replay
+      T4_MODE: "1"                          # T4: harness-native enforcement
+    volumes:
+      - target-logs:/var/log/targets
+      - ../runs/pi:/workspace/replay
+      - ../harnesses/pi/config/mcp.json:/root/.pi/agent/mcp.json:ro
+    restart: unless-stopped
+
+networks:
+  t4net: {}
+
+volumes:
+  target-logs: {}
+  tracee-data: {}

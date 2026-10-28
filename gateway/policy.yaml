@@ -1,0 +1,21 @@
+# T1 gateway policy (allow-all for the baseline trace tools).
+#
+# Design T1 measures coverage of a gateway with NO egress restriction and no
+# deny rules: every http_tool_call in the canonical trace is allowed, so the
+# inspected-class coverage number isolates the topology (what crosses the
+# gateway) from policy content (what the policy engine inspects). Deny rules
+# are deliberately absent; they belong to later designs (T2+).
+#
+# The tool names map 1:1 onto canonical http_tool_call actions a011-a013
+# (targets/mcp-http/server.py TOOL_ROUTES), so each gateway AuditEntry
+# identifies exactly one canonical action.
+apiVersion: governance.toolkit/v1
+name: t1-allow-all
+allowed_tools:
+  - post_hook     # a011 POST /hook
+  - get_health    # a012 GET /health
+  - put_state     # a013 PUT /state
+denied_tools: []
+sensitive_tools: []
+max_tool_calls: 1000   # per-agent budget; far above the trace size (14 actions)
+blocked_patterns: []

@@ -1,0 +1,99 @@
+# Tracee-event → action-class mapping rules (C6).
+#
+# The mapping layer (map_events.py) consumes raw Tracee NDJSON events and
+# emits one canonical action record per mapped event, with provenance back to
+# the raw event. Every recognized event is labeled with exactly one class
+# (first matching rule wins, rules evaluated in listed order); events that
+# match nothing are counted as `unmapped` and retained in the record stream
+# as {"class": "unmapped"} for reconciliation debugging.
+#
+# MAPPING VERSION (pinned): bump on any semantic change; the run record
+# (M6/M7) embeds this version next to the raw-trace hash so re-mapping is
+# always reproducible.
+#
+# v5 (M6): /workspace/replay/ added to file_write exclude_path_prefixes — the
+# replay adapter's own log/result writes are testbed instrumentation, not
+# workload. Classification otherwise unchanged from v4; unmapped records now
+# carry the full envelope (ts/container/pid/retval/best-effort detail) so
+# reconciliation can noise-allowlist and debug leftovers (map_events change,
+# not a rule change).
+# v6 (T1-5): port 8090 added to http_tool_call tcp_ports — in the T1 topology
+# the harness's HTTP tool call crosses the MCP Security Gateway (gateway:8090),
+# so the harness→gateway connect IS the kernel evidence of the inspected tool
+# call in the harness container (the gateway/upstream containers make their
+# own connects, outside the harness scope). T0 traffic never touches 8090, so
+# T0 classification is unaffected.
+version: 6
+
+# Opt-in envelope only; v6 class rules and default/container modes unchanged.
+attribution_modes:
+  csb-host-tree-v1:
+    evidence: host-tree.json + jail-snapshot.json + process-snapshots.jsonl
+    scope: proven Pi PID lifetimes and fork descendants only
+    relay_evidence: topology-only; never Pi support
+    identity_fields: [hostProcessId, hostThreadId, hostParentProcessId, threadStartTime, processEntityId, parentEntityId, threadEntityId, cgroupId, containerId, processId, threadId, mountNamespace, pidNamespace, userNamespace]
+    forbid_container_id_inference: true
+    outside_tree: unattributed
+
+# Known ambiguities, resolved here and surfaced in reconciliation (M6):
+# - file_write vs stdio_tool_call: an MCP fs tool call (e.g. write_file) also
+#   produces kernel-level file-open events from the tool-server process. The
+#   stdio event (JSON-RPC request on a pipe) carries the tool_call class; the
+#   file open from the server process is ALSO mapped as file_write. This
+#   expected 2-observations-per-action multiplicity is reconciled in M6.
+# - exclude_path_prefixes keeps target-internal logging (M2 served-action
+#   logs) out of the file_write class; those paths are instrumentation, not
+#   workload.
+
+classes:
+  process_spawn:
+    events: [execve]
+    # target: execve pathname; argv is kept in the record detail.
+
+  http_tool_call:
+    events: [connect]
+    tcp_ports: [8080, 8090]   # 8080: the tool HTTP endpoint (t0; upstream in t1)
+                              # 8090: the MCP Security Gateway (t1: the harness's
+                              #       inspected tool call crosses it; see v6 note)
+
+  direct_network:
+    events: [connect, sendto, sendmsg, net_packet_udp]
+    tcp_ports: [9000]   # net-peer TCP (canonical tcp_connect; connect events)
+    udp_ports: [9001]   # net-peer UDP (canonical udp_send; net_packet_udp dst_port —
+                        # node's dgram sends via sendmsg, whose raw event does
+                        # not expose the destination; the parsed packet event does)
+    # connect/sendto/sendmsg to ports outside every list above stay unmapped:
+    # they are infrastructure noise (DNS, health probes), not workload.
+
+  credential_access:
+    events: [security_file_open]
+    read_flags: [O_RDONLY, O_RDWR]          # read-mode opens...
+    path_prefixes: [/run/secrets/]          # ...of the secret store (M2 seed)
+
+  file_write:
+    events: [security_file_open]
+    write_flags: [O_WRONLY, O_RDWR, O_APPEND, O_CREAT, O_TRUNC]
+    exclude_path_prefixes:                  # target-internal logging (M2)
+      - /var/log/targets/                   #   + replay instrumentation (M6)
+      - /tmp/tracee/
+      - /workspace/replay/
+
+  stdio_tool_call:
+    events: [execve, security_file_open, write]
+    # v1 heuristic (documented limitation):
+    # Tracee's raw `write` event exposes fd as an int and buf as an
+    # unresolvable pointer, so the JSON-RPC payload itself is not visible.
+    # Instead the mapper tracks the MCP tool-server process. Registration
+    # (see _update_server_registry) fires on EITHER of:
+    #   - execve whose argv contains server_argv_marker, or
+    #   - security_file_open of the server script (server_script_path):
+    #     Tracee 0.24 can report execve with an EMPTY argv (observed on
+    #     node->python3 spawns), so the script-open is the reliable marker.
+    # Each subsequent write from the registered (container, pid) to fd 1
+    # (its stdout, the MCP response pipe) is one stdio_tool_call: 1 response
+    # write per JSON-RPC request in the sequential replay. The initialize
+    # handshake response also counts (documented multiplicity for M6), and
+    # the execve itself also maps as process_spawn.
+    server_argv_marker: mcp-stdio/server.py
+    server_script_path: /opt/inspection/mcp-fs/server.py   # execve argv can be empty
+    response_fds: [1]

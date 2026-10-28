@@ -1,0 +1,159 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentic-security/inspection/exerciser/manifest.schema.json",
+  "title": "Exerciser path manifest",
+  "description": "Pinned declaration of the 15 canonical action paths the exerciser originates: class, operation, origin channel, expected kernel-visible signature, expected inspection points per design, and the attribution rule for deferred/async instances. Written as an independent declaration (based on the sensor mapping rules' observable attributes, but not imported from the mapper). The driver cross-checks it against the canonical trace spec (ids/classes/ops) and refuses to run on drift; the manifest never feeds the action execution list.",
+  "type": "object",
+  "required": ["schema", "version", "description", "escape_paths", "trace", "placement", "variants", "paths"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": {"const": "exerciser-path-manifest/1"},
+    "version": {"type": "integer", "minimum": 1},
+    "description": {"type": "string"},
+    "trace": {
+      "type": "object",
+      "required": ["spec", "spec_sha256_sidecar", "single_source_of_truth"],
+      "additionalProperties": false,
+      "properties": {
+        "spec": {"type": "string", "minLength": 1},
+        "spec_sha256_sidecar": {"type": "string", "minLength": 1},
+        "single_source_of_truth": {"type": "string"}
+      }
+    },
+    "placement": {
+      "type": "object",
+      "required": ["trust_domain", "descriptor", "fields", "note"],
+      "additionalProperties": false,
+      "properties": {
+        "trust_domain": {"type": "string"},
+        "descriptor": {"type": ["object", "null"]},
+        "fields": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+        "note": {"type": "string"}
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "required": ["originator", "record_field", "placement_attach_point"],
+      "additionalProperties": false,
+      "properties": {
+        "originator": {"const": "exerciser"},
+        "record_field": {"type": "string"},
+        "placement_attach_point": {"type": "string"}
+      }
+    },
+    "escape_paths": {
+      "type": "array",
+      "minItems": 5,
+      "items": {
+        "type": "object",
+        "required": ["name", "description"],
+        "additionalProperties": false,
+        "properties": {
+          "name": {"type": "string", "minLength": 1},
+          "description": {"type": "string"}
+        }
+      }
+    },
+    "variants": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "applies_to", "semantics", "attribution"],
+        "additionalProperties": false,
+        "properties": {
+          "name": {"enum": ["default", "ordinary", "outliving", "daemon"]},
+          "applies_to": {"type": "string"},
+          "semantics": {"type": "string"},
+          "attribution": {"type": "string"}
+        }
+      }
+    },
+    "http_gateway_tools": {
+      "type": "object",
+      "description": "Tool routes for the http_tool_call twins under the gateway route (mirrors targets/mcp-http TOOL_ROUTES and the adapters' GATEWAY_TOOL_ROUTES; declared here independently).",
+      "additionalProperties": {
+        "type": "array",
+        "items": {"type": "string"},
+        "minItems": 2,
+        "maxItems": 2
+      }
+    },
+    "paths": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["id", "class", "operation", "origin_channel", "kernel_signature", "inspection_expectation", "variants", "escape_categories", "attribution", "notes"],
+        "additionalProperties": false,
+        "properties": {
+          "id": {"type": "string", "pattern": "^a[0-9]{3,}$"},
+          "class": {
+            "enum": ["stdio_tool_call", "http_tool_call", "direct_network", "process_spawn", "file_write", "credential_access"]
+          },
+          "operation": {"type": "string", "minLength": 1},
+          "origin_channel": {"type": "string", "minLength": 1},
+          "origin_channel_detail": {"type": "string"},
+          "kernel_signature": {
+            "type": "object",
+            "required": ["syscalls", "attributes"],
+            "additionalProperties": false,
+            "properties": {
+              "syscalls": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+              "attributes": {"type": "object"}
+            }
+          },
+          "expected_multiplicity": {
+            "type": "object",
+            "description": "Documented kernel-level multiplicity envelopes (per runner/profiles/*.yaml)."
+          },
+          "inspection_expectation": {
+            "type": "object",
+            "required": ["t0", "t1", "t2", "t3", "t4", "t5", "t6"],
+            "additionalProperties": false,
+            "properties": {
+              "t0": {"$ref": "#/$defs/design_expectation"},
+              "t1": {"$ref": "#/$defs/design_expectation"},
+              "t2": {"$ref": "#/$defs/design_expectation"},
+              "t3": {"$ref": "#/$defs/design_expectation"},
+              "t4": {"$ref": "#/$defs/design_expectation"},
+              "t5": {"$ref": "#/$defs/design_expectation"},
+              "t6": {"$ref": "#/$defs/design_expectation"}
+            }
+          },
+          "variants": {
+            "type": "array",
+            "minItems": 1,
+            "items": {"enum": ["default", "ordinary", "outliving", "daemon"]}
+          },
+          "escape_categories": {
+            "type": "array",
+            "items": {"type": "string"}
+          },
+          "attribution": {
+            "type": "object",
+            "required": ["rule"],
+            "additionalProperties": false,
+            "properties": {
+              "rule": {"type": "string"},
+              "deferred": {"type": "boolean"},
+              "deferred_rule": {"type": "string"}
+            }
+          },
+          "notes": {"type": "string"}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "design_expectation": {
+      "type": "object",
+      "required": ["disposition", "note"],
+      "additionalProperties": false,
+      "properties": {
+        "disposition": {"enum": ["none", "checked", "bypassed", "prevented"]},
+        "note": {"type": "string"},
+        "via": {"type": "string"}
+      }
+    }
+  }
+}

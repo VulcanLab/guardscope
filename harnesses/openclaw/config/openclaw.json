@@ -1,0 +1,11 @@
+// OpenClaw gateway config for the T0 bare-harness deployment.
+// Baked at image build (plugins install writes its registry next to it);
+// the gateway token matches compose (OPENCLAW_GATEWAY_TOKEN) for the driver.
+{
+  "gateway": {
+    "mode": "local",
+    "bind": "lan",
+    "auth": { "mode": "token", "token": "inspection-t0-token" }
+  },
+  "mcp": { "servers": {} }
+}
