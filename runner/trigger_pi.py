@@ -40,7 +40,7 @@ def compile_trace() -> Path:
 
 
 def run_replay(compiled_path: Path, replay_dir: Path, container: str, timeout_s: float,
-               design: str = "t0") -> dict:
+               design: str = "t0", run_id: str | None = None) -> dict:
     """Stage the compiled trace into the container's replay dir (runs/pi on the
     host, /workspace/replay in the container), exec one pi RPC process, trigger
     the extension command, and read back the result JSON from the same dir.
@@ -49,16 +49,23 @@ def run_replay(compiled_path: Path, replay_dir: Path, container: str, timeout_s:
     command does the MCP readiness wait + the process-level actions (the
     bypass); the second prompt starts the agent run — the adapter's scripted
     provider issues the tool-call actions through pi's tool pipeline, and the
-    settled handler writes replay-result.json. The driver polls for the file."""
+    settled handler writes replay-result.json. The driver polls for the file.
+
+    run_id (M2a): stamped into the pi process env as INSPECTION_RUN_ID so the
+    adapter's dispatch records (dispatch-record/1) carry the run identity;
+    None keeps the adapter's own fallback."""
     staged = replay_dir / "compiled.json"
     replay_dir.mkdir(parents=True, exist_ok=True)  # user-owned when driver pre-creates
     # Stale artifacts are root-owned (written by the root container); clean
     # them from inside the container instead of failing on host permissions.
+    # dispatch-records.jsonl (M2a) joins the cleanup list so a run never
+    # reconciles the previous run's dispatch stream.
     subprocess.run(["docker", "exec", container, "sh", "-c",
                     f"rm -f {CONTAINER_REPLAY_DIR}/replay-result.json "
                     f"{CONTAINER_REPLAY_DIR}/replay-log.jsonl "
                     f"{CONTAINER_REPLAY_DIR}/compiled.json "
-                    f"{CONTAINER_REPLAY_DIR}/decisions.jsonl"], check=False)
+                    f"{CONTAINER_REPLAY_DIR}/decisions.jsonl "
+                    f"{CONTAINER_REPLAY_DIR}/dispatch-records.jsonl"], check=False)
     shutil.copyfile(compiled_path, staged)
 
     two_phase = design in ("t4", "t5", "t6")
@@ -68,8 +75,11 @@ def run_replay(compiled_path: Path, replay_dir: Path, container: str, timeout_s:
     # T4/T5/T6 keep a real session (--no-session yields an empty session
     # projection, so providers would see no transcript and repeat tool calls).
     no_session_flags = ([] if two_phase else ["--no-session"])
+    # M2a: the run identity reaches the adapter as an env stamp (the dispatch
+    # records and C5 join on it); absent run_id keeps the adapter fallback.
+    run_env = (["-e", f"INSPECTION_RUN_ID={run_id}"] if run_id else [])
     proc = subprocess.Popen(
-        ["docker", "exec", "-i", container,
+        ["docker", "exec", "-i", *run_env, container,
          "pi", "--mode", "rpc", *model_flags, *no_session_flags, "-e", EXTENSION_PATH],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 

@@ -29,6 +29,9 @@
 //   REPLAY_LOG_DIR  replay JSONL log + result (default /workspace/replay)
 //   MCP_SERVER_CMD  JSON argv array; the MCP stdio server command
 //                   (default ["python3","-u","/opt/inspection/mcp-fs/server.py"])
+//   INSPECTION_RUN_ID  run id the runner stamps into the pi process env
+//                   (runner/trigger_pi.py docker exec -e ...); the adapter's
+//                   dispatch records carry it as run_id (M2a, DESIGN.md 4)
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai/compat";
@@ -128,6 +131,61 @@ const GATEWAY_TOOL_ROUTES: Record<string, string> = {
 };
 let gatewayRpcId = 0;
 
+// --- correlation carriers + dispatch records (M2a; DESIGN.md 3, 4, 5) -------
+//
+// The adapter is the id authority on the workload side: it injects the
+// canonical trace action ids onto the tool-call transport (the workload
+// never sees or chooses them — workload-blindness, DESIGN.md 5) and writes
+// one dispatch-record/1 line per attempt into dispatch-records.jsonl next
+// to the replay log. ids come from the trace only, nothing time-derived.
+//
+// Carriers in priority order (DESIGN.md 5): (1) the tools/call
+// params._meta namespaced keys io.inspection/action_id and
+// io.inspection/attempt, used wherever this adapter builds the request
+// (stdio sessions and gateway-routed http tools/call); (2) HTTP headers
+// x-inspection-action-id / x-inspection-attempt on raw (non-MCP) http tool
+// calls. Paths that cannot carry _meta (the additive gateway-probe client's
+// call interface) record carrier_used "none" and the request goes out
+// unchanged — byte-identical behavior when carriers cannot be applied.
+// Carrier injection never fails a replay: a transport that rejects _meta
+// surfaces as an ordinary action error, handled exactly as before.
+
+const META_ACTION_ID = "io.inspection/action_id";
+const META_ATTEMPT = "io.inspection/attempt";
+const HEADER_ACTION_ID = "x-inspection-action-id";
+const HEADER_ATTEMPT = "x-inspection-attempt";
+const INSPECTION_RUN_ID = process.env.INSPECTION_RUN_ID || "unattributed";
+
+// DESIGN.md 5 carrier 1: additive namespaced keys on the tools/call params;
+// an existing _meta object is preserved, the ids are trace-derived strings.
+function withMetaCarriers(params: any, actionId: string): any {
+  return { ...params, _meta: { ...(params._meta ?? {}),
+    [META_ACTION_ID]: actionId, [META_ATTEMPT]: 0 } };
+}
+
+// One dispatch-record/1 line per attempt (DESIGN.md 4): bare schema:1
+// stamp, run_id, action_id, attempt 0 (single-pass, no retries by contract
+// default), dispatched_at, carrier_used, result | error exactly one.
+// run_id is the runner-stamped INSPECTION_RUN_ID. Emission must never fail
+// the replay (a lost record is a C5 skip, not a broken run).
+function writeDispatchRecord(actionId: string, carrierUsed: string,
+                             result: Record<string, unknown> | null,
+                             error: string | null): void {
+  try {
+    appendFileSync(`${REPLAY_LOG_DIR}/dispatch-records.jsonl`, JSON.stringify({
+      schema: 1,
+      run_id: INSPECTION_RUN_ID,
+      action_id: actionId,
+      attempt: 0,
+      dispatched_at: new Date().toISOString(),
+      carrier_used: carrierUsed,
+      ...(error !== null
+        ? { error: { message: error } }
+        : { result: result ?? {} }),
+    }) + "\n");
+  } catch { /* never fail a replay on record emission */ }
+}
+
 // T3 (compose/t3.yaml sets GATEWAY_FS=1): the stdio tool calls are proxied
 // through the gateway as MCP tools/call over HTTP (the gateway is the sole
 // enforcement point). No MCP server child is spawned; the tool name is the
@@ -163,7 +221,7 @@ const T4_MCP_READY_TIMEOUT_MS = 30000;
 async function gatewayFsToolCall(action: any): Promise<unknown> {
   if (probeGatewayClient) return await probeGatewayClient.call(action.tool, action.arguments ?? {}, action.id);
   const msg = { jsonrpc: "2.0", id: ++gatewayRpcId, method: "tools/call",
-                params: { name: action.tool, arguments: action.arguments ?? {} } };
+                params: withMetaCarriers({ name: action.tool, arguments: action.arguments ?? {} }, action.id) };
   const resp = await withTimeout(fetch(`${GATEWAY_URL.replace(/\/$/, "")}/mcp`, {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify(msg),
@@ -190,7 +248,7 @@ async function mcpHttpToolCall(action: any): Promise<unknown> {
   if (action.body !== undefined) toolArgs.body = action.body;
   if (probeGatewayClient) return await probeGatewayClient.call(tool, toolArgs, action.id);
   const msg = { jsonrpc: "2.0", id: ++gatewayRpcId, method: "tools/call",
-                params: { name: tool, arguments: toolArgs } };
+                params: withMetaCarriers({ name: tool, arguments: toolArgs }, action.id) };
   const resp = await withTimeout(fetch(`${GATEWAY_URL.replace(/\/$/, "")}/mcp`, {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify(msg),
@@ -259,7 +317,14 @@ class McpSession {
     });
   }
 
-  call(tool: string, args: unknown) { return this.#request("tools/call", { name: tool, arguments: args }); }
+  call(tool: string, args: unknown, carriers?: { actionId: string; attempt: number }) {
+    // DESIGN.md 5 carrier 1: the _meta namespaced keys ride the tools/call
+    // params; additive, so servers that ignore _meta see an ordinary call.
+    const params: any = { name: tool, arguments: args };
+    if (carriers) params._meta = { [META_ACTION_ID]: carriers.actionId,
+                                   [META_ATTEMPT]: carriers.attempt };
+    return this.#request("tools/call", params);
+  }
 
   get diagnostics() { return this.#diagnostics.slice(-10); }
 
@@ -274,19 +339,42 @@ class McpSession {
 async function execAction(action: any): Promise<unknown> {
   switch (action.kind) {
     case "mcp": {
-      if (GATEWAY_FS && !probeGatewayClient?.disabled) return await gatewayFsToolCall(action);
-      const resp = await withTimeout(mcpSession!.call(action.tool, action.arguments),
-                                     MCP_TIMEOUT_MS, `mcp ${action.tool}`);
-      if (resp.error) throw new Error(`mcp ${action.tool}: ${JSON.stringify(resp.error)}`);
-      return { server: action.server, tool: action.tool };
+      // carriers (DESIGN.md 5): _meta on every tools/call this adapter builds
+      // (stdio session or gateway-routed); the probe client's call interface
+      // cannot carry _meta, so its dispatches record carrier "none" and go
+      // out unchanged. One dispatch record per attempt either way.
+      const viaGatewayFs = GATEWAY_FS && !probeGatewayClient?.disabled;
+      const carrierUsed = viaGatewayFs && probeGatewayClient ? "none" : "mcp_meta";
+      try {
+        const detail = viaGatewayFs
+          ? await gatewayFsToolCall(action)
+          : await stdioToolCall(action);
+        writeDispatchRecord(action.id, carrierUsed, { status: "ok", detail }, null);
+        return detail;
+      } catch (exc) {
+        writeDispatchRecord(action.id, carrierUsed, null,
+          String((exc && (exc as Error).message) || exc));
+        throw exc;
+      }
     }
     case "http": {
-      if (GATEWAY_URL && !probeGatewayClient?.disabled) return await mcpHttpToolCall(action);
-      const init: RequestInit = { method: action.method };
-      if (action.body !== undefined) init.body = action.body;
-      const resp = await withTimeout(fetch(action.url, init), ACTION_TIMEOUT_MS, action.url);
-      await resp.arrayBuffer(); // drain so the connection returns to the pool
-      return { status: resp.status };
+      // carriers (DESIGN.md 5): gateway-routed http actions are MCP
+      // tools/call -> _meta; raw fetch (T0) -> HTTP headers (carrier 2)
+      const viaGateway = !!GATEWAY_URL && !probeGatewayClient?.disabled;
+      const carrierUsed = viaGateway
+        ? (probeGatewayClient ? "none" : "mcp_meta")
+        : "http_header";
+      try {
+        const detail = viaGateway
+          ? await mcpHttpToolCall(action)
+          : await rawHttpToolCall(action);
+        writeDispatchRecord(action.id, carrierUsed, { status: "ok", detail }, null);
+        return detail;
+      } catch (exc) {
+        writeDispatchRecord(action.id, carrierUsed, null,
+          String((exc && (exc as Error).message) || exc));
+        throw exc;
+      }
     }
     case "tcp_connect":
       return await withTimeout(new Promise((resolve, reject) => {
@@ -341,6 +429,28 @@ async function execAction(action: any): Promise<unknown> {
     default:
       throw new Error(`unknown kind ${action.kind}`);
   }
+}
+
+// --- tool-call executor helpers (carriers + dispatch records, M2a) --------
+
+async function stdioToolCall(action: any): Promise<unknown> {
+  const resp = await withTimeout(
+    mcpSession!.call(action.tool, action.arguments,
+                     { actionId: action.id, attempt: 0 }),
+    MCP_TIMEOUT_MS, `mcp ${action.tool}`);
+  if (resp.error) throw new Error(`mcp ${action.tool}: ${JSON.stringify(resp.error)}`);
+  return { server: action.server, tool: action.tool };
+}
+
+async function rawHttpToolCall(action: any): Promise<unknown> {
+  // DESIGN.md 5 carrier 2: the raw (non-MCP) http tool call carries the ids
+  // as HTTP headers; same shape as the previous inline fetch otherwise.
+  const init: RequestInit = { method: action.method,
+    headers: { [HEADER_ACTION_ID]: action.id, [HEADER_ATTEMPT]: "0" } };
+  if (action.body !== undefined) init.body = action.body;
+  const resp = await withTimeout(fetch(action.url, init), ACTION_TIMEOUT_MS, action.url);
+  await resp.arrayBuffer(); // drain so the connection returns to the pool
+  return { status: resp.status };
 }
 
 // --- replay session state (one MCP session per replay, opened lazily) ------
@@ -464,6 +574,13 @@ const t4RecordedIds = new Set<string>();
 function t4RecordResult(rec: Record<string, unknown>) {
   t4ToolResults.push(rec);
   t4RecordedIds.add(String(rec.id));
+  // dispatch-record/1 per attempt (M2a; DESIGN.md 3 inject, 4): pi's tool
+  // pipeline carries the id as the toolCall id, not a protocol carrier, so
+  // carrier_used is "none" (C5 skips carrier-less dispatches). Denied calls
+  // are dispatched-then-denied: the denial is the attempt's terminal result.
+  const status = String(rec.status ?? "ok");
+  writeDispatchRecord(String(rec.id), "none", { status },
+    status === "error" ? String(rec.error ?? "tool call failed") : null);
 }
 
 // T4 phase state: the command phase writes it, the agent-settled handler

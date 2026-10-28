@@ -48,6 +48,48 @@ const REPLAY_TOOL = "replay_trace_t4";
 const ns = () => Number(process.hrtime.bigint());
 const epochNs = () => Number(BigInt(Date.now()) * 1000000n);
 
+// --- correlation carriers + dispatch records (M2a; DESIGN.md 3, 4, 5) -------
+//
+// The T4/T6 tool calls are dispatched through the harness's own
+// /tools/invoke surface, which has no _meta carrier; the id rides the
+// toolCallId, so the dispatch records say carrier_used "none" (C5 skips
+// carrier-less dispatches). Run identity: the driver stages run-id on the
+// mounted replay volume (the long-lived gateway process cannot receive
+// per-run env); process env INSPECTION_RUN_ID is the fallback.
+
+// Re-read per dispatch (no process-lifetime cache): the openclaw process is
+// long-lived across runs while the driver re-stages run-id per run, so a
+// cached value would stamp later runs with the first run's id.
+function dispatchRunId() {
+  try {
+    const staged = readFileSync(`${REPLAY_LOG_DIR}/run-id`, "utf8").trim();
+    if (staged) return staged;
+  } catch { /* no staged run id: fall through to the env default */ }
+  return process.env.INSPECTION_RUN_ID || "unattributed";
+}
+
+// One dispatch-record/1 line per attempt (DESIGN.md 4): bare schema:1 stamp,
+// run_id, action_id, attempt 0, dispatched_at, carrier_used, result | error.
+// The /tools/invoke endpoint derives the hook's toolCallId as
+// "<prefix>-<idempotencyKey>" and the driver keys the canonical calls by the
+// action id, so the bare action id is the toolCallId's final segment (same
+// normalization as finalize). Emission must never fail the replay.
+function writeDispatchRecord(actionId, carrierUsed, result, error) {
+  try {
+    appendFileSync(`${REPLAY_LOG_DIR}/dispatch-records.jsonl`, JSON.stringify({
+      schema: 1,
+      run_id: dispatchRunId(),
+      action_id: actionId,
+      attempt: 0,
+      dispatched_at: new Date().toISOString(),
+      carrier_used: carrierUsed,
+      ...(error !== null
+        ? { error: { message: error } }
+        : { result: result ?? {} }),
+    }) + "\n");
+  } catch { /* never fail a replay on record emission */ }
+}
+
 // --- T6 policy engine (ported verbatim from harnesses/pi/adapter/replay.ts) --
 
 let t6Policy = null;
@@ -151,6 +193,12 @@ export function registerT4Enforcement(api) {
         matched_rule: matchedRule,
         parameters: event.params ?? {},
       });
+      // dispatch-record/1 per attempt (M2a; DESIGN.md 3 inject, 4): the call
+      // crossed the enforcement point; no protocol carrier on this surface.
+      if (event.toolCallId) {
+        writeDispatchRecord(String(event.toolCallId).split("-").pop(), "none",
+          { status: allowed ? "ok" : "denied" }, null);
+      }
       if (!allowed) {
         // record the terminal result here: a blocked call may not produce an
         // after_tool_call event (V3 — mirrors the pi behavior)
@@ -163,7 +211,6 @@ export function registerT4Enforcement(api) {
       }
       return {};
     });
-
     api.on("after_tool_call", (event) => {
       // V3: confirm blocked calls do (not) reach here; dedupe against the
       // deny-recorded result if they do.

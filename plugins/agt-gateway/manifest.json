@@ -3,27 +3,45 @@
   "id": "agt-gateway",
   "version": "0.1.0",
   "kind": "control",
-  "slot_kinds": ["container"],
+  "slot_kinds": [
+    "container"
+  ],
   "positions": [
     {
       "id": "gateway",
-      "designs": ["t1", "t3"],
+      "designs": [
+        "t1",
+        "t3"
+      ],
       "note": "gateway placement; T3 additionally routes the fs tools behind it (UPSTREAM_FS_URL)"
     },
     {
       "id": "gateway-egress",
-      "designs": ["t2", "t5"],
+      "designs": [
+        "t2",
+        "t5"
+      ],
       "note": "gateway placement with fixture-supplied forced egress; the egress jail is silent environment topology, not part of the control"
     }
   ],
-  "record_source": "ingested",
-  "observable_action_classes": ["http_tool_call", "stdio_tool_call"],
+  "record_source": "native",
+  "observable_action_classes": [
+    "http_tool_call",
+    "stdio_tool_call"
+  ],
   "can_enforce": "enforce",
-  "emitted_schema_versions": ["decision-record/1"],
+  "emitted_schema_versions": [
+    "decision-record/1"
+  ],
   "correlation": {
     "echoes_meta": false,
     "echoes_header": false
   },
-  "supported_designs": ["t1", "t2", "t3", "t5"],
-  "notes": "The enforcement engine is the agent-governance-toolkit MCPGateway (agent-os-kernel 3.7.0); the emitted stream is the v0 AuditEntry decisions.jsonl, read back through the declared reader-side mapping (framework/records.py), hence record_source ingested with mandatory raw_ref evidence per record. stdio_tool_call is observable only when routed behind the gateway (T3 and the fs upstream). Id-echo claims are false in v0: the gateway does not preserve _meta or header carriers yet."
+  "supported_designs": [
+    "t1",
+    "t2",
+    "t3",
+    "t5"
+  ],
+  "notes": "Emits two streams from one decision: the v0 AuditEntry decisions.jsonl (compatible input via the reader-side mapping) and a native decision-record/1 stream (decision-records.jsonl) that echoes io.inspection carriers when present. echoes_meta/echoes_header stay false until a live fidelity check verifies them (claims are never trusted)."
 }

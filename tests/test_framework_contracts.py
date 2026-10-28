@@ -40,7 +40,8 @@ def test_gateway_manifest_declares_its_capabilities():
     manifest = load_capabilities("agt-gateway")
     assert manifest["kind"] == "control"
     assert manifest["slot_kinds"] == ["container"]
-    assert manifest["record_source"] == "ingested"   # v0 AuditEntry mapping
+    assert manifest["record_source"] == "native"   # M2a: the gateway now
+    # emits decision-record/1 natively alongside the v0 AuditEntry stream
     assert manifest["can_enforce"] == "enforce"
     assert set(manifest["observable_action_classes"]) == {
         "http_tool_call", "stdio_tool_call"}

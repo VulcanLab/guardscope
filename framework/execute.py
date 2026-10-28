@@ -125,6 +125,7 @@ class RunSummary:
     effective_counts: dict | None = None
     ground_truth_counts: dict | None = None
     spec_sha256: str | None = None
+    c5: dict | None = None
 
     def to_dict(self) -> dict:
         return {
@@ -151,6 +152,7 @@ class RunSummary:
             "effective_counts": self.effective_counts,
             "ground_truth_counts": self.ground_truth_counts,
             "spec_sha256": self.spec_sha256,
+            "c5": self.c5,
         }
 
 
@@ -283,6 +285,15 @@ def default_run_executor(descriptor: RunDescriptor, run_id: str,
                                        product, product_version
       sensor_present                   the sensor ran in this run
       effective_counts, ground_truth_counts, spec_sha256
+      dispatch_records                the adapter's dispatch-record/1 stream
+                                     (M2a: runs/<id>/dispatch-records.jsonl,
+                                     or None when the design dispatched no
+                                     tool calls)
+      native_decision_records       the enforcement point's native
+                                     decision-record/1 stream (M2a:
+                                     gateway/decision-records.jsonl, or
+                                     None when the control emits only the
+                                     v0 AuditEntry stream)
     """
     runner_dir = str(REPO_ROOT / "runner")
     if runner_dir not in sys.path:
@@ -348,6 +359,17 @@ def default_run_executor(descriptor: RunDescriptor, run_id: str,
         "effective_counts": summary.get("effective_counts"),
         "ground_truth_counts": summary.get("ground_truth_counts"),
         "spec_sha256": summary.get("spec_sha256"),
+        # M2a: the two C5 input streams (DESIGN.md 9); the runner copies the
+        # adapter's dispatch records next to the replay log and the gateway's
+        # native stream next to its v0 AuditEntry log.
+        "dispatch_records": (str(out_dir / "dispatch-records.jsonl")
+                              if (out_dir / "dispatch-records.jsonl").is_file()
+                              else None),
+        "native_decision_records": (str(out_dir / "gateway" /
+                                         "decision-records.jsonl")
+                                     if (out_dir / "gateway" /
+                                        "decision-records.jsonl").is_file()
+                                     else None),
     }
 
 
@@ -419,6 +441,69 @@ def _map_decision_records(outcome: dict, run_id: str,
     return records, problems
 
 
+def _load_jsonl(path: Path) -> tuple[list[dict], list[str]]:
+    """Parse a JSONL record stream; returns (records, problems). A malformed
+    line is a problem, never a silent drop (DESIGN.md 9: findings, never
+    silently trusted)."""
+    records, problems = [], []
+    for i, raw_line in enumerate(Path(path).read_text(encoding="utf-8")
+                                 .splitlines(), 1):
+        line = raw_line.strip()
+        if not line:
+            continue
+        try:
+            records.append(json.loads(line))
+        except json.JSONDecodeError as exc:
+            problems.append(f"{Path(path).name} line {i}: {exc}")
+    return records, problems
+
+
+def _c5_report(outcome: dict, run_id: str, window, slack: int,
+               inspected_action_ids: set | None = None) -> dict:
+    """Run C5 (id consistency, DESIGN.md 9) over one run's dispatch records
+    and native decision stream when both artifacts are present; either
+    absent (or empty) => C5 skipped with a note, never a finding (the v0-only
+    M1 topology stays a valid result; carrier-less records are skipped
+    inside the check, not here)."""
+    from framework.c5 import run_c5
+
+    def _artifact(name: str, hinted, default: Path) -> tuple[str | None, str]:
+        """(path, why-absent) for one C5 input; empty files count as absent."""
+        path = Path(hinted) if hinted else default
+        if path.is_file() and path.read_text(encoding="utf-8").strip():
+            return str(path), ""
+        if not path.is_file():
+            return None, f"{name}: no {path.name} on disk"
+        return None, f"{name}: {path.name} is empty"
+
+    dispatch_path, why_dispatch = _artifact(
+        "dispatch_records", outcome.get("dispatch_records"),
+        Path(outcome["out_dir"]) / "dispatch-records.jsonl")
+    native_path, why_native = _artifact(
+        "native_decision_records", outcome.get("native_decision_records"),
+        Path(outcome["out_dir"]) / "gateway" / "decision-records.jsonl")
+    absent = [w for w in (why_dispatch, why_native) if w]
+    if absent:
+        return {"id": "C5", "status": "skipped",
+                "note": ("; ".join(absent) +
+                         "; C5 not run (absent artifacts are a skip with a "
+                         "note, not a finding, DESIGN.md 9)")}
+
+    dispatch_records, dispatch_problems = _load_jsonl(Path(dispatch_path))
+    native_records, native_problems = _load_jsonl(Path(native_path))
+    if dispatch_problems or native_problems:
+        return {"id": "C5", "status": "fail",
+                "note": "unparseable record stream",
+                "findings": [{"id": "C5-parse", "status": "fail",
+                               "detail": "; ".join(dispatch_problems
+                                                    + native_problems)}]}
+    window_pair = ((int(window["start"]), int(window["end"]))
+                  if window else None)
+    return run_c5(dispatch_records, native_records, run_id=run_id,
+                  window=window_pair, window_slack_ns=slack,
+                  inspected_action_ids=inspected_action_ids)
+
+
 def _assemble_run_summary(descriptor: RunDescriptor, outcome: dict,
                           run_id: str, out_root: Path,
                           spec: dict) -> RunSummary:
@@ -439,9 +524,9 @@ def _assemble_run_summary(descriptor: RunDescriptor, outcome: dict,
     recomputed = None
     consistent = None
     findings: list[dict] = []
+    window = outcome.get("window_epoch_ns")
+    slack = _profile_window_slack(descriptor.harness)
     if records or outcome.get("coverage") is not None:
-        window = outcome.get("window_epoch_ns")
-        slack = _profile_window_slack(descriptor.harness)
         recomputed = reconcile_lib.compute(
             spec,
             reconcile_lib.decision_records_to_log_entries(records),
@@ -470,6 +555,20 @@ def _assemble_run_summary(descriptor: RunDescriptor, outcome: dict,
     if not outcome.get("sensor_present", True):
         degraded.append(SENSOR_ABSENT)
 
+    # C5 (DESIGN.md 9): id consistency between the harness dispatch records
+    # and the native decision stream. Skipped with a note when either
+    # artifact is absent; its findings join the run's findings (a stripping
+    # control is a defect, not a coverage input).
+    # Stripping scope (DESIGN.md 5): only the design's inspected classes
+    # can cross an enforcement point; dispatches of other classes are
+    # expected to have no echo.
+    inspected = reconcile_lib.INSPECTED_CLASSES.get(descriptor.design, set())
+    inspected_ids = {a["id"] for a in spec.get("actions", [])
+                     if a.get("class") in inspected} or None
+    c5 = _c5_report(outcome, run_id, window, slack, inspected_ids)
+    if c5.get("status") == "fail":
+        findings += [dict(f) for f in c5.get("findings") or []]
+
     return RunSummary(
         run_id=run_id,
         design=descriptor.design,
@@ -494,6 +593,7 @@ def _assemble_run_summary(descriptor: RunDescriptor, outcome: dict,
         effective_counts=outcome.get("effective_counts"),
         ground_truth_counts=outcome.get("ground_truth_counts"),
         spec_sha256=outcome.get("spec_sha256"),
+        c5=c5,
     )
 
 

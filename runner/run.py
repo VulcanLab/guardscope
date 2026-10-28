@@ -256,16 +256,24 @@ def trigger_replay(harness: str, run_id: str, timeout_s: float,
     if cfg["trigger"] == "pi":
         import trigger_pi
         result = trigger_pi.run_replay(compiled, replay_dir, cfg["container"], timeout_s,
-                                       design=cfg.get("design", "t0"))
+                                       design=cfg.get("design", "t0"), run_id=run_id)
         return result, replay_dir / "replay-log.jsonl"
 
     import trigger_openclaw as to
     # clean the previous run's replay log AND the enforcement-point record
-    # (the t4/t6 hook appends decisions.jsonl; stale entries would pollute)
+    # (the t4/t6 hook appends decisions.jsonl; stale entries would pollute);
+    # the dispatch records (M2a) join the cleanup list for the same reason
     docker_exec(cfg["container"],
                 f"rm -f {cfg['replay_mount']}/replay-log.jsonl "
                 f"{cfg['replay_mount']}/replay-result.json "
-                f"{cfg['replay_mount']}/decisions.jsonl", check=False)
+                f"{cfg['replay_mount']}/decisions.jsonl "
+                f"{cfg['replay_mount']}/dispatch-records.jsonl", check=False)
+    # M2a: stage the run identity for the adapter's dispatch records. The
+    # long-lived OpenClaw gateway process cannot receive per-run env, so the
+    # driver stages it as a file on the mounted replay volume; the adapters
+    # (adapter/index.js, adapter/t4.js) read it with env INSPECTION_RUN_ID
+    # as the fallback.
+    (replay_dir / "run-id").write_text(f"{run_id}\n")
     if cfg.get("design") in ("t4", "t5", "t6") and cfg.get("trigger") == "openclaw":
         result = to.run_replay_t4(Path(compiled), replay_dir, cfg["container"],
                                    cfg["url"], cfg["token"], timeout_s)
@@ -310,7 +318,9 @@ def pull_gateway_log(out_dir: Path, prefix: str, subdir: str = "gateway") -> Pat
     """Copy the enforcement-point record out of the gateway container:
     decisions.jsonl (the persistent gateway-logs volume; coverage.py scopes
     it to the replay window) and the deployed policy.yaml (manifest-hashed
-    auditable artifact, T1-4). Returns the run's record dir."""
+    auditable artifact, T1-4). M2a: also the gateway's native
+    decision-record/1 stream (decision-records.jsonl), retained per run for
+    the C5 id-consistency check. Returns the run's record dir."""
     d = out_dir / subdir
     d.mkdir(parents=True, exist_ok=True)
     proc = docker_exec(f"{prefix}-gateway", "cat /var/log/gateway/decisions.jsonl 2>/dev/null",
@@ -318,6 +328,10 @@ def pull_gateway_log(out_dir: Path, prefix: str, subdir: str = "gateway") -> Pat
     (d / "decisions.jsonl").write_text(proc.stdout or "")
     proc = docker_exec(f"{prefix}-gateway", "cat $GATEWAY_POLICY 2>/dev/null", check=False)
     (d / "policy.yaml").write_text(proc.stdout or "")
+    proc = docker_exec(f"{prefix}-gateway",
+                       "cat /var/log/gateway/decision-records.jsonl 2>/dev/null",
+                       check=False)
+    (d / "decision-records.jsonl").write_text(proc.stdout or "")
     return d
 
 
@@ -424,6 +438,12 @@ def run_one(harness: str, run_id: str, runs_dir: Path, timeout_s: float | None =
     (out_dir / "replay-result.json").write_text(json.dumps(result, indent=1) + "\n")
     if Path(replay_log_src).is_file():
         shutil.copyfile(replay_log_src, out_dir / "replay-log.jsonl")
+    # the adapter's dispatch records (M2a; DESIGN.md 3 collect(): dispatch-
+    # record flush) land next to the replay log on the mounted volume and are
+    # retained per run like every other raw artifact
+    dispatch_src = Path(replay_log_src).parent / "dispatch-records.jsonl"
+    if dispatch_src.is_file():
+        shutil.copyfile(dispatch_src, out_dir / "dispatch-records.jsonl")
     compiled_dir = out_dir / "compiled-trace"
     compiled_dir.mkdir()
     shutil.copyfile(compiled, compiled_dir / Path(compiled).name)
