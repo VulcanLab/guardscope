@@ -1,0 +1,9 @@
+# Example experiment (DESIGN.md 6): one gateway column.
+# control: agt-gateway occupies the gateway slot; t1 places it for HTTP tools
+# with the transport and process escapes exposed (DESIGN.md 7). Executed on
+# the pi harness with the default workload pack (baseline-15).
+schema: 1
+control: agt-gateway
+designs: [t1]
+harness: pi
+workload: baseline-15

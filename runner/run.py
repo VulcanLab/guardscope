@@ -548,6 +548,26 @@ def run_one(harness: str, run_id: str, runs_dir: Path, timeout_s: float | None =
             "spec_sha256": run_record["spec"]["canonical_sha256"]}
 
 
+# --- programmatic entry (execution wiring) ---------------------------------------
+
+
+def run_design(harness: str, design: str, run_id: str,
+               runs_dir: Path | None = None,
+               timeout_s: float | None = None) -> dict:
+    """Minimal programmatic entry for one full run: validate the harness +
+    design pairing, then delegate to run_one with the prepared defaults.
+    The CLI keeps its own argument handling and calls run_one exactly as
+    before (behavior-preserving); this entry exists so the execution layer
+    (framework/execute.py) drives the runner through one named function
+    instead of CLI-only plumbing."""
+    if harness not in HARNESSES:
+        raise ValueError(f"unknown harness {harness!r} "
+                         f"(known: {sorted(HARNESSES)})")
+    harness_cfg(harness, design)   # validates the design + pairing
+    return run_one(harness, run_id, Path(runs_dir) if runs_dir is not None
+                   else DEFAULT_RUNS_DIR, timeout_s, design)
+
+
 # --- reproducibility (rerun) ------------------------------------------------------
 
 

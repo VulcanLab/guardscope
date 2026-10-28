@@ -1,0 +1,566 @@
+"""Experiment execution wiring (DESIGN.md 6, 9): experiment file -> live
+runs -> framework artifacts.
+
+execute_experiment() is the bridge between the experiment-file layer and the
+runner machinery:
+
+1. load + validate the experiment (framework/experiment.py, DESIGN.md 6);
+   load-time errors propagate unchanged;
+2. expand the plan (resolve()): one run descriptor per requested design;
+3. drive each run through an injectable executor (default: a thin adapter
+   over runner/run.py's run_design, the programmatic entry extracted for
+   this purpose; the runner CLI is unchanged);
+4. assemble the framework run manifest per run: the experiment file hash,
+   the resolved fields including defaults_applied (DESIGN.md 6: recorded
+   defaults are facts), the fixture fingerprint (compose file id + sha256,
+   plus enforcement_config when the design deploys one; DESIGN.md 10
+   comparability key), plugin versions (plugins/*/manifest.json), the
+   sensor version (env/versions.env; the runner-managed measuring
+   instrument, informational only, DESIGN.md 9), the decision records
+   (mapped to decision-record/1 via the v0 AuditEntry reader-side mapping,
+   DESIGN.md 4, written to <out_root>/<run-id>/decision-records.jsonl), the
+   C1-C4 coverage recomputed over the mapped records (framework/reconcile)
+   with a consistency assertion against the coverage the run itself
+   computed (a mismatch is a finding, never silently trusted, DESIGN.md 9),
+   the evidence class (harness-run; DESIGN.md 9 output), and degraded
+   flags.
+
+The execution path assumes the Linux testbed host (Docker, compose, arm64);
+unit tests inject a fake run_executor so nothing here calls Docker.
+"""
+
+import hashlib
+import json
+import sys
+from dataclasses import dataclass, field
+from pathlib import Path
+
+import yaml
+
+from framework.experiment import (  # noqa: E402
+    ResolvedExperiment, RunDescriptor, load_experiment, resolve,
+)
+from framework.records import (  # noqa: E402
+    V0_DEFAULT_PLUGIN, V0_DEFAULT_PRODUCT, map_audit_entries,
+    now_rfc3339_ms,
+)
+from framework import reconcile as reconcile_lib  # noqa: E402
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+COMPOSE_DIR = REPO_ROOT / "compose"
+VERSIONS_ENV = REPO_ROOT / "env" / "versions.env"
+# baseline-15 is the only registered workload pack this pass (DESIGN.md 8);
+# the canonical trace spec is its content and the denominator of every
+# coverage number.
+BASELINE_SPEC = REPO_ROOT / "trace" / "traces" / "baseline.yaml"
+
+# DESIGN.md 9: evidence class of a run driven through the real harness.
+# Exerciser-run cells are a separate path (DESIGN.md 8) and are not produced
+# by this module.
+EVIDENCE_CLASS = "harness-run"
+
+
+def _profile_window_slack(harness: str) -> int:
+    """The harness profile's window slack (runner/profiles/<h>.yaml); the
+    run's own coverage used it, so the recompute must too."""
+    profile = yaml.safe_load((REPO_ROOT / "runner" / "profiles" /
+                              f"{harness}.yaml").read_text())
+    return int(profile.get("window_slack_ns", 1_000_000_000))
+
+# The deployed policy artifact per design: the enforcement_config component
+# of the fixture fingerprint (DESIGN.md 10: "fixture fingerprint, including
+# enforcement_config"). t4/t5 run the harness allow-all permission chain v1
+# with no policy file; t0 has no enforcement point at all.
+ENFORCEMENT_CONFIG_FILES = {
+    "t1": "gateway/policy.yaml",
+    "t2": "gateway/policy.yaml",
+    "t3": "gateway/policy-t3.yaml",
+}
+
+# Harness-intrinsic (t6): the in-process policy mounted into the harness
+# adapter's container; pi and openclaw ship separate copies.
+def _enforcement_config_file(design: str, harness: str):
+    if design == "t6":
+        return f"harnesses/{harness}/config/t6-policy.json"
+    return ENFORCEMENT_CONFIG_FILES.get(design)
+
+# Harness record streams (t4/t5/t6): the decision log is written by the
+# harness adapter, so the producer identity comes from the harness side.
+# (product key, version key) in env/versions.env.
+HARNESS_PRODUCT_KEYS = {
+    "pi": ("PI_PACKAGE", "PI_VERSION"),
+    "openclaw": ("OPENCLAW_IMAGE", "OPENCLAW_VERSION"),
+}
+
+SENSOR_ABSENT = "sensor-absent"
+
+
+# --- data types -----------------------------------------------------------------
+
+
+@dataclass
+class RunSummary:
+    """The framework view of one executed run (DESIGN.md 9 output + the
+    per-run facts DESIGN.md 6 asks the manifest to record)."""
+    run_id: str
+    design: str
+    fixture: str
+    control: str | None
+    control_binding: str
+    harness: str
+    workload: str
+    off_matrix: bool
+    observation_only: bool
+    run_dir: str
+    run_record: str | None
+    decision_records: str
+    decision_record_count: int
+    fixture_fingerprint: dict
+    evidence_class: str
+    degraded: list[str]
+    status: str
+    coverage: dict | None
+    coverage_consistent: bool | None
+    findings: list[dict]
+    effective_counts: dict | None = None
+    ground_truth_counts: dict | None = None
+    spec_sha256: str | None = None
+
+    def to_dict(self) -> dict:
+        return {
+            "run_id": self.run_id,
+            "design": self.design,
+            "fixture": self.fixture,
+            "control": self.control,
+            "control_binding": self.control_binding,
+            "harness": self.harness,
+            "workload": self.workload,
+            "off_matrix": self.off_matrix,
+            "observation_only": self.observation_only,
+            "run_dir": self.run_dir,
+            "run_record": self.run_record,
+            "decision_records": {"path": self.decision_records,
+                                 "count": self.decision_record_count},
+            "fixture_fingerprint": self.fixture_fingerprint,
+            "evidence_class": self.evidence_class,
+            "degraded": list(self.degraded),
+            "status": self.status,
+            "coverage": self.coverage,
+            "coverage_consistent": self.coverage_consistent,
+            "findings": list(self.findings),
+            "effective_counts": self.effective_counts,
+            "ground_truth_counts": self.ground_truth_counts,
+            "spec_sha256": self.spec_sha256,
+        }
+
+
+@dataclass
+class ExecutionResult:
+    experiment: ResolvedExperiment
+    runs: list[RunSummary]
+    manifest_path: Path
+    manifest: dict = field(default_factory=dict)
+
+
+# --- pinned identities (fingerprint inputs, DESIGN.md 10) ------------------------
+
+
+def sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def load_env_versions(path: Path = VERSIONS_ENV) -> dict:
+    """Parse the KEY=VALUE versions.env (comments and blanks ignored).
+
+    The same parsing the runner uses (runner/runrecord.py load_versions);
+    kept local so the framework imports nothing from the runner package.
+    """
+    out = {}
+    for line in Path(path).read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, val = line.partition("=")
+        out[key.strip()] = val.strip()
+    return out
+
+
+def plugin_versions() -> dict:
+    """Every plugin manifest under plugins/ (DESIGN.md 11: claims, immutable
+    per version): id -> {version, kind}. The manifest is the claim; the run
+    manifest records which plugin versions the experiment resolved against."""
+    out = {}
+    if not (REPO_ROOT / "plugins").is_dir():
+        return out
+    for manifest_path in sorted((REPO_ROOT / "plugins").glob("*/manifest.json")):
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        out[manifest.get("id", manifest_path.parent.name)] = {
+            "version": manifest.get("version"),
+            "kind": manifest.get("kind"),
+        }
+    return out
+
+
+def _manifest_version(plugin_id: str, versions: dict | None = None) -> str:
+    versions = versions if versions is not None else plugin_versions()
+    return (versions.get(plugin_id) or {}).get("version") or "unknown"
+
+
+def sensor_version(versions: dict | None = None) -> dict:
+    """The runner-managed sensor (Tracee; DESIGN.md 9: one sensor per run,
+    runner-owned). Informational here: the sensor must never share the
+    contract of the components it measures, and its health report is a run
+    input owned by the runner."""
+    versions = versions if versions is not None else load_env_versions()
+    return {
+        "instrument": "tracee",
+        "version": versions.get("TRACEE_VERSION", "unknown"),
+        "image": versions.get("TRACEE_IMAGE", "unknown"),
+        "image_digest": versions.get("TRACEE_DIGEST", "unknown"),
+    }
+
+
+def fixture_fingerprint(descriptor: RunDescriptor) -> dict:
+    """Fixture identity (DESIGN.md 10 comparability key): fixture id + the
+    compose file realizing the reference rig (project name + sha256), plus
+    the deployed enforcement_config artifact when the design pins one. For
+    a custom fixture (experiment fixture block) no compose file is pinned
+    this pass: the fingerprint records the declared name and a note."""
+    fingerprint: dict = {"id": descriptor.fixture}
+    compose = COMPOSE_DIR / f"{descriptor.design}.yaml"
+    if descriptor.fixture == f"reference-rig/{descriptor.design}" \
+            and compose.is_file():
+        doc = yaml.safe_load(compose.read_text(encoding="utf-8")) or {}
+        fingerprint["compose"] = {
+            "path": f"compose/{descriptor.design}.yaml",
+            "id": doc.get("name"),
+            "sha256": sha256_file(compose),
+        }
+    else:
+        fingerprint["compose"] = None
+        fingerprint["note"] = ("custom fixture: no compose file pinned this "
+                               "pass (DESIGN.md 7 custom fixtures are "
+                               "registry-tracked data)")
+    config_rel = _enforcement_config_file(descriptor.design, descriptor.harness)
+    config_path = REPO_ROOT / config_rel if config_rel else None
+    if config_path is not None and config_path.is_file():
+        fingerprint["enforcement_config"] = {
+            "path": config_rel,
+            "sha256": sha256_file(config_path),
+        }
+    return fingerprint
+
+
+# --- the default executor (thin adapter over the runner machinery) ----------------
+
+
+def default_run_executor(descriptor: RunDescriptor, run_id: str,
+                         out_root: Path) -> dict:
+    """Drive one run through the existing runner machinery (runner/run.py
+    run_design: compile -> replay -> capture -> map -> reconcile -> record)
+    and return the run outcome the manifest assembly needs.
+
+    Runs on the Linux testbed host only (Docker, compose, arm64). The
+    outcome dict is the documented contract between the runner side and the
+    framework assembly below (and the shape a test fake returns):
+
+      run_id, harness, design          the run identity
+      out_dir                          the run's artifact directory
+      run_record                       run-record.json path (or None)
+      status                           reconciliation status
+      coverage                         the coverage report the run computed
+                                       over its decision log (None when the
+                                       design has no enforcement point)
+      window_epoch_ns                  the measurement window (or None)
+      decision_log                     raw v0 AuditEntry decisions.jsonl of
+                                       the run's enforcement point (or None)
+      decision_stream                  producer identity for the mapping:
+                                       slot_id, plugin, plugin_version,
+                                       product, product_version
+      sensor_present                   the sensor ran in this run
+      effective_counts, ground_truth_counts, spec_sha256
+    """
+    runner_dir = str(REPO_ROOT / "runner")
+    if runner_dir not in sys.path:
+        sys.path.insert(0, runner_dir)
+    import run as run_mod  # runner/run.py (sys.path holds the runner dir)
+
+    summary = run_mod.run_design(descriptor.harness, descriptor.design,
+                                 run_id, runs_dir=Path(out_root))
+    out_dir = Path(summary["out_dir"])
+    run_record_path = out_dir / "run-record.json"
+    run_record = (json.loads(run_record_path.read_text(encoding="utf-8"))
+                  if run_record_path.is_file() else {})
+    replay_path = out_dir / "replay-result.json"
+    replay = (json.loads(replay_path.read_text(encoding="utf-8"))
+              if replay_path.is_file() else {})
+
+    # the enforcement-point record the run captured (gateway/ under the run
+    # dir for every design that has one; None for t0)
+    decision_log = out_dir / "gateway" / "decisions.jsonl"
+    has_log = descriptor.design != "t0" and decision_log.is_file()
+
+    # producer identity of the decision stream: harness-adapter records for
+    # the harness-intrinsic designs (t4/t5/t6), the selected control's
+    # gateway records otherwise (DESIGN.md 7 placement table)
+    versions = load_env_versions()
+    manifests = plugin_versions()
+    if descriptor.design in ("t4", "t5", "t6"):
+        product_key, version_key = HARNESS_PRODUCT_KEYS.get(
+            descriptor.harness, (None, None))
+        stream = {
+            "slot_id": "harness",
+            "plugin": descriptor.harness,
+            "plugin_version": _manifest_version(descriptor.harness, manifests),
+            "product": versions.get(product_key, descriptor.harness)
+            if product_key else descriptor.harness,
+            "product_version": versions.get(version_key, "unknown")
+            if version_key else "unknown",
+        }
+    else:
+        control = descriptor.control or V0_DEFAULT_PLUGIN
+        stream = {
+            "slot_id": "gateway",
+            "plugin": control,
+            "plugin_version": _manifest_version(control, manifests),
+            "product": V0_DEFAULT_PRODUCT,
+            "product_version": versions.get("GATEWAY_PACKAGE_VERSION",
+                                             "unknown"),
+        }
+
+    return {
+        "run_id": run_id,
+        "harness": descriptor.harness,
+        "design": descriptor.design,
+        "out_dir": str(out_dir),
+        "run_record": str(run_record_path) if run_record_path.is_file()
+        else None,
+        "status": summary["status"],
+        "coverage": run_record.get("coverage"),
+        "window_epoch_ns": replay.get("window_epoch_ns"),
+        "decision_log": str(decision_log) if has_log else None,
+        "decision_stream": stream,
+        "sensor_present": True,   # run_design fails a run with a broken sensor
+        "effective_counts": summary.get("effective_counts"),
+        "ground_truth_counts": summary.get("ground_truth_counts"),
+        "spec_sha256": summary.get("spec_sha256"),
+    }
+
+
+# --- per-run assembly: mapping, recomputed coverage, findings ---------------------
+
+
+def _load_spec(path: Path = BASELINE_SPEC) -> dict:
+    """The canonical trace spec of the resolved workload (baseline-15, the
+    only registered pack this pass; DESIGN.md 8)."""
+    return yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+
+
+def _coverage_projection(report: dict) -> dict:
+    """The comparison projection for the consistency assertion: everything
+    of the C1-C4 report that must be identical when coverage is recomputed
+    from the mapped decision records (the round trip through the v0 mapping
+    is exact, DESIGN.md 4; any difference is a finding)."""
+    per_class = {
+        cls: (v.get("covered"), v.get("ground_truth"), v.get("inspected"))
+        for cls, v in (report.get("coverage") or {}).items()
+    }
+    per_action = {
+        row.get("id"): (row.get("evaluated"), row.get("decisions"),
+                        row.get("allowed"), row.get("verdict"))
+        for row in report.get("per_action") or []
+    }
+    return {
+        "status": report.get("status"),
+        "coverage": per_class,
+        "checks": {c.get("id"): c.get("status")
+                   for c in report.get("checks") or []},
+        "decisions": {k: (report.get("decisions") or {}).get(k)
+                      for k in ("total", "in_window", "out_of_window")},
+        "per_action": per_action,
+    }
+
+
+def _projection_diff(reported: dict, recomputed: dict) -> list[str]:
+    diffs = []
+    for key in ("status", "coverage", "checks", "decisions", "per_action"):
+        if reported.get(key) != recomputed.get(key):
+            diffs.append(f"{key}: reported {reported.get(key)!r} != "
+                         f"recomputed {recomputed.get(key)!r}")
+    return diffs
+
+
+def _map_decision_records(outcome: dict, run_id: str,
+                          out_dir: Path) -> tuple[list[dict], list[str]]:
+    """Map the run's raw v0 AuditEntry decision log to decision-record/1
+    (DESIGN.md 4: the v0 format stays a valid input via the declared
+    reader-side mapping). Malformed lines are kept as parse problems so the
+    recomputed C1 sees exactly what the run's own C1 saw."""
+    log = outcome.get("decision_log")
+    if not log:
+        return [], []
+    entries, problems = reconcile_lib.load_decisions(Path(log))
+    stream = dict(outcome.get("decision_stream") or {})
+    slot_id = stream.get("slot_id", "gateway")
+    records = map_audit_entries(
+        entries,
+        run_id=run_id,
+        stream_id=stream.get("stream_id") or f"{run_id}:{slot_id}",
+        product_version=stream.get("product_version", "unknown"),
+        plugin_version=stream.get("plugin_version", "unknown"),
+        slot_id=slot_id,
+        plugin=stream.get("plugin", V0_DEFAULT_PLUGIN),
+        product=stream.get("product", V0_DEFAULT_PRODUCT),
+    )
+    return records, problems
+
+
+def _assemble_run_summary(descriptor: RunDescriptor, outcome: dict,
+                          run_id: str, out_root: Path,
+                          spec: dict) -> RunSummary:
+    out_dir = Path(out_root) / run_id
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # decision records: mapped through the v0 AuditEntry reader-side mapping
+    # and written next to the run's artifacts (DESIGN.md 4, 9)
+    records, parse_problems = _map_decision_records(outcome, run_id, out_dir)
+    decision_records_path = out_dir / "decision-records.jsonl"
+    decision_records_path.write_text(
+        "".join(json.dumps(r, sort_keys=True) + "\n" for r in records),
+        encoding="utf-8")
+
+    # C1-C4 recomputed over the mapped records (framework/reconcile), then
+    # the consistency assertion against the coverage the run itself computed
+    # over the same log: a mismatch is a finding, never silently trusted
+    recomputed = None
+    consistent = None
+    findings: list[dict] = []
+    if records or outcome.get("coverage") is not None:
+        window = outcome.get("window_epoch_ns")
+        slack = _profile_window_slack(descriptor.harness)
+        recomputed = reconcile_lib.compute(
+            spec,
+            reconcile_lib.decision_records_to_log_entries(records),
+            parse_problems, descriptor.design,
+            (int(window["start"]), int(window["end"])) if window else None,
+            slack)
+        findings += [dict(check) for check in recomputed.get("checks") or []
+                    if check.get("status") != "pass"]
+        reported = outcome.get("coverage")
+        if reported is not None:
+            diffs = _projection_diff(_coverage_projection(reported),
+                                     _coverage_projection(recomputed))
+            consistent = not diffs
+            if diffs:
+                findings.append({
+                    "id": "coverage-consistency",
+                    "status": "fail",
+                    "detail": ("the coverage the run computed over its "
+                               "decision log does not match coverage "
+                               "recomputed from the mapped decision "
+                               f"records ({descriptor.design}): "
+                               + "; ".join(diffs)),
+                })
+
+    degraded: list[str] = []
+    if not outcome.get("sensor_present", True):
+        degraded.append(SENSOR_ABSENT)
+
+    return RunSummary(
+        run_id=run_id,
+        design=descriptor.design,
+        fixture=descriptor.fixture,
+        control=descriptor.control,
+        control_binding=descriptor.control_binding,
+        harness=descriptor.harness,
+        workload=descriptor.workload,
+        off_matrix=descriptor.off_matrix,
+        observation_only=descriptor.observation_only,
+        run_dir=str(out_dir),
+        run_record=outcome.get("run_record"),
+        decision_records=str(decision_records_path),
+        decision_record_count=len(records),
+        fixture_fingerprint=fixture_fingerprint(descriptor),
+        evidence_class=EVIDENCE_CLASS,
+        degraded=degraded,
+        status=outcome.get("status", "unknown"),
+        coverage=recomputed,
+        coverage_consistent=consistent,
+        findings=findings,
+        effective_counts=outcome.get("effective_counts"),
+        ground_truth_counts=outcome.get("ground_truth_counts"),
+        spec_sha256=outcome.get("spec_sha256"),
+    )
+
+
+# --- execution -------------------------------------------------------------------
+
+
+def _fresh_run_id(out_root: Path, base: str) -> str:
+    """A run id whose artifact dir does not exist yet (the runner refuses to
+    overwrite a run dir; repeated executions of the same experiment must not
+    collide)."""
+    run_id = base
+    n = 1
+    while (Path(out_root) / run_id).exists():
+        n += 1
+        run_id = f"{base}-{n}"
+    return run_id
+
+
+def execute_experiment(experiment_path, *, run_executor=None,
+                        out_root="runs") -> ExecutionResult:
+    """Load, validate, and execute an experiment file (DESIGN.md 6, 9).
+
+    One run per requested design, driven through `run_executor(descriptor,
+    run_id, out_root)` (default: the runner machinery via
+    default_run_executor, testbed host only). Per run the framework writes
+    decision-records.jsonl (the v0 AuditEntry log mapped to
+    decision-record/1) under <out_root>/<run-id>/ and records the run
+    summary in the execution manifest written to
+    <out_root>/<experiment-id>/execution.json.
+
+    Load-time errors (ExperimentError and friends) propagate unchanged; a
+    failing run propagates the executor's error. A run whose recomputed
+    coverage disagrees with the coverage it reported is recorded with a
+    coverage-consistency finding, not an exception (DESIGN.md 9: findings,
+    never silently trusted).
+    """
+    experiment_path = Path(experiment_path)
+    experiment = load_experiment(experiment_path)
+    plan = resolve(experiment)
+    executor = run_executor or default_run_executor
+    out_root = Path(out_root)
+    experiment_id = experiment_path.stem
+
+    spec = _load_spec()
+    run_summaries: list[RunSummary] = []
+    for descriptor in plan.runs:
+        run_id = _fresh_run_id(out_root, f"{experiment_id}-{descriptor.design}")
+        outcome = executor(descriptor, run_id, out_root)
+        run_summaries.append(
+            _assemble_run_summary(descriptor, outcome, run_id, out_root, spec))
+
+    manifest = {
+        "schema": 1,   # bare stamp (DESIGN.md 4: no type names in data files)
+        "created": now_rfc3339_ms(),
+        "experiment": {
+            "path": str(experiment_path),
+            "sha256": sha256_file(experiment_path),
+            "resolved": experiment.to_dict(),
+        },
+        "plugin_versions": plugin_versions(),
+        "sensor": sensor_version(),
+        "runs": [s.to_dict() for s in run_summaries],
+    }
+    exec_dir = out_root / experiment_id
+    exec_dir.mkdir(parents=True, exist_ok=True)
+    manifest_path = exec_dir / "execution.json"
+    manifest_path.write_text(
+        json.dumps(manifest, indent=1, sort_keys=True) + "\n", encoding="utf-8")
+    return ExecutionResult(experiment=experiment, runs=run_summaries,
+                           manifest_path=manifest_path, manifest=manifest)
