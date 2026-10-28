@@ -65,7 +65,7 @@ Operational notes for the measurement pipeline (M3+):
 A dedicated `compose/t0.yaml` wiring (sensor + harness containers) arrives in
 M3; this file only pins the smoke procedure.
 
-## Container-enrichment startup race (found 2026-10-06 on AWS REDACTED-REGION)
+## Container-enrichment startup race (found 2026-10-06 on AWS EC2)
 
 A container created DURING Tracee's first-start eBPF warm-up may never enter
 Tracee's container cache: `--scope container` then silently drops ALL events

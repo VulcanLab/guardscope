@@ -360,7 +360,7 @@ Three strict layers:
 
 ## 12. Migration from the existing testbed
 
-Source: `REDACTED-SOURCE-REPO/code/`. The testbed is working; the extraction preserves its behavior while moving each component to its place in the framework.
+Source: the internal research testbed (kept in the original research repository; imported with its recorded run data removed from this repository). The testbed is working; the extraction preserves its behavior while moving each component to its place in the framework.
 
 | Existing component | Framework home | Notes |
 |---|---|---|
