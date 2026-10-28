@@ -1,0 +1,5 @@
+# Experiment record
+
+| run-id | date | instance | region/cost | config | result | notes |
+|---|---|---|---|---|---|---|
+| m1-e2e-20261028 | 2026-10-28 | EC2 m7g.2xlarge spot, ~$0.21/hr, ~1.2h (~$0.25 total), instance terminated after runs | ap-northeast-1, Ubuntu 24.04, kernel 7.0.0-1014-aws, Docker 29.1.3 | examples/t0-pi.yaml (x2: shakedown + acceptance) and examples/t1-pi.yaml (x2: shakedown + acceptance), harness pi, workload baseline-15, control agt-gateway at t1 | PASS — t0-pi-t0-2: 15/15 bypassed, zero findings; t1-pi-t1-2: 4 http_tool_call checked (C2 4/4 mapped), 11 escape-class bypassed, C4 pass, 8 decision records mapped to decision-record/1 (schema 1, ingested), coverage_consistent=true | First-boot runs fail R4-leftovers as the runbook predicts (harness startup writes); shakedown-then-acceptance is the required sequence. SkyPilot unavailable (IAM instance-profile reads denied); instance created/terminated with plain EC2 following the skill's conventions. Evidence in results/m1-e2e-20261028/ |

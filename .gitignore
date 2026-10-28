@@ -3,3 +3,5 @@ __pycache__/
 .venv/
 .pytest_cache/
 runs/
+results/*/t1-*/tracee-events.json
+results/*/t1-*/mapped-actions.jsonl
