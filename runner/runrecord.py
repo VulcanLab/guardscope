@@ -65,6 +65,12 @@ VERSION_KEYS = {
     "pi": {"version": "PI_VERSION",
            "image": "PI_NODE_BASE_IMAGE",
            "image_digest": "PI_NODE_BASE_IMAGE_DIGEST"},
+    # the mock harness (the path-originator fixture): a local build, not a
+    # registry pull, so the image digest stays unpinned until the fixture is
+    # validated live (env/versions.env records that fact)
+    "mock-harness": {"version": "MOCK_HARNESS_VERSION",
+                      "image": "MOCK_HARNESS_IMAGE",
+                      "image_digest": "MOCK_HARNESS_IMAGE_DIGEST"},
 }
 
 

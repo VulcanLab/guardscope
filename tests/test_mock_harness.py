@@ -92,8 +92,9 @@ class FakeSyscalls:
         self.calls.append(("close_socket", sock.kind))
         sock.closed = True
 
-    def http_request(self, method, url, body=None):
-        self.calls.append(("http_request", method, url, body))
+    def http_request(self, method, url, body=None, headers=None):
+        self.calls.append(("http_request", method, url, body,
+                           dict(headers) if headers else None))
         if body and '"tools/call"' in body:
             frame = json.loads(body)
             result = {"jsonrpc": "2.0", "id": frame["id"],
@@ -681,9 +682,15 @@ def test_stdio_twin_session_reused_per_run(monkeypatch, spec):
 
 def test_http_twin_raw_route(monkeypatch, spec):
     fake = install_fake(monkeypatch, FakeSyscalls())
-    detail = org.http_tool_call(compiled("a011", spec), ctx_for())
+    ctx = ctx_for()
+    ctx.action_id = "a011"
+    detail = org.http_tool_call(compiled("a011", spec), ctx)
+    # the raw route's correlation carrier (DESIGN.md 5): the
+    # x-inspection-* headers on the request (the driver sets ctx.action_id)
     assert ("http_request", "POST", "http://http-endpoint:8080/hook",
-            "tool-call payload") in fake.calls
+            "tool-call payload",
+            {"x-inspection-action-id": "a011",
+             "x-inspection-attempt": "0"}) in fake.calls
     assert org.origin_channel(org.http_tool_call, "default", ctx_for()) \
         == "http-connect"
     assert detail["via"] == "raw" and detail["http_status"] == 200
@@ -695,7 +702,8 @@ def test_http_twin_gateway_route(monkeypatch, spec):
             "routes": {"http": "gateway", "gateway_url": "http://gateway:8090"}}
     ctx = ctx_for(plan)
     detail = org.http_tool_call(compiled("a011", spec), ctx)
-    method, url, body = next(c[1:] for c in fake.calls if c[0] == "http_request")
+    method, url, body, headers = next(c[1:] for c in fake.calls
+                                      if c[0] == "http_request")
     assert method == "POST" and url == "http://gateway:8090/mcp"
     frame = json.loads(body)
     assert frame["method"] == "tools/call"

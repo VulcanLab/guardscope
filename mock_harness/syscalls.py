@@ -62,16 +62,20 @@ def close_socket(sock) -> None:
 
 # --- http (http_tool_call twins: raw fetch / gateway JSON-RPC POST) ----------
 
-def http_request(method: str, url: str, body: str | None = None) -> tuple[int, bytes]:
+def http_request(method: str, url: str, body: str | None = None,
+                 headers: dict[str, str] | None = None) -> tuple[int, bytes]:
     """One plain HTTP request; returns (status, response body bytes).
 
     The raw-route twin's kernel signature is one connect per request (no
     pooling; see manifest notes on the client fidelity limitation).
-    Non-2xx raises (urllib HTTPError) — the originator records it.
+    `headers` is the correlation-carrier seam for the raw route (the
+    x-inspection-* headers travel on the request exactly like the real
+    harness adapter's raw fetch). Non-2xx raises (urllib HTTPError) — the
+    originator records it.
     """
     req = urllib.request.Request(
         url, data=body.encode("utf-8") if body is not None else None,
-        method=method)
+        method=method, headers=dict(headers) if headers else {})
     with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT_S) as resp:
         return resp.status, resp.read()
 

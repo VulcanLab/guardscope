@@ -48,6 +48,19 @@ from mock_harness import MOCK_HARNESS_VERSION, syscalls
 MCP_PROTOCOL_VERSION = "2025-06-18"
 MCP_CLIENT_INFO = {"name": "inspection-mock-harness", "version": "0.1.0"}
 
+# Correlation carriers (DESIGN.md 5; mirrors harnesses/pi/adapter/replay.ts):
+# the driver is the id authority on the workload side and stamps the canonical
+# trace action ids onto the tool-call transports. Carrier 1: the tools/call
+# params._meta namespaced keys; carrier 2: the x-inspection-* HTTP headers on
+# raw (non-MCP) http requests. The mock harness sets them wherever the twins
+# build a request, exactly like the real adapter (the ids are trace-derived
+# strings; the originators stay policy-blind — carriers are provenance, never
+# a policy check).
+META_ACTION_ID = "io.inspection/action_id"
+META_ATTEMPT = "io.inspection/attempt"
+HEADER_ACTION_ID = "x-inspection-action-id"
+HEADER_ATTEMPT = "x-inspection-attempt"
+
 # (method, path) -> gateway tool for the http twins under the gateway route.
 # Mirrors targets/mcp-http TOOL_ROUTES and the adapters' GATEWAY_TOOL_ROUTES
 # (one route can serve several spec instances: a011 and a014 share POST
@@ -160,9 +173,14 @@ class StdioSession:
     def _notify(self, method: str) -> None:
         self._send({"jsonrpc": "2.0", "method": method})
 
-    def call(self, tool: str, arguments: dict) -> dict:
-        return self._request("tools/call", {"name": tool,
-                                             "arguments": arguments})
+    def call(self, tool: str, arguments: dict, meta: dict | None = None) -> dict:
+        """One tools/call request; `meta` is the params._meta correlation
+        carrier block (DESIGN.md 5) when given, mirroring the harness's
+        McpSession call shape."""
+        params = {"name": tool, "arguments": arguments}
+        if meta is not None:
+            params["_meta"] = dict(meta)
+        return self._request("tools/call", params)
 
     def close(self) -> None:
         """End the session: stdin EOF (the server exits), reap the child."""
@@ -270,7 +288,10 @@ def stdio_tool_call(rec: dict, ctx: "RunContext", variant: str = "default") -> d
     (the harness's own T0-T2 transport for this class)."""
     session = ctx.stdio()
     arguments = rec.get("arguments") or {}
-    resp = session.call(rec["tool"], arguments)
+    # carrier 1 (DESIGN.md 5): the tools/call params._meta namespaced keys —
+    # the same carrier the pi adapter injects on every stdio tools/call
+    resp = session.call(rec["tool"], arguments,
+                        meta={META_ACTION_ID: ctx.action_id, META_ATTEMPT: 0})
     if resp.get("error"):
         raise SpawnError(f"mcp {rec['tool']}: {json.dumps(resp['error'])}")
     text = resp["result"]["content"][0]["text"]
@@ -298,7 +319,11 @@ def http_tool_call(rec: dict, ctx: "RunContext", variant: str = "default") -> di
             arguments["body"] = rec["body"]
         msg = {"jsonrpc": "2.0", "id": ctx.next_rpc_id(),
                "method": "tools/call",
-               "params": {"name": tool, "arguments": arguments}}
+               "params": {"name": tool, "arguments": arguments,
+                          # carrier 1 (DESIGN.md 5): _meta on the gateway-
+                          # routed tools/call, mirroring the pi adapter
+                          "_meta": {META_ACTION_ID: ctx.action_id,
+                                    META_ATTEMPT: 0}}}
         status, body = syscalls.http_request(
             "POST", ctx.gateway_url.rstrip("/") + "/mcp",
             json.dumps(msg, separators=(",", ":")))
@@ -314,7 +339,11 @@ def http_tool_call(rec: dict, ctx: "RunContext", variant: str = "default") -> di
             "http_status": status,
         }
     body = rec.get("body")
-    status, _ = syscalls.http_request(rec["op"], rec["url"], body)
+    # carrier 2 (DESIGN.md 5): the x-inspection-* headers on the raw fetch
+    # (the same header carrier the pi adapter sends on raw http tool calls)
+    status, _ = syscalls.http_request(
+        rec["op"], rec["url"], body,
+        headers={HEADER_ACTION_ID: str(ctx.action_id), HEADER_ATTEMPT: "0"})
     return {
         "via": "raw",
         "method": rec["op"],

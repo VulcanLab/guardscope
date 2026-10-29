@@ -1,0 +1,12 @@
+# Example experiment (DESIGN.md 6): one gateway column with forced egress,
+# mock-harness variant. control: agt-gateway occupies the gateway slot; t2 is
+# the t1 gateway plus the fixture-supplied forced egress (the egress jail on
+# the mock service's netns is silent environment topology, not part of the
+# control; DESIGN.md 7). The direct-network attempts are prevented; the
+# stdio twin, spawns, file writes, and credential reads bypass — the escapes
+# T2 leaves open. Cells carry the mock-run evidence class (DESIGN.md 9).
+schema: 1
+control: agt-gateway
+designs: [t2]
+harness: mock-harness
+workload: baseline-15

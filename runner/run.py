@@ -61,6 +61,9 @@ MAP_EVENTS = HERE / "sensor" / "mapping" / "map_events.py"
 VERSIONS = HERE / "env" / "versions.env"
 DEFAULT_RUNS_DIR = HERE / "runs"
 
+MOCK_HARNESS_REPO_MOUNT = "/repo"          # compose mounts the repo read-only here
+MOCK_DRIVER_TRACE = "trace/traces/baseline.yaml"   # resolved against /repo
+
 HARNESSES = {
     "pi": {
         "container": "t0-pi",
@@ -83,6 +86,21 @@ HARNESSES = {
         "replay_mount": "/workspace/replay",
         "url": "http://127.0.0.1:28789",
         "token": "inspection-t0-token",
+        "timeout_s": 120,
+    },
+    # The mock harness (the path-originator fixture, DESIGN.md 8): the
+    # driver runs IN the fixture container (compose/t{N}-mock.yaml) via
+    # docker exec — same pattern as pi, one exec per run — and reads the
+    # canonical trace directly (no compiled-trace step: the driver compiles
+    # each action through the same pi compiler in-container). Plan per
+    # design: t0 runs the driver's built-in default plan (raw http route);
+    # t1/t2 run the pinned gateway-route plan so the http twin crosses the
+    # design's enforcement point (the inspected-twin parity, DESIGN.md 8).
+    "mock-harness": {
+        "container": "t0-mock",
+        "replay_dir": DEFAULT_RUNS_DIR / "mock",
+        "trigger": "mock",
+        "replay_mount": "/workspace/replay",
         "timeout_s": 120,
     },
 }
@@ -138,11 +156,30 @@ def harness_cfg(harness: str, design: str = "t0") -> dict:
         raise ValueError(f"design {design} uses the harness-native "
                          "enforcement surface; validated on the pi and "
                          "openclaw harnesses (see T4-INVESTIGATION.md)")
+    # the mock-harness fixtures exist for t0/t1/t2 only (compose/t{N}-mock.yaml;
+    # plugins/mock-harness/manifest.json declares the same set)
+    if harness == "mock-harness" and design not in ("t0", "t1", "t2"):
+        raise ValueError(f"design {design} has no mock-harness fixture "
+                         "(fixtures exist for t0, t1, t2; "
+                         "compose/t0-mock.yaml..t2-mock.yaml)")
     cfg = dict(HARNESSES[harness])
     prefix = DESIGNS[design]["prefix"]
     cfg["container"] = f"{prefix}-{harness}"
     cfg["design"] = design
     cfg["prefix"] = prefix
+    if harness == "mock-harness":
+        # the mock fixtures are their own compose projects: every container
+        # name carries the t{N}-mock- prefix and the harness service itself
+        # is t{N}-mock (harness_cfg callers derive the target/gateway/tracee
+        # container names from cfg["prefix"], so one prefix covers all)
+        cfg["container"] = f"{prefix}-mock"
+        cfg["prefix"] = f"{prefix}-mock"
+        # the http twin's route is plan data: t1/t2 run the pinned gateway
+        # plan in-container (mock_harness/plans/t{N}.json); t0 keeps the
+        # built-in default plan (raw fetch, no enforcement point to cross)
+        if design in ("t1", "t2"):
+            cfg["mock_plan"] = (f"{MOCK_HARNESS_REPO_MOUNT}/mock_harness/"
+                               f"plans/{design}.json")
     return cfg
 
 
@@ -248,13 +285,105 @@ def chown_target_logs(prefix: str = "t0") -> None:
           file=sys.stderr)
 
 
+def mock_trigger_command(cfg: dict, run_id: str) -> list[str]:
+    """The docker-exec argv that runs the mock-harness driver in the fixture
+    container (pure argv construction, unit-tested): the runner stamps the
+    run identity as env (the driver's dispatch records read
+    INSPECTION_RUN_ID; DESIGN.md 4), sets the container cwd to the mounted
+    repo, and runs `python3 -m mock_harness.driver` with the canonical trace
+    + the per-design plan (harness_cfg: t1/t2 the pinned gateway route, t0
+    the driver's built-in default plan)."""
+    cmd = ["docker", "exec",
+           "-e", f"INSPECTION_RUN_ID={run_id}",
+           # the repo mount is read-only; bytecode writes would fail with
+           # EROFS and surface as unmatched kernel events
+           "-e", "PYTHONDONTWRITEBYTECODE=1",
+           "-w", MOCK_HARNESS_REPO_MOUNT,
+           cfg["container"],
+           "python3", "-m", "mock_harness.driver",
+           "--trace", MOCK_DRIVER_TRACE,
+           "--out", f"{cfg['replay_mount']}/{run_id}",
+           "--run-id", run_id,
+           "--mode", "all"]
+    if cfg.get("mock_plan"):
+        cmd += ["--plan", cfg["mock_plan"]]
+    return cmd
+
+
+def mock_replay_result(driver_run_dir: Path) -> dict:
+    """Driver artifacts -> the replay-layer dict the shared reconcile/
+    runrecord machinery consumes (the same shape the pi/openclaw adapters'
+    replay-result.json carries): per-action results with id/class/op/status
+    and the driver manifest's window_epoch_ns (the measurement window for
+    capture/reconcile — the driver opens and closes it around the action
+    loop)."""
+    action_log = [json.loads(line) for line in
+                  (driver_run_dir / "action-log.jsonl").read_text(
+                      encoding="utf-8").splitlines() if line.strip()]
+    driver_manifest = json.loads(
+        (driver_run_dir / "run-manifest.json").read_text(encoding="utf-8"))
+    window = driver_manifest.get("window_epoch_ns") or {}
+    results = [{"id": r["id"], "class": r["class"], "op": r["op"],
+               "status": r["status"], "error": r.get("error")}
+               for r in action_log]
+    failed = sum(1 for r in results if r["status"] != "ok")
+    return {"ok": failed == 0,
+            "executed": len(results), "failed": failed,
+            "results": results,
+            "window_epoch_ns": {"start": int(window.get("start") or 0),
+                                 "end": int(window.get("end") or 0)},
+            "mock_harness_digest": (driver_manifest.get("action_log")
+                                    or {}).get("digest")}
+
+
+def trigger_mock(cfg: dict, run_id: str, timeout_s: float) -> Path:
+    """docker-exec the mock-harness driver in the fixture container and
+    return the run's directory on the host (the mounted replay volume).
+
+    The driver exits 0 when every action recorded status ok, 1 on any action
+    error (the errors are data — design t2 direct-network refusals are the
+    expected error status, adjudicated downstream by the prevented-class
+    machinery), 2 on setup failures (bad pins/plan — a hard error)."""
+    cmd = mock_trigger_command(cfg, run_id)
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True,
+                              timeout=timeout_s)
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(f"mock driver timed out after {timeout_s}s: "
+                           f"{' '.join(cmd)}") from exc
+    if proc.returncode == 2:
+        raise RuntimeError(f"mock driver setup failed: {proc.stderr}")
+    if proc.returncode not in (0, 1):
+        raise RuntimeError(f"mock driver failed ({proc.returncode}): "
+                           f"{proc.stderr}")
+    # the driver runs as root in the container; hand the mounted artifacts
+    # back to the host user (the same pattern as the openclaw trigger)
+    docker_exec(cfg["container"],
+                f"chown -R {os.getuid()}:{os.getgid()} "
+                f"{cfg['replay_mount']}/{run_id}", check=False)
+    out = Path(cfg["replay_dir"]) / run_id
+    if not (out / "run-manifest.json").is_file():
+        raise RuntimeError(f"mock driver did not write its run manifest "
+                           f"({out / 'run-manifest.json'} missing)")
+    return out
+
+
 def trigger_replay(harness: str, run_id: str, timeout_s: float,
                    cfg: dict | None = None) -> tuple[dict, Path]:
     """Execute the compiled trace in the harness (no LLM); returns
     (replay result dict, replay-log path in the host replay dir)."""
     cfg = cfg or HARNESSES[harness]
-    compiled = cfg["compiled"]
     replay_dir = cfg["replay_dir"]
+
+    if cfg["trigger"] == "mock":
+        # the mock trigger: docker-exec the driver in the fixture container
+        # (no compiled-trace staging — the driver reads the canonical spec
+        # in-container; the replay-log slot carries the driver's
+        # action-log.jsonl, copied into the run dir as replay-log.jsonl)
+        driver_run_dir = trigger_mock(cfg, run_id, timeout_s)
+        return mock_replay_result(driver_run_dir), driver_run_dir / "action-log.jsonl"
+
+    compiled = cfg["compiled"]
 
     if cfg["trigger"] == "pi":
         import trigger_pi
@@ -547,12 +676,23 @@ def run_one(harness: str, run_id: str, runs_dir: Path, timeout_s: float | None =
     timeout_s = timeout_s or cfg["timeout_s"]
 
     check_spec_hash()
-    compiled = compile_harness(harness)
-    chown_target_logs(prefix)
+    # the mock harness reads the canonical trace directly in-container (the
+    # driver compiles each action through the same pi compiler); the real
+    # harnesses stage a compiled trace, so the compile/diff-check step and
+    # the target-logs chown (a node/openclaw uid issue) are theirs only
+    if harness == "mock-harness":
+        compiled = None
+    else:
+        compiled = compile_harness(harness)
+        chown_target_logs(cfg["prefix"])
 
     # T2+: gate the replay on the egress jails having applied their netns
     # policy cleanly (they are one-shot containers that exit after nft -f).
-    for name in DESIGNS[design].get("egress_jails") or []:
+    # The mock fixture has exactly one jail (on the mock service's netns).
+    egress_jails = DESIGNS[design].get("egress_jails") or []
+    if harness == "mock-harness" and egress_jails:
+        egress_jails = [f"{cfg['prefix']}-egress-jail"]
+    for name in egress_jails:
         proc = sh(["docker", "wait", name], check=False)
         code = (proc.stdout or "").strip()
         if proc.returncode != 0 or code != "0":
@@ -600,9 +740,19 @@ def run_one(harness: str, run_id: str, runs_dir: Path, timeout_s: float | None =
     dispatch_src = Path(replay_log_src).parent / "dispatch-records.jsonl"
     if dispatch_src.is_file():
         shutil.copyfile(dispatch_src, out_dir / "dispatch-records.jsonl")
-    compiled_dir = out_dir / "compiled-trace"
-    compiled_dir.mkdir()
-    shutil.copyfile(compiled, compiled_dir / Path(compiled).name)
+    if harness == "mock-harness":
+        # the driver's own run manifest (trace/plan pins, window, digest) is
+        # retained as the mock-run provenance artifact (named to avoid
+        # clashing with the runner's manifest.json); the replay-log slot
+        # above carries the driver's action-log.jsonl
+        driver_manifest_src = Path(replay_log_src).parent / "run-manifest.json"
+        if driver_manifest_src.is_file():
+            shutil.copyfile(driver_manifest_src,
+                            out_dir / "mock-run-manifest.json")
+    if compiled is not None:
+        compiled_dir = out_dir / "compiled-trace"
+        compiled_dir.mkdir()
+        shutil.copyfile(compiled, compiled_dir / Path(compiled).name)
 
     if sensor:
         print(f"[{run_id}] capturing Tracee events ...", file=sys.stderr)
@@ -714,6 +864,8 @@ def run_one(harness: str, run_id: str, runs_dir: Path, timeout_s: float | None =
         "replay-result": out_dir / "replay-result.json",
         "replay-log": out_dir / "replay-log.jsonl",
     }
+    if harness == "mock-harness" and (out_dir / "mock-run-manifest.json").is_file():
+        artifacts["mock-run-manifest"] = out_dir / "mock-run-manifest.json"
     if sensor:
         artifacts["tracee-events"] = out_dir / "tracee-events.json"
         artifacts["mapped-actions"] = out_dir / "mapped-actions.jsonl"
@@ -1190,6 +1342,13 @@ def main() -> int:
         harnesses = sorted(HARNESSES) if args.harness == "all" else [args.harness]
         check_spec_hash()
         for h in harnesses:
+            if "compile_py" not in HARNESSES[h]:
+                # the mock harness reads the canonical trace directly in-
+                # container (no compiled-trace step; run.py compile is the
+                # real-harness compile/diff-check only)
+                print(f"{h}: no compiled trace (reads the canonical spec "
+                      f"directly)")
+                continue
             compiled = compile_harness(h)
             print(f"{h}: compiled + diff-clean -> {compiled}")
         return 0

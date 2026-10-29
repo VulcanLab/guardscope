@@ -406,6 +406,28 @@
             }
           }
         },
+        "dispatch_records": {
+          "type": "object",
+          "description": "M2a (DESIGN.md 3, 4): one dispatch-record/1 per tool-call attempt; process-level actions get no dispatch record (no carrier exists). Additive within /1 (DESIGN.md 4).",
+          "required": ["path", "records"],
+          "additionalProperties": false,
+          "properties": {
+            "path": {
+              "const": "dispatch-records.jsonl"
+            },
+            "records": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "tool_call_actions": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "note": {
+              "type": "string"
+            }
+          }
+        },
         "deferred_join": {
           "type": "array",
           "items": {

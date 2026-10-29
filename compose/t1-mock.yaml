@@ -1,0 +1,124 @@
+# compose/t1-mock.yaml — deployment design T1 (gateway for HTTP tools, no
+# egress restriction; DESIGN.md 7) with the harness slot filled by the mock
+# harness. The gateway, http-endpoint, mcp-http, and net-peer services are
+# compose/t1.yaml verbatim (container names re-prefixed, project distinct);
+# only the harness slot differs.
+#
+#   mock-harness ──MCP over HTTP:8090──▶ t1-mock-gateway ──:8091──▶ t1-mock-mcp-http
+#        │ (mock_harness/plans/t1.json: routes.http=gateway, the inspected    │ raw HTTP:8080
+#        │  http twin; DESIGN.md 8 inspected-twin parity with the real        ▼
+#        │  harness route)                                            t1-mock-http-endpoint
+#   mock-harness ── stdio MCP / raw socket / exec / fs / secrets (NO gateway) ──▶
+#
+# The mock-harness service idles after the per-topology setup scripts
+# (targets/fs/setup.sh -> /workspace/out, targets/credentials/seed.sh ->
+# /run/secrets — what the harness containers run in their entrypoints);
+# the runner docker-execs the driver into it per run:
+#   docker exec -e INSPECTION_RUN_ID=<id> -w /repo t1-mock \
+#     python3 -m mock_harness.driver --trace trace/traces/baseline.yaml \
+#       --plan mock_harness/plans/t1.json \
+#       --out /workspace/replay/<run-id> --run-id <run-id>
+#
+# The Tracee sensor runs OUTSIDE the deployed topology (no t1net attachment):
+#   docker compose -f compose/t1-mock.yaml --profile sensor up -d
+
+name: inspection-t1-mock
+
+services:
+  http-endpoint:
+    build:
+      context: ../targets
+      dockerfile: http-endpoint/Dockerfile
+    image: inspection/http-endpoint
+    container_name: t1-mock-http-endpoint
+    networks: [t1net]
+    volumes:
+      - target-logs:/var/log/targets
+    restart: unless-stopped
+
+  mcp-http:
+    build:
+      context: ../targets
+      dockerfile: mcp-http/Dockerfile
+    image: inspection/mcp-http
+    container_name: t1-mock-mcp-http
+    networks: [t1net]
+    environment:
+      HTTP_ENDPOINT_URL: http://http-endpoint:8080
+    volumes:
+      - target-logs:/var/log/targets
+    restart: unless-stopped
+
+  gateway:
+    build:
+      context: ..
+      dockerfile: gateway/Dockerfile
+    image: inspection/gateway
+    container_name: t1-mock-gateway
+    networks: [t1net]
+    environment:
+      UPSTREAM_URL: http://mcp-http:8091/mcp
+      GATEWAY_LOG_DIR: /var/log/gateway
+      GATEWAY_AGENT_ID: t1-mock-replay
+    volumes:
+      - gateway-logs:/var/log/gateway
+    depends_on: [mcp-http]
+    restart: unless-stopped
+
+  net-peer:
+    build:
+      context: ../targets
+      dockerfile: net-peer/Dockerfile
+    image: inspection/net-peer
+    container_name: t1-mock-net-peer
+    networks: [t1net]
+    volumes:
+      - target-logs:/var/log/targets
+    restart: unless-stopped
+
+  tracee:
+    build:
+      context: ../sensor
+      dockerfile: Dockerfile.tracee
+    image: inspection/tracee
+    container_name: t1-mock-tracee
+    privileged: true
+    pid: host
+    cgroup: host
+    volumes:
+      - /etc/os-release:/etc/os-release-host:ro
+      - /var/run:/var/run:ro
+      - tracee-data:/tmp/tracee
+    profiles: [sensor]
+    restart: unless-stopped
+
+  mock-harness:
+    build:
+      context: ..
+      dockerfile: mock_harness/Dockerfile
+    image: inspection/mock-harness
+    container_name: t1-mock
+    networks: [t1net]
+    environment:
+      TARGET_LOG_DIR: /var/log/targets
+      REPLAY_LOG_DIR: /workspace/replay
+      GATEWAY_URL: http://gateway:8090      # T1: the http twin's gateway route
+    volumes:
+      - target-logs:/var/log/targets
+      - ../runs/mock:/workspace/replay   # driver artifacts retained per-run
+      - ..:/repo:ro                     # the repo, read-only (no repo baked in)
+    working_dir: /workspace
+    command:
+      - sh
+      - -c
+      - /repo/targets/fs/setup.sh && /repo/targets/credentials/seed.sh && sleep infinity
+    depends_on: [gateway]
+    restart: unless-stopped
+
+networks:
+  t1net: {}
+
+volumes:
+  target-logs: {}
+  gateway-logs: {}
+  tracee-data: {}

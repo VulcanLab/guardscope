@@ -1,0 +1,12 @@
+# Example experiment (DESIGN.md 6): one gateway column, mock-harness variant.
+# control: agt-gateway occupies the gateway slot; t1 places it for HTTP tools
+# with the transport and process escapes exposed (DESIGN.md 7). The mock
+# harness crosses it with its inspected http twin (plan routes.http=gateway,
+# mock_harness/plans/t1.json) and exercises the escape classes policy-blind
+# (DESIGN.md 8); cells carry the mock-run evidence class, reported
+# separately from harness-run cells (DESIGN.md 9).
+schema: 1
+control: agt-gateway
+designs: [t1]
+harness: mock-harness
+workload: baseline-15

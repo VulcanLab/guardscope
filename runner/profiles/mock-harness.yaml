@@ -1,0 +1,197 @@
+# Reconciliation profile: mock harness (the path-originator fixture; DESIGN.md 8).
+#
+# Same profile schema and matcher semantics as profiles/pi.yaml. The mock
+# harness is a python process docker-exec'd into the t{N}-mock fixture
+# container (no node runtime, no agent): the noise allowlist is the shared
+# container/runtime noise (docker exec helpers, runc, /proc tuning — the
+# entries observed live for pi/openclaw, 2026-09-10) plus python-interpreter
+# read-opens; the node-specific entries (compile cache, jiti) are absent.
+#
+# Multiplicity envelopes: DERIVED, not live-calibrated. Each envelope is
+# derived from the originators' deterministic behavior (mock_harness/
+# manifest.yaml expected_multiplicity declarations, cross-checked against
+# mock_harness/originators.py) or borrowed from the pi live calibration; the
+# T0 calibration diff against a real Tracee capture (DESIGN.md 8 evidence
+# gate 2) is the NEXT pass and must tighten these before mock cells are
+# citable. Derived vs borrowed, per envelope:
+#   stdio_handshake_extra_writes: 1 — derived (StdioSession: exactly one
+#     initialize response per run; the notifications/initialized notification
+#     gets no response; the manifest pins [n_requests, n_requests + 1]).
+#   http_connects_min: 1 — derived (python urllib opens one connection per
+#     request, no pooling, on BOTH routes: raw fetch to :8080 and the gateway
+#     JSON-RPC POST to :8090 give exactly n connects; the manifest a011 raw
+#     note documents the no-pooling client fidelity limitation).
+#   tcp_connects_per_action: 1 — derived (one socket + one connect per
+#     tcp_connect action).
+#   udp_max_per_action: 2 — BORROWED from the pi live calibration (the double
+#     capture: egress + loopback net_packet_udp); needs a live mock run.
+#   file_write_opens_per_action / credential_opens_per_action: [1, 2] —
+#     deliberately conservative: the python originators open exactly once per
+#     action, but the manifest declares [1,2] (the harness-side double
+#     open); keeping the manifest envelope until the calibration diff runs
+#     hides less if the container filesystem layers an extra open.
+
+profile: mock-harness/v1
+harness: mock-harness
+container_name: t0-mock
+
+# Slack (ns) added to both ends of the run window before scoping; the driver
+# manifest's window_epoch_ns is the measurement window (the driver opens it
+# immediately before the first action and closes it after the last), so the
+# same Tracee flush-lag slack as the pi profile applies.
+window_slack_ns: 1000000000
+
+# served-target names as they appear in the shared target-logs volume
+# (the MCP stdio server logs under its SERVER_NAME, not the class name)
+served_targets:
+  http: http-endpoint
+  stdio: toy-mcp-fs
+  network: net-peer
+
+noise:
+  - id: exec-path-probe
+    reason: failed execve attempts (PATH probes) are not successful spawns
+    where: { event: execve, retval_nonzero: true }
+
+  - id: driver-cleanup-execs
+    reason: driver-side docker-exec cleanup (rm -f, chown) in the container
+    where:
+      event: execve
+      argv_contains: ["rm -f ", "chown "]
+
+  - id: runtime-execs
+    reason: container runtime / docker exec helper processes
+    where:
+      event: execve
+      process_contains: [runc, conmon, crun, chown, chmod, rm, ls, head, cat, stat]
+
+  - id: oom-score-adj
+    reason: runtime/driver /proc/*/oom_score_adj tuning writes
+    where: { event: security_file_open, path_glob: "/proc/*/oom_score_adj" }
+
+  - id: docker-exec-helpers
+    reason: >
+      driver-side docker exec helper commands (chmod/ls/head/cat/...) appear
+      as in-container execve with an EMPTY processName/argv (Tracee 0.24,
+      observed live for pi/openclaw 2026-09-10). Workload spawn targets are
+      /bin/sh and /bin/echo.
+    where:
+      event: execve
+      path_basename: [chmod, ls, head, cat, stat, tail, grep, mkdir, rm, chown]
+
+  - id: runtime-file-opens
+    reason: >
+      container-runtime file opens inside the window: docker exec spawns
+      runc / runc:[1:CHILD] which reads the container rootfs (/ and /runc)
+      to start the exec process (observed live 2026-09-10).
+    where:
+      event: security_file_open
+      process_contains: [runc]
+
+  - id: infra-read-opens
+    reason: >
+      python interpreter/runtime/library read-opens (the driver, the stdio
+      twin's server child, yaml/jsonschema module loads, the mounted trace
+      spec and path manifest) are infrastructure; file READS are not a
+      canonical action class, so they never map and must be allowlisted by
+      prefix. /repo is mounted read-only, so no bytecode-cache writes occur.
+    where:
+      event: security_file_open
+      flags_contain: [O_RDONLY]
+      path_prefix:
+        - /usr/
+        - /lib/
+        - /lib64/
+        - /etc/
+        - /repo/                 # the mounted repo: interpreter imports + the pinned trace/manifests
+        - /workspace/replay     # driver outputs (bare dir too)
+
+  - id: infra-paths
+    reason: instrumentation paths (sensor output, target logs, replay dir)
+    where:
+      path_prefix: [/proc/, /sys/, /dev/, /tmp/tracee, /var/log/targets, /workspace/replay]
+
+  - id: tool-file-reads
+    reason: >
+      MCP fs read_file/list_directory opens of workspace files (read-mode,
+      from the stdio twin's server child): file reads are not a canonical
+      action class, so these stay unmapped by design. Deliberately narrow:
+      READ-mode only, so a broken file_write mapping (write opens falling
+      through to unmapped) still fails.
+    where:
+      class: unmapped
+      event: security_file_open
+      flags_contain: [O_RDONLY]
+      path_prefix: [/workspace/out]  # no trailing slash: list_directory opens the bare dir
+
+  - id: python-socket-churn
+    reason: >
+      python resolver/DNS churn: getaddrinfo traffic to the embedded docker
+      DNS and its replies (ephemeral client ports). The port-based mapping
+      already defines the workload ports; any network event it leaves
+      unmapped is non-workload by definition (mapping port lists are
+      version-pinned; if they drift, bump the mapping version).
+    where:
+      class: unmapped
+      event: [connect, sendto, sendmsg, net_packet_udp]
+
+  - id: pipe-writes
+    reason: >
+      unmapped write() calls are pipe/socket/file transport traffic: the
+      driver's JSON-RPC request frames to the stdio twin's server child
+      write to the child's stdin pipe (the child's fd-1 response writes are
+      the records that map as stdio_tool_call). Residual risk, documented
+      (same as the pi profile): a broken server registry degrades stdio
+      per-action evidence to the served layer.
+    where: { class: unmapped, event: write }
+
+expected_extras:
+  - id: driver-spawn
+    reason: >
+      the runner docker-execs one mock-harness driver process per run; its
+      execve maps as process_spawn but belongs to no canonical action (the
+      same treatment as the pi/openclaw lifecycle spawns). It usually lands
+      before the window opens (the driver stamps window start after module
+      load), but the window slack can pull it in-scope.
+    class: process_spawn
+    where:
+      any_of:
+        - { argv_contains: ["mock_harness.driver"] }
+        - { path_basename: [python3, python3.12, python3.11] }
+
+  - id: mcp-server-spawn
+    reason: >
+      the stdio twin's MCP tool server is spawned as a driver child (the
+      a001-a003 transport); its successful execve maps as process_spawn but
+      belongs to no canonical action.
+    class: process_spawn
+    where:
+      any_of:
+        - { argv_contains: ["mcp-stdio/server.py"] }
+        - { path_basename: [python3, python3.12, python3.11] }
+
+  - id: mcp-write-file-opens
+    reason: >
+      an MCP write_file tool call opens the target file from the SERVER
+      child in write mode: the kernel observation maps as file_write but
+      belongs to the stdio action (a001).
+    class: file_write
+    where: { path: /workspace/out/a.txt, due_to: a001 }
+
+multiplicity:
+  # stdio: 1 response write per JSON-RPC request + 1 initialize handshake
+  # (one session per run; derived — see the header note)
+  stdio_handshake_extra_writes: 1
+  # python opens one connection per request (no pooling), raw AND gateway
+  # routes: observed connect count must be within [1, n_actions]
+  http_connects_min: 1
+  # raw TCP: one connect per tcp_connect action (no pooling)
+  tcp_connects_per_action: 1
+  # UDP: each datagram may appear twice (egress/loopback capture) — borrowed
+  # from the pi live calibration, needs a live mock run
+  udp_max_per_action: 2
+  # direct file writes / MCP server-side opens: [1, 2] per the path manifest
+  # (the python originators open exactly once; conservative until calibrated)
+  file_write_opens_per_action: [1, 2]
+  # credential reads: [1, 2] per the path manifest (same caveat)
+  credential_opens_per_action: [1, 2]

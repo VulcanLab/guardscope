@@ -1,0 +1,12 @@
+# Example experiment (DESIGN.md 6): the T0 control row, mock-harness variant.
+# control: null selects no control; t0 is the bare-harness design that defines
+# the full action surface (DESIGN.md 7). Executed on the mock harness (the
+# path-originator fixture, DESIGN.md 8, mode R): the cells this run produces
+# carry the mock-run evidence class — "the path exists and escapes this
+# topology, kernel-confirmed; no agent in the loop" — and are reported
+# separately from harness-run cells, never aggregated (DESIGN.md 9).
+schema: 1
+control: null
+designs: [t0]
+harness: mock-harness
+workload: baseline-15

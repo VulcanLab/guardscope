@@ -1,0 +1,138 @@
+# compose/t2-mock.yaml — deployment design T2 (T1's gateway + forced network
+# egress; DESIGN.md 7) with the harness slot filled by the mock harness. The
+# topology is compose/t2.yaml verbatim (container names re-prefixed, project
+# distinct): the gateway/http targets plus a NETWORK-FORCED default-deny
+# egress policy on the MOCK service's netns (the jail shares the
+# mock-harness service's network namespace by service name and exits; the
+# egress jail is silent environment topology, hashed into the fixture
+# fingerprint, never part of the control — DESIGN.md 3).
+#
+# Outcomes per action class (main.tex Table 1): the mock harness's gateway-
+# routed http twin is checked (mock_harness/plans/t2.json); the direct-
+# network attempts are PREVENTED (rejected at the netns output hook); the
+# stdio twin, spawns, file writes, and credential reads stay inside the
+# netns and bypass — the local-transport escapes T2 leaves open.
+#
+# The runner gates the replay on the jail's clean exit (run.py docker-waits
+# t2-mock-egress-jail), so a run never starts uninspected.
+#
+# The Tracee sensor runs OUTSIDE the deployed topology (no t2net attachment):
+# bring up the topology first, then:
+#   docker compose -f compose/t2-mock.yaml --profile sensor up -d tracee
+
+name: inspection-t2-mock
+
+services:
+  http-endpoint:
+    build:
+      context: ../targets
+      dockerfile: http-endpoint/Dockerfile
+    image: inspection/http-endpoint
+    container_name: t2-mock-http-endpoint
+    networks: [t2net]
+    volumes:
+      - target-logs:/var/log/targets
+    restart: unless-stopped
+
+  mcp-http:
+    build:
+      context: ../targets
+      dockerfile: mcp-http/Dockerfile
+    image: inspection/mcp-http
+    container_name: t2-mock-mcp-http
+    networks: [t2net]
+    environment:
+      HTTP_ENDPOINT_URL: http://http-endpoint:8080
+    volumes:
+      - target-logs:/var/log/targets
+    restart: unless-stopped
+
+  gateway:
+    build:
+      context: ..
+      dockerfile: gateway/Dockerfile
+    image: inspection/gateway
+    container_name: t2-mock-gateway
+    networks: [t2net]
+    environment:
+      UPSTREAM_URL: http://mcp-http:8091/mcp
+      GATEWAY_LOG_DIR: /var/log/gateway
+      GATEWAY_AGENT_ID: t2-mock-replay
+    volumes:
+      - gateway-logs:/var/log/gateway
+    depends_on: [mcp-http]
+    restart: unless-stopped
+
+  net-peer:
+    build:
+      context: ../targets
+      dockerfile: net-peer/Dockerfile
+    image: inspection/net-peer
+    container_name: t2-mock-net-peer
+    networks: [t2net]
+    volumes:
+      - target-logs:/var/log/targets
+    restart: unless-stopped
+
+  tracee:
+    build:
+      context: ../sensor
+      dockerfile: Dockerfile.tracee
+    image: inspection/tracee
+    container_name: t2-mock-tracee
+    privileged: true
+    pid: host
+    cgroup: host
+    volumes:
+      - /etc/os-release:/etc/os-release-host:ro
+      - /var/run:/var/run:ro
+      - tracee-data:/tmp/tracee
+    profiles: [sensor]
+    restart: unless-stopped
+
+  mock-harness:
+    build:
+      context: ..
+      dockerfile: mock_harness/Dockerfile
+    image: inspection/mock-harness
+    container_name: t2-mock
+    networks: [t2net]
+    environment:
+      TARGET_LOG_DIR: /var/log/targets
+      REPLAY_LOG_DIR: /workspace/replay
+      GATEWAY_URL: http://gateway:8090      # T2: the http twin's gateway route
+    volumes:
+      - target-logs:/var/log/targets
+      - ../runs/mock:/workspace/replay   # driver artifacts retained per-run
+      - ..:/repo:ro                     # the repo, read-only (no repo baked in)
+    working_dir: /workspace
+    command:
+      - sh
+      - -c
+      - /repo/targets/fs/setup.sh && /repo/targets/credentials/seed.sh && sleep infinity
+    depends_on: [gateway]
+    restart: unless-stopped
+
+  # --- forced egress (T2): one-shot jail on the mock service's netns -----
+  # Shares the mock-harness service's netns (network_mode: service:<name>),
+  # applies the default-deny nftables output policy allowing only
+  # gateway:8090 (+ loopback/DNS), exits. The runner docker-waits it before
+  # docker-exec'ing the driver.
+  egress-jail-mock:
+    build:
+      context: ../targets
+      dockerfile: egress-jail/Dockerfile
+    image: inspection/egress-jail
+    container_name: t2-mock-egress-jail
+    network_mode: "service:mock-harness"
+    cap_add: [NET_ADMIN]
+    depends_on: [mock-harness, gateway]
+    restart: "no"
+
+networks:
+  t2net: {}
+
+volumes:
+  target-logs: {}
+  gateway-logs: {}
+  tracee-data: {}

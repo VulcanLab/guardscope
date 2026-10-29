@@ -1,0 +1,90 @@
+# compose/t0-mock.yaml — the T0 topology with the harness slot filled by the
+# mock harness (the path-originator fixture; DESIGN.md 7, 8). The targets,
+# the shared volumes, and the sensor profile are compose/t0.yaml verbatim
+# minus the pi/openclaw harness services; every container name carries the
+# t0-mock- prefix and the project name is distinct, so the mock fixtures run
+# alongside the real-harness fixtures without container-name collisions.
+#
+# The mock-harness service idles (the setup scripts prepare /workspace/out
+# and /run/secrets — the same per-topology scripts the harness containers
+# run in their entrypoints — then sleep infinity); the runner docker-execs
+# the driver into it per run, the same pattern as the pi service:
+#   docker exec -e INSPECTION_RUN_ID=<id> -w /repo t0-mock \
+#     python3 -m mock_harness.driver --trace trace/traces/baseline.yaml \
+#       --out /workspace/replay/<run-id> --run-id <run-id>
+# (t0 runs the driver's built-in default plan: raw http route, no gateway).
+#
+# The repo is mounted read-only at /repo (the image bakes no repo files; the
+# driver and the stdio twin's server import from the mounted tree).
+#
+# The Tracee sensor runs OUTSIDE the deployed topology (no t0net attachment):
+#   docker compose -f compose/t0-mock.yaml --profile sensor up -d
+
+name: inspection-t0-mock
+
+services:
+  http-endpoint:
+    build:
+      context: ../targets
+      dockerfile: http-endpoint/Dockerfile
+    image: inspection/http-endpoint
+    container_name: t0-mock-http-endpoint
+    networks: [t0net]
+    volumes:
+      - target-logs:/var/log/targets
+    restart: unless-stopped
+
+  net-peer:
+    build:
+      context: ../targets
+      dockerfile: net-peer/Dockerfile
+    image: inspection/net-peer
+    container_name: t0-mock-net-peer
+    networks: [t0net]
+    volumes:
+      - target-logs:/var/log/targets
+    restart: unless-stopped
+
+  tracee:
+    build:
+      context: ../sensor
+      dockerfile: Dockerfile.tracee
+    image: inspection/tracee
+    container_name: t0-mock-tracee
+    privileged: true
+    pid: host
+    cgroup: host
+    volumes:
+      - /etc/os-release:/etc/os-release-host:ro
+      - /var/run:/var/run:ro
+      - tracee-data:/tmp/tracee
+    profiles: [sensor]
+    restart: unless-stopped
+
+  mock-harness:
+    build:
+      context: ..
+      dockerfile: mock_harness/Dockerfile
+    image: inspection/mock-harness
+    container_name: t0-mock
+    networks: [t0net]
+    environment:
+      TARGET_LOG_DIR: /var/log/targets
+      REPLAY_LOG_DIR: /workspace/replay
+    volumes:
+      - target-logs:/var/log/targets
+      - ../runs/mock:/workspace/replay   # driver artifacts retained per-run
+      - ..:/repo:ro                     # the repo, read-only (no repo baked in)
+    working_dir: /workspace
+    command:
+      - sh
+      - -c
+      - /repo/targets/fs/setup.sh && /repo/targets/credentials/seed.sh && sleep infinity
+    restart: unless-stopped
+
+networks:
+  t0net: {}
+
+volumes:
+  target-logs: {}
+  tracee-data: {}

@@ -56,12 +56,15 @@ def test_harness_manifests_declare_hostable_points():
     assert openclaw["hostable_enforcement_points"] == ["dispatch_plugins"]
 
 
-def test_mock_harness_declares_reduced_contract_and_all_designs():
+def test_mock_harness_declares_reduced_contract_and_mock_fixtures():
     manifest = load_capabilities("mock-harness")
     assert manifest["kind"] == "harness-adapter"
-    assert manifest["supported_designs"] == [f"t{i}" for i in range(8)]
+    # the fixtures that exist (compose/t0-mock.yaml..t2-mock.yaml); the
+    # t3+ designs have no mock fixture yet (DESIGN.md 8 evidence gates)
+    assert manifest["supported_designs"] == ["t0", "t1", "t2"]
     assert "hostable_enforcement_points" not in manifest
     assert "Reduced form" in manifest["notes"]
+    assert "no host mode" in manifest["notes"].lower()
 
 
 def test_version_mismatch_refused():

@@ -64,12 +64,21 @@ VERSIONS_ENV = REPO_ROOT / "env" / "versions.env"
 BASELINE_SPEC = REPO_ROOT / "trace" / "traces" / "baseline.yaml"
 
 # DESIGN.md 9: evidence class of a run driven through the real harness.
-# Mock-run cells are a separate path (DESIGN.md 8) and are not produced
-# by this module. A run without kernel evidence (the degraded no-eBPF mode)
-# is self-reported (DESIGN.md 9: "every output it produces is labeled
-# self-reported / unverified").
+# Mock-harness runs are a DIFFERENT evidence class (DESIGN.md 8, 9: "mock-
+# run"; "Harness-run and mock-run cells are reported separately, never
+# aggregated"): the mock harness is the path-originator fixture, so a run
+# driven through it is labeled mock-run everywhere (run summary, execution
+# manifest, merged report). A run without kernel evidence (the degraded
+# no-eBPF mode) is self-reported (DESIGN.md 9: "every output it produces is
+# labeled self-reported / unverified") regardless of which harness drove
+# it — claims never self-upgrade, and mock-run still requires kernel
+# confirmation ("the path exists and escapes, kernel-confirmed").
 EVIDENCE_CLASS = "harness-run"
+EVIDENCE_CLASS_MOCK = "mock-run"
 EVIDENCE_CLASS_SELF_REPORTED = "self-reported"
+
+# DESIGN.md 8: the harness whose runs carry the mock-run evidence class.
+MOCK_HARNESS_ID = "mock-harness"
 
 
 def _profile_window_slack(harness: str) -> int:
@@ -249,12 +258,18 @@ def fixture_fingerprint(descriptor: RunDescriptor) -> dict:
     a custom fixture (experiment fixture block) no compose file is pinned
     this pass: the fingerprint records the declared name and a note."""
     fingerprint: dict = {"id": descriptor.fixture}
-    compose = COMPOSE_DIR / f"{descriptor.design}.yaml"
+    # the compose file realizing the design FOR THIS HARNESS: the mock
+    # harness's fixtures are compose/t{N}-mock.yaml (own compose projects,
+    # distinct container prefixes); the real harnesses run compose/t{N}.yaml
+    compose_name = f"{descriptor.design}-mock.yaml" \
+        if descriptor.harness == MOCK_HARNESS_ID else \
+        f"{descriptor.design}.yaml"
+    compose = COMPOSE_DIR / compose_name
     if descriptor.fixture == f"reference-rig/{descriptor.design}" \
             and compose.is_file():
         doc = yaml.safe_load(compose.read_text(encoding="utf-8")) or {}
         fingerprint["compose"] = {
-            "path": f"compose/{descriptor.design}.yaml",
+            "path": f"compose/{compose_name}",
             "id": doc.get("name"),
             "sha256": sha256_file(compose),
         }
@@ -701,10 +716,16 @@ def _assemble_run_summary(descriptor: RunDescriptor, outcome: dict,
         decision_records=str(decision_records_path),
         decision_record_count=len(records),
         fixture_fingerprint=fixture_fingerprint(descriptor),
-        # DESIGN.md 9: without kernel evidence every output is
-        # self-reported / unverified (the degraded no-eBPF mode)
-        evidence_class=(EVIDENCE_CLASS if sensor_present
-                        else EVIDENCE_CLASS_SELF_REPORTED),
+        # DESIGN.md 8, 9: the evidence class. A mock-harness run is
+        # "mock-run" (the path-originator fixture: "the path exists and
+        # escapes this topology, kernel-confirmed; no agent in the loop");
+        # a real-harness run is "harness-run"; without kernel evidence
+        # every output is self-reported / unverified (DESIGN.md 9) whichever
+        # harness drove it (claims never self-upgrade)
+        evidence_class=(EVIDENCE_CLASS_SELF_REPORTED if not sensor_present
+                        else EVIDENCE_CLASS_MOCK
+                        if descriptor.harness == MOCK_HARNESS_ID
+                        else EVIDENCE_CLASS),
         degraded=degraded,
         status=outcome.get("status", "unknown"),
         coverage=recomputed,

@@ -66,6 +66,77 @@ DEFAULT_PLAN = {
 # function of (trace spec, plan, originator behavior).
 DIGEST_EXCLUDES = ["started_epoch_ns", "ended_epoch_ns", "pid", "*_pid"]
 
+# --- dispatch records (harness adapter contract, reduced form; DESIGN.md 3, 4) ---
+#
+# One dispatch-record/1 line per TOOL-CALL attempt, emitted next to the
+# action log (dispatch-records.jsonl). The driver is the id authority on the
+# workload side: the twins carry the canonical trace action ids onto the
+# transports (originators.py injects them) and this layer records one line
+# per attempt with the carrier used — mirroring harnesses/pi/adapter/
+# replay.ts writeDispatchRecord, so the dispatch tooling (C5, M2a) is shared
+# between the real harnesses and the mock harness (DESIGN.md 3: "the mock
+# harness formally implements this contract in reduced form ... so the
+# dispatch tooling is shared").
+#
+# Carriers per twin (DESIGN.md 5 priority order):
+#   stdio twin + gateway-routed http twin  params._meta namespaced keys
+#                                          io.inspection/action_id + attempt
+#                                          -> carrier_used "mcp_meta"
+#   raw http twin                          x-inspection-action-id /
+#                                          x-inspection-attempt headers via
+#                                          the http_request seam
+#                                          -> carrier_used "http_header"
+# Process-level actions (direct_network, process_spawn, file_write,
+# credential_access) get NO dispatch record: no tool-dispatch boundary
+# exists for them, so no carrier can travel (the M2a decision, DESIGN.md 3
+# inject(); recorded here as a fact, and their kernel evidence remains the
+# only attribution path). run_id comes from the runner-stamped env
+# INSPECTION_RUN_ID (docker exec -e), fallback "unattributed" — the same
+# convention as the real harness adapters.
+DISPATCH_SCHEMA_STAMP = 1
+DISPATCH_CARRIER_META = "mcp_meta"
+DISPATCH_CARRIER_HEADER = "http_header"
+DISPATCH_RUN_ID_FALLBACK = "unattributed"
+TOOL_CALL_CLASSES = frozenset({"stdio_tool_call", "http_tool_call"})
+
+
+def dispatch_run_id() -> str:
+    """The run identity the dispatch records carry (runner-stamped env)."""
+    return os.environ.get("INSPECTION_RUN_ID") or DISPATCH_RUN_ID_FALLBACK
+
+
+def carrier_for(plan: dict, action: dict) -> str | None:
+    """The correlation carrier the twins set for this action, or None when
+    no carrier exists (process-level actions)."""
+    cls = action["class"]
+    if cls == "stdio_tool_call":
+        return DISPATCH_CARRIER_META
+    if cls == "http_tool_call":
+        raw_route = (plan.get("routes") or {}).get("http", "raw") == "raw"
+        return DISPATCH_CARRIER_HEADER if raw_route else DISPATCH_CARRIER_META
+    return None
+
+
+def dispatch_record(action_id: str, carrier: str, status: str,
+                    error: str | None) -> dict:
+    """One dispatch-record/1 (bare schema:1 stamp, DESIGN.md 4): run_id,
+    action_id, attempt 0 (single-pass, no retries), dispatched_at,
+    carrier_used, and exactly one of result | error."""
+    record = {
+        "schema": DISPATCH_SCHEMA_STAMP,
+        "run_id": dispatch_run_id(),
+        "action_id": action_id,
+        "attempt": 0,
+        "dispatched_at": datetime.now(timezone.utc).isoformat(
+            timespec="milliseconds"),
+        "carrier_used": carrier,
+    }
+    if error is not None:
+        record["error"] = {"message": error}
+    else:
+        record["result"] = {"status": status}
+    return record
+
 
 # --- setup: spec, path manifest, plan ----------------------------------------
 
@@ -273,10 +344,13 @@ def execute(spec_path: Path, plan: dict, out_dir: Path, mode: str = "all",
 
     out_dir.mkdir(parents=True, exist_ok=True)
     log_path = out_dir / "action-log.jsonl"
+    dispatch_path = out_dir / "dispatch-records.jsonl"
     records: list[dict] = []
+    dispatch_records: list[dict] = []
 
     window_start = time.time_ns()
-    with log_path.open("w", encoding="utf-8") as log:
+    with log_path.open("w", encoding="utf-8") as log, \
+            dispatch_path.open("w", encoding="utf-8") as dlog:
         for index, action in enumerate(actions):
             compiled = trace_spec.compile_action(action)
             fn = originators.resolve_originator(action)
@@ -290,6 +364,17 @@ def execute(spec_path: Path, plan: dict, out_dir: Path, mode: str = "all",
             except Exception as exc:  # recorded as data; execution continues
                 status, error, detail = "error", str(exc), {}
             ended = time.time_ns()
+            carrier = carrier_for(plan, action)
+            if carrier is not None:
+                # one dispatch record per tool-call attempt (DESIGN.md 4);
+                # emission must never fail the run
+                try:
+                    rec = dispatch_record(action["id"], carrier, status, error)
+                    dispatch_records.append(rec)
+                    dlog.write(json.dumps(rec, separators=(",", ":"),
+                                          ensure_ascii=False) + "\n")
+                except Exception:  # noqa: BLE001 — never fail on emission
+                    pass
             deferred = bool(detail.pop("deferred", False))
             record = {
                 "schema": ACTION_RECORD_SCHEMA,
@@ -382,6 +467,15 @@ def execute(spec_path: Path, plan: dict, out_dir: Path, mode: str = "all",
             "digest_note": ("digest over all action records with the "
                             "excluded fields removed; identical across runs "
                             "with the same trace+plan"),
+        },
+        "dispatch_records": {
+            "path": "dispatch-records.jsonl",
+            "records": len(dispatch_records),
+            "tool_call_actions": sum(1 for a in actions
+                                      if a["class"] in TOOL_CALL_CLASSES),
+            "note": ("one dispatch-record/1 per tool-call attempt (DESIGN.md "
+                     "4); process-level actions get no dispatch record — no "
+                     "carrier exists (the M2a decision, DESIGN.md 3)"),
         },
         "deferred_join": joined,
         "summary": {"ok": failed == 0, "executed": len(records), "failed": failed},

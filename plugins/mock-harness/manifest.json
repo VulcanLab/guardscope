@@ -22,6 +22,6 @@
     "echoes_meta": false,
     "echoes_header": false
   },
-  "supported_designs": ["t0", "t1", "t2", "t3", "t4", "t5", "t6", "t7"],
-  "notes": "Reduced form of the harness adapter contract (DESIGN.md 3): describe/inject plus dispatch records only. The mock harness is a path-originator fixture on the workload side, never an evaluated component and never a row or column of the grid; it hosts no enforcement points."
+  "supported_designs": ["t0", "t1", "t2"],
+  "notes": "Reduced form of the harness adapter contract (DESIGN.md 3): describe/inject plus dispatch records only (the driver emits dispatch-record/1 per tool-call attempt and injects the io.inspection carriers on the tool-call transports). Supported designs are the fixtures that exist: compose/t0-mock.yaml, t1-mock.yaml, t2-mock.yaml (mode R, standalone driver in its own compose service; the T0 reference row and the gateway/egress designs' exposure cells). The mock harness is a path-originator fixture on the workload side, never an evaluated component and never a row or column of the grid; it hosts no enforcement points. No host mode: there is no OpenClaw-style host placement in v1 (DESIGN.md 8 v1 exclusions; the harness-spawned-server revisit stays a recorded limitation)."
 }
