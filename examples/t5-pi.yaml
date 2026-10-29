@@ -1,0 +1,11 @@
+# Example experiment (DESIGN.md 6): the two-point chain.
+# t5 runs BOTH enforcement points: the harness permission chain
+# (harness-intrinsic) plus the selected gateway (the http tool calls cross
+# both via the http-stdio server's MCP_GATEWAY_URL forwarding; DESIGN.md 7).
+# control: agt-gateway is selected for the gateway point. Executed on the
+# pi harness with the default workload pack (baseline-15).
+schema: 1
+control: agt-gateway
+designs: [t5]
+harness: pi
+workload: baseline-15

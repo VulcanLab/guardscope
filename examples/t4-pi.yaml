@@ -1,0 +1,10 @@
+# Example experiment (DESIGN.md 6): the harness-native permission chain.
+# control: null with an enforcement-capable harness is the natural
+# expression of T4 (DESIGN.md 6): the pi tool_call permission chain is
+# harness-intrinsic, so there is no selected control and no gateway slot.
+# Executed with the default workload pack (baseline-15).
+schema: 1
+control: null
+designs: [t4]
+harness: pi
+workload: baseline-15

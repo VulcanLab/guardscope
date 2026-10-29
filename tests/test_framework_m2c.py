@@ -713,14 +713,21 @@ def test_summary_rows_derived_and_summed(tmp_path):
 
 def test_summary_row_takes_the_worst_contributing_class(tmp_path):
     # DESIGN.md 10: summary rows take the worst contributing class; a
-    # self-reported row never lets a harness-run row upgrade the summary
+    # self-reported row never lets a harness-run row upgrade the summary.
+    # A sensor-less run no longer composes with a sensor run into one
+    # grid by default (the sensor key component is "absent" for it,
+    # DESIGN.md 9/10), so this merge is forced with allow_incomparable:
+    # one grid, both rows contributing, the worst class still wins
     p = synthetic_execution(tmp_path, "exp-a", {
         "run-1": {"evidence_class": "harness-run"},
         "run-2": {"evidence_class": "self-reported",
                   "degraded": ["sensor-absent"],
                   "created": "2026-10-28T11:00:00+00:00"},
     })
-    report = merge_reports([p])
+    split = merge_reports([p])
+    assert len(split["grids"]) == 2
+    assert any("kernel_sensor_version" in w for w in split["warnings"])
+    report = merge_reports([p], allow_incomparable=True)
     (summary,) = report["grids"][0]["summary_rows"]
     assert summary["evidence_class"] == "self-reported"
     # and derived ranks below self-reported when present
@@ -729,7 +736,8 @@ def test_summary_row_takes_the_worst_contributing_class(tmp_path):
         "run-4": {"evidence_class": "derived",
                   "created": "2026-10-28T12:00:00+00:00"},
     })
-    (summary2,) = merge_reports([p2])["grids"][0]["summary_rows"]
+    (summary2,) = merge_reports([p2],
+                                 allow_incomparable=True)["grids"][0]["summary_rows"]
     assert summary2["evidence_class"] == "derived"
 
 

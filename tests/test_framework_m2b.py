@@ -789,7 +789,11 @@ def test_merge_fixture_fingerprint_mismatch_is_non_comparable(tmp_path):
 
 def test_merge_preserves_self_reported_evidence_class(tmp_path):
     # a degraded (sensor-less) run stays self-reported at report level:
-    # evidence classes are never upgraded (DESIGN.md 10)
+    # evidence classes are never upgraded (DESIGN.md 10). A sensor-less
+    # run no longer shares a grid with a sensor run by default (its sensor
+    # key component is "absent", DESIGN.md 9/10): the merge splits, the
+    # warning names the sensor component, and the degraded run's own grid
+    # keeps every preserved fact
     degraded = synthetic_execution(tmp_path, "exp-deg", {
         "deg-t1": {"evidence_class": "self-reported",
                    "degraded": ["sensor-absent"],
@@ -803,7 +807,13 @@ def test_merge_preserves_self_reported_evidence_class(tmp_path):
                            for aid in ("a021", "a022")]},
                    "outcomes": outcomes_doc()}})
     report = merge_reports([T1_EXEC, degraded])
-    rows = [r for c in report["grids"][0]["columns"] for r in c["rows"]]
+    # separate grids by default; the sensor component is named in the warning
+    assert len(report["grids"]) == 2
+    assert any("kernel_sensor_version" in w for w in report["warnings"])
+    deg_grids = [g for g in report["grids"]
+                 if any("deg-t1" in (r.get("run_id") or "")
+                        for c in g["columns"] for r in c["rows"])]
+    rows = [r for c in deg_grids[0]["columns"] for r in c["rows"]]
     deg = next(r for r in rows if r["run_id"] == "deg-t1")
     assert deg["evidence_class"] == "self-reported"
     assert deg["degraded"] == ["sensor-absent"]

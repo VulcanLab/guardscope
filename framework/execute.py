@@ -753,6 +753,70 @@ def _sensor_aware_default_executor(sensor: bool):
     return executor
 
 
+def _load_execution_history(manifest_path: Path) -> dict | None:
+    """Load the experiment's existing execution manifest for append
+    (DESIGN.md 10: cell collisions keep both rows; a rerun must not make
+    the earlier runs vanish from the manifest). Returns None when no
+    manifest exists yet. A corrupt manifest is never silently replaced:
+    overwriting it would destroy run history, so the error propagates.
+    An old-format manifest (runs only, no history fields) loads as-is:
+    execute_experiment synthesizes its history fields on append."""
+    if not manifest_path.is_file():
+        return None
+    try:
+        previous = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"{manifest_path}: not parseable as JSON; refusing to "
+            f"overwrite an unreadable execution manifest (run history "
+            f"would be lost; fix or move the file manually)") from exc
+    if not isinstance(previous, dict):
+        raise ValueError(f"{manifest_path}: not an object; refusing to "
+                         f"overwrite an unreadable execution manifest")
+    return previous
+
+
+def _execution_entries(previous: dict | None,
+                       experiment_sha256: str,
+                       executed_at: str) -> tuple[list, list]:
+    """(prior run entries, execution-history entries) for the append.
+
+    The manifest's `runs` lists every run ever executed under this
+    experiment (no entry is ever removed) and each execution appends its
+    run entries; `executions` is the per-execution history (executed_at,
+    run ids, the experiment hash and the sensor pins it resolved
+    against). An old-format manifest (no history fields) synthesizes one
+    history entry from its own facts, so a rerun never drops the earlier
+    runs' provenance (backward compatible)."""
+    if previous is None:
+        return [], []
+    prior_runs = previous.get("runs")
+    if not isinstance(prior_runs, list):
+        raise ValueError(
+            "the existing execution manifest has no usable 'runs' list; "
+            "refusing to overwrite it (run history would be lost)")
+    # no entry is ever removed: a non-dict run entry is corruption, and
+    # the manifest is refused (the same policy as every other corruption)
+    if any(not isinstance(r, dict) for r in prior_runs):
+        raise ValueError(
+            "the existing execution manifest has a corrupt run entry; "
+            "refusing to overwrite it (run history would be lost)")
+    executions = previous.get("executions")
+    if isinstance(executions, list) and executions:
+        history = [dict(e) for e in executions if isinstance(e, dict)]
+    else:
+        # old format: one prior execution, its facts taken from the
+        # manifest's own fields (created, runs, experiment, sensor)
+        history = [{
+            "executed_at": previous.get("created"),
+            "run_ids": [r.get("run_id") for r in prior_runs],
+            "experiment_sha256": (previous.get("experiment") or {}).get(
+                "sha256"),
+            "sensor": previous.get("sensor"),
+        }]
+    return prior_runs, history
+
+
 def execute_experiment(experiment_path, *, run_executor=None,
                         out_root="runs", sensor: bool = True) -> ExecutionResult:
     """Load, validate, and execute an experiment file (DESIGN.md 6, 9).
@@ -764,8 +828,16 @@ def execute_experiment(experiment_path, *, run_executor=None,
     runner's sensor-less path and every run is labeled self-reported /
     degraded. Per run the framework writes decision-records.jsonl (the v0
     AuditEntry log mapped to decision-record/1) under <out_root>/<run-id>/
-    and records the run summary in the execution manifest written to
+    and appends the run summary to the execution manifest written to
     <out_root>/<experiment-id>/execution.json.
+
+    The manifest is append-oriented (DESIGN.md 10: collisions keep both
+    rows): every execution of the same experiment file APPENDS its run
+    entries to `runs` (the complete run history; no entry is ever
+    removed) and records the per-execution facts in `executions`;
+    `current_run_ids` names the latest execution's runs. A rerun
+    therefore surfaces as collision rows in a merged report, never as a
+    replacement of the earlier runs.
 
     Load-time errors (ExperimentError and friends) propagate unchanged; a
     failing run propagates the executor's error. A run whose recomputed
@@ -790,9 +862,18 @@ def execute_experiment(experiment_path, *, run_executor=None,
         run_summaries.append(
             _assemble_run_summary(descriptor, outcome, run_id, out_root, spec))
 
+    now = now_rfc3339_ms()
+    exec_dir = out_root / experiment_id
+    exec_dir.mkdir(parents=True, exist_ok=True)
+    manifest_path = exec_dir / "execution.json"
+    # append-oriented history (DESIGN.md 10: cell collisions keep both
+    # rows; a rerun never replaces the earlier runs at the manifest level)
+    previous = _load_execution_history(manifest_path)
+    prior_runs, executions = _execution_entries(
+        previous, sha256_file(experiment_path), now)
     manifest = {
         "schema": 1,   # bare stamp (DESIGN.md 4: no type names in data files)
-        "created": now_rfc3339_ms(),
+        "created": (previous.get("created") if previous is not None else None) or now,
         "experiment": {
             "path": str(experiment_path),
             "sha256": sha256_file(experiment_path),
@@ -800,11 +881,19 @@ def execute_experiment(experiment_path, *, run_executor=None,
         },
         "plugin_versions": plugin_versions(),
         "sensor": sensor_version(),
-        "runs": [s.to_dict() for s in run_summaries],
     }
-    exec_dir = out_root / experiment_id
-    exec_dir.mkdir(parents=True, exist_ok=True)
-    manifest_path = exec_dir / "execution.json"
+    new_run_entries = []
+    for summary in run_summaries:
+        entry = summary.to_dict()
+        entry["executed_at"] = now
+        new_run_entries.append(entry)
+    executions.append({"executed_at": now,
+                       "run_ids": [e["run_id"] for e in new_run_entries],
+                       "experiment_sha256": manifest["experiment"]["sha256"],
+                       "sensor": manifest["sensor"]})
+    manifest["executions"] = executions
+    manifest["runs"] = prior_runs + new_run_entries
+    manifest["current_run_ids"] = [e["run_id"] for e in new_run_entries]
     manifest_path.write_text(
         json.dumps(manifest, indent=1, sort_keys=True) + "\n", encoding="utf-8")
     return ExecutionResult(experiment=experiment, runs=run_summaries,

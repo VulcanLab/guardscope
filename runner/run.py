@@ -715,11 +715,12 @@ def run_one(harness: str, run_id: str, runs_dir: Path, timeout_s: float | None =
         "replay-log": out_dir / "replay-log.jsonl",
     }
     if sensor:
-        # a degraded run retains no kernel artifacts (they do not exist);
-        # check_artifacts() on such a manifest reports them missing, which
-        # is the honest artifact state for a self-reported run
         artifacts["tracee-events"] = out_dir / "tracee-events.json"
         artifacts["mapped-actions"] = out_dir / "mapped-actions.jsonl"
+    # else: the degraded run retains no kernel artifacts (they do not
+    # exist); check_artifacts()/artifact_statuses() on such a manifest
+    # report them skipped-no-sensor, not missing (DESIGN.md 9: a valid
+    # degraded run must not fail the artifact check)
     artifacts.update(enforcement_artifacts(design, gateway_dir, out_dir))
     rr_mod.add_artifact_hashes(manifest, artifacts)
     (out_dir / "run-record.json").write_text(
@@ -855,27 +856,72 @@ def collect_run_records(runs_dir: Path) -> list[dict]:
 
 BASE_ARTIFACTS = ("tracee-events", "mapped-actions", "replay-result", "replay-log")
 
+# Kernel-evidence artifacts: produced only when the sensor ran. In the
+# degraded no-eBPF mode (DESIGN.md 9: no kernel sensor, every output
+# labeled self-reported / unverified) they are expected-absent and are
+# reported skipped-no-sensor, not missing.
+KERNEL_ARTIFACTS = ("tracee-events", "mapped-actions")
 
-def check_artifacts(manifest: dict) -> list[str]:
-    """T0 criterion 4: all raw artifacts retained + hashed in the manifest.
-    Design-aware enforcement-point requirements: the record (decisions) for
-    every t1+ design; the policy file only where the design deploys one
-    (gateway/policy.yaml t1-t3, in-process policy.json t6); t5 hashes the
-    second point's record + policy as the seam artifacts."""
-    missing = []
+
+def manifest_sensorless(manifest: dict) -> bool:
+    """Whether this manifest describes a sensor-less (degraded no-eBPF)
+    run: the run manifest stamps sensor_present: false and degraded:
+    [sensor-absent] (assemble_sensorless), and the run record carries
+    sensor.present: false. A manifest with none of these stamps is a sensor
+    run — the check is never allowed to turn a sensor run's missing kernel
+    artifacts into an expected absence."""
+    if manifest.get("sensor_present") is False:
+        return True
+    if "sensor-absent" in (manifest.get("degraded") or []):
+        return True
+    sensor = manifest.get("sensor")
+    return isinstance(sensor, dict) and sensor.get("present") is False
+
+
+def _required_artifacts(design: str) -> list[str]:
     required = list(BASE_ARTIFACTS)
-    design = manifest.get("design") or "t0"
     if design != "t0":
         required += ["gateway-decisions"]
     if design in ("t1", "t2", "t3", "t6"):
         required += ["gateway-policy"]
     if design == "t5":
         required += ["seam-gateway-decisions", "seam-gateway-policy"]
-    for name in required:
+    return required
+
+
+def artifact_statuses(manifest: dict) -> dict[str, str]:
+    """T0 criterion 4 (all raw artifacts retained + hashed), sensor-aware:
+    required artifact name -> status. `present`: hashed in the manifest;
+    `missing`: required but not retained/hashed (a defect);
+    `skipped-no-sensor`: a kernel-evidence artifact of a sensor-less run
+    (the degraded no-eBPF mode, DESIGN.md 9) — expected-absent, never a
+    failure for a valid degraded run. Design-aware enforcement-point
+    requirements: the record (decisions) for every t1+ design; the policy
+    file only where the design deploys one (gateway/policy.yaml t1-t3,
+    in-process policy.json t6); t5 hashes the second point's record +
+    policy as the seam artifacts."""
+    design = manifest.get("design") or "t0"
+    sensorless = manifest_sensorless(manifest)
+    statuses: dict[str, str] = {}
+    for name in _required_artifacts(design):
         art = (manifest.get("artifacts") or {}).get(name) or {}
-        if not art.get("sha256") or not art.get("bytes"):
-            missing.append(name)
-    return missing
+        if art.get("sha256") and art.get("bytes"):
+            statuses[name] = "present"
+        elif sensorless and name in KERNEL_ARTIFACTS:
+            statuses[name] = "skipped-no-sensor"
+        else:
+            statuses[name] = "missing"
+    return statuses
+
+
+def check_artifacts(manifest: dict) -> list[str]:
+    """The missing raw artifacts (T0 criterion 4), sensor-aware: the
+    kernel-evidence artifacts of a sensor-less run are expected-absent and
+    are reported by artifact_statuses() as skipped-no-sensor, not missing
+    (DESIGN.md 9). Design-aware enforcement-point requirements follow the
+    design stamp exactly as documented on artifact_statuses()."""
+    return [name for name, status in artifact_statuses(manifest).items()
+            if status == "missing"]
 
 
 def load_repro_verdicts(runs_dir: Path, harness: str) -> list[dict]:
@@ -921,10 +967,19 @@ def build_report(runs_dir: Path, design: str = "t0") -> dict:
         runs = by_harness.get(harness, [])
         counts = {r["run_id"]: r["effective_counts"] for r in runs}
         missing_artifacts = {}
+        skipped_no_sensor = {}
         for r in runs:
             mf = Path(r["_dir"]) / "manifest.json"
             if mf.is_file():
-                missing_artifacts[r["run_id"]] = check_artifacts(json.loads(mf.read_text()))
+                manifest = json.loads(mf.read_text())
+                missing_artifacts[r["run_id"]] = check_artifacts(manifest)
+                # sensor-less runs skip the kernel artifacts (expected-
+                # absent, DESIGN.md 9): visible in the report, never a
+                # failure and never silently dropped
+                skips = [n for n, s in artifact_statuses(manifest).items()
+                         if s == "skipped-no-sensor"]
+                if skips:
+                    skipped_no_sensor[r["run_id"]] = skips
         passing = [r for r in runs if r["reconciliation"]["status"] == "pass"]
         # aggregated instance-level outcome counts (checked/bypassed/
         # prevented) over the passing runs' classifications, plus the gate:
@@ -953,6 +1008,7 @@ def build_report(runs_dir: Path, design: str = "t0") -> dict:
             "identical_counts": counts_identical(counts) if len(runs) >= 2 else None,
             "all_reconciled_pass": (len(passing) == len(runs) and bool(runs)),
             "artifacts_complete": all(not m for m in missing_artifacts.values()) if missing_artifacts else False,
+            "artifacts_skipped_no_sensor": skipped_no_sensor,
             "rerun_verdicts": verdicts,
         }
         if design != "t0":

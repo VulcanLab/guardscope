@@ -1,0 +1,10 @@
+# Example experiment (DESIGN.md 6): one gateway column on OpenClaw.
+# control: agt-gateway occupies the gateway slot; t1 places it for HTTP
+# tools with the transport and process escapes exposed (DESIGN.md 7).
+# Executed on the openclaw harness with the default workload pack
+# (baseline-15).
+schema: 1
+control: agt-gateway
+designs: [t1]
+harness: openclaw
+workload: baseline-15

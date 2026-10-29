@@ -1,0 +1,9 @@
+# Example experiment (DESIGN.md 6): the gateway as sole enforcement point.
+# control: agt-gateway occupies the gateway slot; t3 routes the fs tools
+# behind it on top of t2's forced egress (DESIGN.md 7). Executed on the pi
+# harness with the default workload pack (baseline-15).
+schema: 1
+control: agt-gateway
+designs: [t3]
+harness: pi
+workload: baseline-15

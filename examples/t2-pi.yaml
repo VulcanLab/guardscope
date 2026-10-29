@@ -1,0 +1,10 @@
+# Example experiment (DESIGN.md 6): one gateway column with forced egress.
+# control: agt-gateway occupies the gateway slot; t2 is the t1 gateway plus
+# the fixture-supplied forced egress (the egress jail is silent environment
+# topology, not part of the control; DESIGN.md 7). Executed on the pi
+# harness with the default workload pack (baseline-15).
+schema: 1
+control: agt-gateway
+designs: [t2]
+harness: pi
+workload: baseline-15

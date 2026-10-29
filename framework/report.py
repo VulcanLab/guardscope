@@ -81,6 +81,18 @@ KEY_COMPONENTS = ("workload_sha256", "harness", "harness_major_version",
                    "kernel_sensor_version", "reconciliation_profile",
                    "classification_semantics")
 
+# The sensor key component of a sensor-less run (the degraded no-eBPF
+# mode, DESIGN.md 9: every output is labeled self-reported / unverified).
+# DESIGN.md 10's comparability key demands the kernel-sensor version for
+# runs that compose into one grid; a run with NO sensor did not measure
+# under any sensor version, so it is keyed "absent" — never under the
+# manifest's pinned version, which would silently place a self-reported
+# run next to kernel-verified ones in the same grid. The degraded reason
+# recorded per run is framework/execute.py SENSOR_ABSENT and the
+# runner's run-manifest degraded entry (runner/run.py assemble_sensorless).
+SENSOR_ABSENT_REASON = "sensor-absent"
+SENSOR_ABSENT_KEY = "absent"
+
 
 class MergeError(ValueError):
     """A merge cannot be produced under the requested strictness
@@ -220,6 +232,17 @@ def _summary_rows(columns) -> list[dict]:
     return rows
 
 
+def _run_sensorless(run: dict) -> bool:
+    """Whether a run's evidence is sensor-less (DESIGN.md 9): the
+    execution summary records the degraded sensor-absent reason and/or
+    the self-reported evidence class (the degraded no-eBPF mode labels
+    every output self-reported). Only these two facts turn the sensor key
+    component to `absent`; a sensor run is never re-keyed."""
+    if SENSOR_ABSENT_REASON in (run.get("degraded") or []):
+        return True
+    return run.get("evidence_class") == "self-reported"
+
+
 def _run_key(run: dict, manifest: dict, run_dir: Path | None,
              semantics: str, profile: str) -> dict:
     return {
@@ -227,7 +250,9 @@ def _run_key(run: dict, manifest: dict, run_dir: Path | None,
         "harness": run.get("harness"),
         "harness_major_version": _harness_major_version(
             manifest, run.get("harness")),
-        "kernel_sensor_version": (manifest.get("sensor") or {}).get("version"),
+        "kernel_sensor_version": (
+            SENSOR_ABSENT_KEY if _run_sensorless(run)
+            else (manifest.get("sensor") or {}).get("version")),
         "reconciliation_profile": profile,
         "classification_semantics": semantics,
     }
@@ -523,9 +548,14 @@ def _key_tuple(key: dict) -> tuple:
 
 
 def executed_at(item: dict) -> str:
-    """Row recency input: the run's own manifest creation time, falling
-    back to its execution manifest's (ties are broken deterministically by
-    input order in the collision handling)."""
+    """Row recency input: the run entry's own executed_at stamp (the
+    append-oriented execution manifest, framework/execute.py: one per
+    execution, so reruns of the same experiment order correctly), falling
+    back to the run's own manifest creation time, then its execution
+    manifest's (ties are broken deterministically by input order in the
+    collision handling)."""
+    if isinstance(item.get("run"), dict) and item["run"].get("executed_at"):
+        return str(item["run"]["executed_at"])
     if isinstance(item.get("run_manifest"), dict):
         created = item["run_manifest"].get("created")
         if created:

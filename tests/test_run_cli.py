@@ -280,6 +280,77 @@ def test_check_artifacts_t1_requires_gateway_record():
     assert run_mod.check_artifacts({"design": "t1", "artifacts": full}) == []
 
 
+def test_check_artifacts_sensorless_kernel_artifacts_are_expected_absent():
+    # degraded no-eBPF run (DESIGN.md 9): the kernel artifacts do not
+    # exist and are reported skipped-no-sensor, not missing — a valid
+    # degraded run must not fail the artifact check
+    sensorless = {"design": "t1", "sensor_present": False,
+                  "degraded": ["sensor-absent"],
+                  "artifacts": {
+                      "replay-result": {"sha256": "a" * 64, "bytes": 10},
+                      "replay-log": {"sha256": "a" * 64, "bytes": 10},
+                      "gateway-decisions": {"sha256": "b" * 64, "bytes": 10},
+                      "gateway-policy": {"sha256": "b" * 64, "bytes": 10}}}
+    statuses = run_mod.artifact_statuses(sensorless)
+    assert statuses["tracee-events"] == "skipped-no-sensor"
+    assert statuses["mapped-actions"] == "skipped-no-sensor"
+    assert all(v == "present" for k, v in statuses.items()
+               if k not in ("tracee-events", "mapped-actions"))
+    # the missing list is empty: the expected absences are not failures
+    assert run_mod.check_artifacts(sensorless) == []
+    # the same absence on a SENSOR run is still missing (never re-keyed:
+    # only a manifest that says sensor-less gets the skip)
+    sensor = {"design": "t1", "artifacts": sensorless["artifacts"]}
+    assert run_mod.check_artifacts(sensor) == \
+        ["tracee-events", "mapped-actions"]
+
+
+def test_manifest_sensorless_detection_paths():
+    # the run manifest stamps (sensor_present: false, degraded:
+    # [sensor-absent], assemble_sensorless) and the run record's
+    # sensor.present: false all identify a degraded run
+    assert run_mod.manifest_sensorless(
+        {"sensor_present": False}) is True
+    assert run_mod.manifest_sensorless(
+        {"degraded": ["sensor-absent"]}) is True
+    assert run_mod.manifest_sensorless(
+        {"sensor": {"present": False, "mode": "no-sensor"}}) is True
+    # anything else is a sensor run
+    assert run_mod.manifest_sensorless({}) is False
+    assert run_mod.manifest_sensorless(
+        {"sensor_present": True, "degraded": []}) is False
+    assert run_mod.manifest_sensorless(
+        {"sensor": {"present": True}}) is False
+
+
+def test_build_report_sensorless_run_not_failed_on_kernel_artifacts(tmp_path):
+    # the acceptance path over a degraded run: the kernel artifacts are
+    # skipped-no-sensor (recorded, visible), so artifact completeness
+    # holds and the skip is reported, never silently dropped
+    d = _write_run(tmp_path, "pi-t1-r1", "pi", COUNTS, design="t1",
+                   coverage="pass")
+    manifest = json.loads((d / "manifest.json").read_text())
+    manifest["sensor_present"] = False
+    manifest["degraded"] = ["sensor-absent"]
+    for name in ("tracee-events", "mapped-actions"):
+        del manifest["artifacts"][name]
+    (d / "manifest.json").write_text(json.dumps(manifest))
+    report = run_mod.build_report(tmp_path, design="t1")
+    acc = report["acceptance"]["pi"]
+    assert acc["artifacts_complete"] is True
+    assert acc["artifacts_skipped_no_sensor"]["pi-t1-r1"] == \
+        ["tracee-events", "mapped-actions"]
+    # a sensor run over the same shape still fails the check
+    d2 = _write_run(tmp_path, "pi-t1-r2", "pi", COUNTS, design="t1",
+                    coverage="pass")
+    manifest2 = json.loads((d2 / "manifest.json").read_text())
+    for name in ("tracee-events", "mapped-actions"):
+        del manifest2["artifacts"][name]
+    (d2 / "manifest.json").write_text(json.dumps(manifest2))
+    acc2 = run_mod.build_report(tmp_path, design="t1")["acceptance"]["pi"]
+    assert acc2["artifacts_complete"] is False
+
+
 def test_coverage_matches_design():
     match = run_mod._coverage_matches_design
     t1_full = {"coverage": {c: {"coverage": 1.0 if c == "http_tool_call" else 0.0}
