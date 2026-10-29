@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://guardscope.dev/schemas/registry-verdict/1",
+  "title": "registry-verdict/1",
+  "description": "One registry tier file per plugin: registry/<tier>/<plugin_id>.json holding a list of conformance-verdict entries (DESIGN.md 11 'Registry': verdicts keyed by (plugin version, contract version, framework line, suite version, golden-fixture hash); two tiers, one format; curated = framework-CI re-verified, main-grid eligible, open = self-attested, labeled, appendix-only).",
+  "$comment": "DESIGN.md 11. Verdicts and registry facts are data, never executable. The `as_of` field records what the verdict was verified against (the exact key it was recorded under): staleness downgrades display, never hides the verdict. The $id host is a placeholder (DESIGN.md 'Open questions').",
+  "type": "object",
+  "required": ["schema", "plugin", "tier", "entries"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": {
+      "$comment": "DESIGN.md 4 'Stamps and versioning': bare literal 1; no type names inside data files.",
+      "const": 1
+    },
+    "plugin": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]*$"
+    },
+    "tier": {
+      "$comment": "DESIGN.md 11 'Two tiers'. A curated entry may only be recorded by framework-CI re-verification; an open entry is self-attested and appendix-only.",
+      "enum": ["curated", "open"]
+    },
+    "notes": {
+      "type": "string"
+    },
+    "entries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["verdict", "attestation", "recorded_by", "recorded_at", "verified_by", "as_of"],
+        "additionalProperties": false,
+        "properties": {
+          "verdict": {
+            "$comment": "A framework/conformance.py verdict object (L1 or L2). The required fields are the verdict key components (DESIGN.md 11) plus the kit identity and the check lists; the rest is additive.",
+            "type": "object",
+            "required": ["level", "plugin_id", "plugin_version", "kit_version", "suite_version", "contract_version", "framework_line", "golden_fixture_hash", "status", "checks", "findings"],
+            "additionalProperties": true,
+            "properties": {
+              "level": {"enum": ["L1", "L2"]},
+              "plugin_id": {"type": "string"},
+              "plugin_version": {"type": "string"},
+              "kit_version": {"type": "string"},
+              "suite_version": {"type": "string"},
+              "contract_version": {"type": "string"},
+              "framework_line": {"type": "string"},
+              "golden_fixture_hash": {"type": "string", "minLength": 8},
+              "status": {"enum": ["pass", "fail"]}
+            }
+          },
+          "attestation": {
+            "$comment": "Who vouches for the entry (DESIGN.md 11: curated is CI re-verified; open is self-attested).",
+            "enum": ["self-attested", "framework-ci"]
+          },
+          "recorded_by": {"type": "string", "minLength": 1},
+          "recorded_at": {"type": "string", "minLength": 1},
+          "verified_by": {
+            "$comment": "What verified the claim (never mark a claim verified that a check did not verify).",
+            "type": "string",
+            "minLength": 1
+          },
+          "as_of": {"$ref": "#/$defs/asOf"},
+          "limitations": {
+            "type": "array",
+            "items": {"type": "string"}
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "asOf": {
+      "$comment": "What the entry was verified against: the exact verdict key (DESIGN.md 11). Any component change makes the verdict stale; staleness downgrades the display (as-of), never hides it.",
+      "type": "object",
+      "required": ["plugin_id", "plugin_version", "contract_version", "framework_line", "suite_version", "golden_fixture_hash"],
+      "additionalProperties": false,
+      "properties": {
+        "plugin_id": {"type": "string"},
+        "plugin_version": {"type": "string"},
+        "contract_version": {"type": "string"},
+        "framework_line": {"type": "string"},
+        "suite_version": {"type": "string"},
+        "golden_fixture_hash": {"type": "string", "minLength": 8}
+      }
+    }
+  }
+}

@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://guardscope.dev/schemas/registry-facts/1",
+  "title": "registry-facts/1",
+  "description": "Per-product selection-rule facts with provenance and expiry: registry/facts/<plugin_id>.json (DESIGN.md 11 'per-product capability facts with provenance and expiry'). Separate from verdicts: facts are what a selection rule may consume (adopted/maintainer info, last-verified date, capability facts); verdicts are conformance outcomes.",
+  "$comment": "DESIGN.md 11. Facts are data, never executable, and expire with the same key components verdicts do (expires_with names which ones). The $id host is a placeholder (DESIGN.md 'Open questions').",
+  "type": "object",
+  "required": ["schema", "plugin", "as_of", "provenance"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": {
+      "$comment": "DESIGN.md 4 'Stamps and versioning': bare literal 1.",
+      "const": 1
+    },
+    "plugin": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]*$"
+    },
+    "maintainer": {
+      "type": "string"
+    },
+    "last_verified": {
+      "$comment": "Date of the last check that verified a recorded claim (never a claim that no check verified).",
+      "type": "string"
+    },
+    "verified_by": {
+      "type": "string"
+    },
+    "capability_facts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["fact", "source"],
+        "additionalProperties": false,
+        "properties": {
+          "fact": {"type": "string", "minLength": 1},
+          "source": {
+            "$comment": "Provenance: where the fact was measured or read (a manifest claim, a check run, a live run).",
+            "type": "string", "minLength": 1
+          },
+          "as_of": {"$ref": "#/$defs/asOf"}
+        }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "required": ["source", "recorded_at"],
+      "additionalProperties": false,
+      "properties": {
+        "source": {"type": "string", "minLength": 1},
+        "recorded_at": {"type": "string", "minLength": 1}
+      }
+    },
+    "expires_with": {
+      "$comment": "Which verdict-key components this fact's validity expires with (DESIGN.md 11: facts carry expiry).",
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "enum": ["plugin_id", "plugin_version", "contract_version", "framework_line", "suite_version", "golden_fixture_hash"]
+      }
+    },
+    "as_of": {"$ref": "#/$defs/asOf"},
+    "notes": {"type": "string"}
+  },
+  "$defs": {
+    "asOf": {
+      "type": "object",
+      "required": ["plugin_id", "plugin_version", "contract_version", "framework_line", "suite_version", "golden_fixture_hash"],
+      "additionalProperties": false,
+      "properties": {
+        "plugin_id": {"type": "string"},
+        "plugin_version": {"type": "string"},
+        "contract_version": {"type": "string"},
+        "framework_line": {"type": "string"},
+        "suite_version": {"type": "string"},
+        "golden_fixture_hash": {"type": "string", "minLength": 8}
+      }
+    }
+  }
+}

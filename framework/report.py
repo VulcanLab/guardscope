@@ -150,6 +150,76 @@ def _load_capabilities(plugin_id: str) -> dict | None:
 # --- per-run assembly ---------------------------------------------------------------
 
 
+# DESIGN.md 10: "summary rows are recomputed at report level and labeled
+# derived; summary rows and aggregate badges take the worst contributing
+# class". Worst-first ranking of the evidence classes (DESIGN.md 9): derived
+# (a claim-based recomputation with no kernel corroboration) is weakest, then
+# self-reported (the degraded mode), then exerciser-run, then harness-run.
+# An unknown class ranks worst (conservative: never upgrade what is not
+# understood).
+EVIDENCE_CLASS_WORST_FIRST = ("derived", "self-reported", "exerciser-run",
+                              "harness-run")
+
+
+def _worst_evidence_class(classes) -> str | None:
+    """The worst contributing evidence class (DESIGN.md 10)."""
+    def rank(cls):
+        try:
+            return EVIDENCE_CLASS_WORST_FIRST.index(cls)
+        except ValueError:
+            return -1   # unknown classes rank worst, conservatively
+    present = [c for c in classes if c]
+    return min(present, key=rank) if present else None
+
+
+def _summary_rows(columns) -> list[dict]:
+    """One derived summary row per design of a grid (DESIGN.md 10): sums of
+    the contributing rows' outcome counts only — never averaging, never
+    upgrading an evidence class — with the worst contributing class as the
+    row's evidence class and the derived label. Off-matrix columns never
+    contribute (they render in the extension section only); a design with
+    no on-matrix column stays untested (untested cells are marked untested,
+    not derived)."""
+    by_design: dict[str, list] = {}
+    for col in columns:
+        by_design.setdefault(col["design"], []).append(col)
+    rows = []
+    for design, cols in by_design.items():
+        counts: dict[str, int] = {}
+        per_class: dict[str, dict[str, int]] = {}
+        contributing = []
+        classes = []
+        for col in cols:
+            for row in col["rows"]:
+                cls = row.get("evidence_class")
+                classes.append(cls)
+                contributing.append({"control": col["control"],
+                                     "design": design,
+                                     "run_id": row.get("run_id"),
+                                     "evidence_class": cls})
+                oc = row.get("outcome_counts") or {}
+                for outcome, n in (oc.get("counts") or {}).items():
+                    counts[outcome] = counts.get(outcome, 0) + (n or 0)
+                for action_class, outcomes in (oc.get("per_class")
+                                              or {}).items():
+                    tgt = per_class.setdefault(action_class, {})
+                    for outcome, n in outcomes.items():
+                        tgt[outcome] = tgt.get(outcome, 0) + (n or 0)
+        rows.append({
+            "design": design,
+            "derived": True,
+            "label": "derived",
+            "evidence_class": _worst_evidence_class(classes),
+            "outcome_counts": {"counts": counts, "per_class": per_class},
+            "contributing": contributing,
+            "note": ("report-level recomputation (DESIGN.md 10): sums of "
+                      "the contributing rows' outcome counts only (never "
+                      "averaged, never upgraded); the evidence class is "
+                      "the worst contributing class"),
+        })
+    return rows
+
+
 def _run_key(run: dict, manifest: dict, run_dir: Path | None,
              semantics: str, profile: str) -> dict:
     return {
@@ -413,6 +483,7 @@ def merge_reports(execution_manifest_paths, *, strict: bool = False,
              ).append(column)
         grids.append({"key": grid_key, "_entry_keys": [e[0] for e in entries],
                       "columns": grid_columns,
+                      "summary_rows": _summary_rows(grid_columns),
                       "extension_columns": extension_columns,
                       "untested": untested,
                       "vendor_overlap": vendor_overlap})
@@ -526,6 +597,14 @@ def render_summary(report: dict) -> str:
                 f"    - control={col['control']!r} design={col['design']} "
                 f"origins={col['origin_labels']} rows={len(col['rows'])} "
                 f"(current: {', '.join(current)})")
+        for row in grid.get("summary_rows") or []:
+            oc = row.get("outcome_counts") or {}
+            counts = ", ".join(f"{k}={v}" for k, v in
+                               sorted((oc.get("counts") or {}).items()))
+            lines.append(
+                f"    - [derived summary] design={row['design']} "
+                f"evidence_class={row.get('evidence_class')} "
+                f"counts: {counts or 'none'}")
         for col in grid.get("extension_columns") or []:
             lines.append(
                 f"    - [off-matrix extension] control={col['control']!r} "

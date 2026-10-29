@@ -32,6 +32,12 @@ Usage:
       tools/call per transport through a control) and print the plan.
       Requires a running topology to execute, so this validates the inputs
       only; the live issuer/collector wiring lands in a later pass.
+  python -m framework.cli registry ls
+      List registry entries with their tier and current/stale status
+      (DESIGN.md 11: staleness downgrades the display, never hides it).
+  python -m framework.cli registry show <plugin_id>
+      Print the plugin's registry verdict entries (both tiers) and its
+      selection-rule facts as JSON.
 
 Exit codes: 0 ok, 1 load-time validation error or failed run, 2 usage.
 """
@@ -76,7 +82,68 @@ def main(argv=None) -> int:
                    help="write the merged JSON report here (default: stdout)")
     p = sub.add_parser("fidelity")
     p.add_argument("file", help="fidelity-check config (YAML or JSON)")
+    reg = sub.add_parser(
+        "registry",
+        help="the plugin registry (DESIGN.md 11: two tiers, expiring "
+             "verdicts, selection-rule facts)")
+    rsub = reg.add_subparsers(dest="registry_command", required=True)
+    rsub.add_parser("ls", help="list entries with tier + current/stale "
+                                "status")
+    show = rsub.add_parser("show", help="print a plugin's registry entries "
+                                        "and facts as JSON")
+    show.add_argument("plugin_id")
     args = ap.parse_args(argv)
+
+    if args.command == "registry":
+        from framework import registry as reg_mod
+        try:
+            docs = reg_mod.load_verdict_docs()
+            facts = reg_mod.load_fact_docs()
+        except reg_mod.RegistryError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        if args.registry_command == "ls":
+            lines = []
+            for tier in reg_mod.TIERS:
+                for plugin_id, doc in sorted(docs[tier].items()):
+                    for entry in doc.get("entries") or []:
+                        verdict = entry.get("verdict") or {}
+                        # Current keys from the repo's state, NOT from the
+                        # verdict: pinning plugin_version from the verdict
+                        # would make a manifest version bump invisible to
+                        # the staleness display (DESIGN.md 11: staleness
+                        # downgrades the display, never hides it)
+                        keys = reg_mod.current_keys(plugin_id)
+                        current, reasons = reg_mod.is_verdict_current(
+                            verdict, current_keys=keys)
+                        state = ("current" if current
+                                 else "stale: " + "; ".join(reasons))
+                        lines.append(
+                            f"{plugin_id}  tier={tier}  "
+                            f"level={verdict.get("level")}  "
+                            f"status={verdict.get("status")}  "
+                            f"plugin_version={verdict.get("plugin_version")}  "
+                            f"{state}")
+            for plugin_id, doc in sorted(facts.items()):
+                lines.append(
+                    f"{plugin_id}  facts  "
+                    f"last_verified={doc.get("last_verified") or 'unknown'}  "
+                    f"maintainer={doc.get("maintainer") or 'unknown'}")
+            print("\n".join(lines) if lines else "registry is empty")
+            return 0
+        # show
+        found = {tier: docs[tier].get(args.plugin_id) for tier in
+                 reg_mod.TIERS}
+        if not any(found.values()) and args.plugin_id not in facts:
+            print(f"error: no registry entry or facts for plugin "
+                  f"{args.plugin_id!r}", file=sys.stderr)
+            return 1
+        print(json.dumps({"plugin": args.plugin_id,
+                          "verdicts": found, "facts": facts.get(
+                              args.plugin_id)},
+                         indent=1, sort_keys=True))
+        return 0
+
 
     if args.command == "report":
         from framework.report import MergeError, merge_reports, render_summary

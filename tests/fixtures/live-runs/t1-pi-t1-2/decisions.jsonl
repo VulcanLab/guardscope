@@ -1,0 +1,8 @@
+{"timestamp":1793171400.8255336,"agent_id":"t1-replay","tool_name":"post_hook","parameters":{"body":"tool-call payload"},"allowed":true,"reason":"Allowed by policy","approval_status":null}
+{"timestamp":1793171400.8595612,"agent_id":"t1-replay","tool_name":"get_health","parameters":{},"allowed":true,"reason":"Allowed by policy","approval_status":null}
+{"timestamp":1793171400.906265,"agent_id":"t1-replay","tool_name":"put_state","parameters":{"body":"k=v"},"allowed":true,"reason":"Allowed by policy","approval_status":null}
+{"timestamp":1793171400.951707,"agent_id":"t1-replay","tool_name":"post_hook","parameters":{"body":"policy-deny probe"},"allowed":true,"reason":"Allowed by policy","approval_status":null}
+{"timestamp":1793171837.39786,"agent_id":"t1-replay","tool_name":"post_hook","parameters":{"body":"tool-call payload"},"allowed":true,"reason":"Allowed by policy","approval_status":null}
+{"timestamp":1793171837.4104311,"agent_id":"t1-replay","tool_name":"get_health","parameters":{},"allowed":true,"reason":"Allowed by policy","approval_status":null}
+{"timestamp":1793171837.4571905,"agent_id":"t1-replay","tool_name":"put_state","parameters":{"body":"k=v"},"allowed":true,"reason":"Allowed by policy","approval_status":null}
+{"timestamp":1793171837.5028272,"agent_id":"t1-replay","tool_name":"post_hook","parameters":{"body":"policy-deny probe"},"allowed":true,"reason":"Allowed by policy","approval_status":null}

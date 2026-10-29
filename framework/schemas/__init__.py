@@ -18,6 +18,8 @@ SCHEMA_TYPES = {
     "dispatch-record": "dispatch-record",
     "experiment": "experiment",
     "capabilities-manifest": "capabilities-manifest",
+    "registry-verdict": "registry-verdict",
+    "registry-facts": "registry-facts",
 }
 SCHEMA_VERSION = 1
 

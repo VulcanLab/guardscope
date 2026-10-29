@@ -26,6 +26,13 @@ from framework.schemas import load_schema
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PLUGINS_DIR = REPO_ROOT / "plugins"
 
+# The control-contract line this framework verifies (DESIGN.md 11 "Contract
+# versioning": additive optional fields are a minor bump; record schema,
+# reconciliation semantics, and evidence classes are major, with a two-release
+# deprecation window). The six-operation contract of DESIGN.md 3, line 1;
+# a recorded conformance verdict is keyed by this and expires when it bumps.
+CONTROL_CONTRACT_VERSION = "1"
+
 _MANIFEST_VALIDATOR = jsonschema.Draft202012Validator(
     load_schema("capabilities-manifest"))
 
