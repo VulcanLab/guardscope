@@ -1,0 +1,17 @@
+# Example experiment (DESIGN.md 6): the T3 gateway column, mock-harness
+# variant. control: agt-gateway occupies the gateway slot as the SOLE
+# enforcement point — all tools are behind it (DESIGN.md 7): the fs tool
+# server is proxied through the gateway (UPSTREAM_FS_URL) and the stdio
+# transport is eliminated at the harness. The mock harness crosses it with
+# BOTH twins under the pinned plan mock_harness/plans/t3.json
+# (routes.http=gateway + routes.stdio=gateway: one MCP tools/call JSON-RPC
+# POST per action, no local stdio server child), and exercises the escape
+# classes policy-blind (DESIGN.md 8); the direct-network attempts are
+# prevented by the fixture-supplied forced egress (silent environment
+# topology, not part of the control; DESIGN.md 3). Cells carry the mock-run
+# evidence class, reported separately from harness-run cells (DESIGN.md 9).
+schema: 1
+control: agt-gateway
+designs: [t3]
+harness: mock-harness
+workload: baseline-15

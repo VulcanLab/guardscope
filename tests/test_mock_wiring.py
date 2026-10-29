@@ -66,7 +66,8 @@ TOOL_CALL_IDS = ["a001", "a002", "a003", "a011", "a012", "a013", "a014"]
 
 @pytest.mark.parametrize("design, container", [("t0", "t0-mock"),
                                                ("t1", "t1-mock"),
-                                               ("t2", "t2-mock")])
+                                               ("t2", "t2-mock"),
+                                               ("t3", "t3-mock")])
 def test_harness_cfg_mock_prefixes(design, container):
     cfg = run_mod.harness_cfg("mock-harness", design)
     assert cfg["container"] == container
@@ -78,19 +79,17 @@ def test_harness_cfg_mock_prefixes(design, container):
 
 
 def test_harness_cfg_mock_fixtures_only():
-    """Fixtures exist for t0/t1/t2 only (plugins/mock-harness/manifest.json
-    declares the same set); the runner refuses the rest by name."""
-    for design in ("t3",):
-        with pytest.raises(ValueError, match="no mock-harness fixture"):
-            run_mod.harness_cfg("mock-harness", design)
-    # t4-t6 fail the earlier harness-native gate first (the mock harness
-    # hosts no enforcement points at all)
+    """Fixtures exist for t0..t3 (plugins/mock-harness/manifest.json declares
+    the same set); the runner refuses the rest. t4-t6 fail the harness-native
+    gate first (the mock harness hosts no enforcement points at all), so
+    the fixture gate is the defensive check for designs beyond t3."""
+    for design in ("t0", "t1", "t2", "t3"):
+        run_mod.harness_cfg("mock-harness", design)
     for design in ("t4", "t5", "t6"):
         with pytest.raises(ValueError, match="harness-native"):
             run_mod.harness_cfg("mock-harness", design)
-    # run_design validates the pairing through the same gate
-    with pytest.raises(ValueError, match="no mock-harness fixture"):
-        run_mod.run_design("mock-harness", "t3", "x")
+    with pytest.raises(ValueError, match="harness-native"):
+        run_mod.run_design("mock-harness", "t4", "x")
 
 
 def _flag(cmd: list, flag: str) -> str:
@@ -116,8 +115,8 @@ def test_mock_trigger_command_shape():
 
 
 def test_mock_trigger_command_plan_per_design():
-    """t1/t2 run the pinned gateway-route plan in-container; t0 does not."""
-    for design in ("t1", "t2"):
+    """t1/t2/t3 run the pinned gateway-route plan in-container; t0 does not."""
+    for design in ("t1", "t2", "t3"):
         cfg = run_mod.harness_cfg("mock-harness", design)
         cmd = run_mod.mock_trigger_command(cfg, "r1")
         assert _flag(cmd, "--plan") == f"/repo/mock_harness/plans/{design}.json"
@@ -150,9 +149,9 @@ def test_mock_replay_result_shape(tmp_path):
 # --------------------------------------------------------- per-design plans
 
 
-@pytest.mark.parametrize("design", ["t1", "t2"])
+@pytest.mark.parametrize("design", ["t1", "t2", "t3"])
 def test_pinned_plans_gateway_route(design):
-    """The t1/t2 plans pin the gateway route so the http twin crosses the
+    """The t1/t2/t3 plans pin the gateway route so the http twin crosses the
     design's enforcement point (the inspected-twin parity, DESIGN.md 8)."""
     path = ROOT / "mock_harness" / "plans" / f"{design}.json"
     plan = json.loads(path.read_text())
@@ -165,6 +164,17 @@ def test_pinned_plans_gateway_route(design):
     # the driver's cross-check accepts the plan against the canonical spec
     spec = tspec.load_spec(BASELINE)
     assert drv.check_plan_against_spec(plan, spec) == []
+
+
+def test_pinned_t3_plan_routes_stdio_via_gateway():
+    """The t3 plan routes the stdio twins through the gateway too (the fs
+    tools are proxied behind it — the T3 topology where the stdio transport
+    is eliminated; DESIGN.md 7); the t1/t2 plans keep the local session."""
+    t3 = json.loads((ROOT / "mock_harness" / "plans" / "t3.json").read_text())
+    assert t3["routes"]["stdio"] == "gateway"
+    for design in ("t1", "t2"):
+        plan = json.loads((ROOT / "mock_harness" / "plans" / f"{design}.json").read_text())
+        assert plan["routes"].get("stdio", "local") == "local"
 
 
 def test_default_plan_is_raw_t0_route():
@@ -298,6 +308,68 @@ def test_carriers_travel_on_the_transports(monkeypatch, tmp_path):
                for f in gw_frames)
     assert [f["params"]["_meta"]["io.inspection/action_id"] for f in gw_frames] \
         == ["a011", "a012", "a013", "a014"]
+
+
+def test_t3_plan_full_driver_run(monkeypatch, tmp_path):
+    """The pinned t3 plan end-to-end via the fake syscall layer: EVERY
+    tool-call twin goes through the gateway (one JSON-RPC POST per attempt,
+    bare fs tool names + per-action carriers on the stdio frames), the
+    stdio twins spawn NO local server child, and all 7 dispatch records use
+    the mcp_meta carrier (the stdio twin's gateway route is a _meta carrier,
+    exactly like the http twin's)."""
+    monkeypatch.setenv("INSPECTION_RUN_ID", "t3-run")
+    plan = json.loads((ROOT / "mock_harness" / "plans" / "t3.json").read_text())
+    fake = mh.install_fake(monkeypatch, mh.FakeSyscalls())
+    run_manifest = drv.execute(BASELINE, plan, tmp_path)
+    # 3 stdio + 4 http tool calls, all one JSON-RPC POST to the gateway each
+    posts = [c for c in fake.calls if c[0] == "http_request"]
+    assert len(posts) == 7
+    assert all(c[1] == "POST" and c[2] == "http://gateway:8090/mcp" for c in posts)
+    frames = [json.loads(c[3]) for c in posts]
+    stdio_frames = [f for f in frames if f["params"]["name"]
+                    in ("write_file", "read_file", "list_directory")]
+    assert [f["params"]["name"] for f in stdio_frames] == \
+        ["write_file", "read_file", "list_directory"]
+    assert [f["params"]["_meta"]["io.inspection/action_id"] for f in stdio_frames] \
+        == ["a001", "a002", "a003"]
+    # the stdio transport is eliminated on this route: no local server child
+    assert not any("mcp-stdio" in c[1] for c in fake.calls if c[0] == "execv")
+    # dispatch records: one per tool-call attempt, ALL carrier mcp_meta
+    records = [json.loads(l) for l in
+               (tmp_path / "dispatch-records.jsonl").read_text().splitlines()]
+    assert len(records) == 7
+    assert {r["carrier_used"] for r in records} == {"mcp_meta"}
+    assert run_manifest["summary"]["failed"] == 0
+
+
+def test_t3_gateway_refusal_is_data_not_run_failure(monkeypatch, tmp_path):
+    """Errors-as-data under the t3 plan: a gateway that refuses every
+    connection fails ALL seven tool-call attempts as error records (the
+    rest of the surface still runs, the run never aborts), and every one
+    still gets its dispatch record with an error, never a result."""
+    monkeypatch.setenv("INSPECTION_RUN_ID", "t3-refused")
+
+    class RefusingGateway(mh.FakeSyscalls):
+        def http_request(self, method, url, body=None, headers=None):
+            raise OSError(111, "Connection refused")
+
+    fake = mh.install_fake(monkeypatch, RefusingGateway())
+    plan = json.loads((ROOT / "mock_harness" / "plans" / "t3.json").read_text())
+    run_manifest = drv.execute(BASELINE, plan, tmp_path)
+    records = {json.loads(l)["id"]: json.loads(l) for l in
+               (tmp_path / "action-log.jsonl").read_text().splitlines()}
+    assert len(records) == 15   # the full surface ran
+    tool_ids = {"a001", "a002", "a003", "a011", "a012", "a013", "a014"}
+    assert {aid for aid, r in records.items() if r["status"] == "error"} == tool_ids
+    assert all("Connection refused" in records[aid]["error"] for aid in tool_ids)
+    # the failed stdio twins still name the channel they attempted
+    assert records["a001"]["origin_channel"] == "http-connect"
+    dispatch = [json.loads(l) for l in
+                (tmp_path / "dispatch-records.jsonl").read_text().splitlines()]
+    assert {r["action_id"] for r in dispatch} == tool_ids
+    for r in dispatch:
+        assert "error" in r and "result" not in r
+        validate_dispatch_record(r)
 
 
 # --------------------------------------------- evidence class through the framework
@@ -443,15 +515,55 @@ def test_mock_profile_reconciler_end_to_end():
         assert checks[f"R3-kernel-{cls}"] == "fail"
 
 
+def test_mock_profile_t3_pooled_envelope():
+    """Design-aware reconciliation consumes the mock profile under t3: BOTH
+    tool classes take the shared pooled-gateway branch (runner/reconcile.py
+    T3_SHARED_POOL_DESIGNS — the stdio twins' gateway route produces the
+    same pooled gateway connects as the http twins, no local stdio
+    session), and with no kernel evidence the pooled envelope fails loud,
+    never silently. The profile adds no t3-specific keys: the envelope's
+    lower bound IS http_connects_min."""
+    profile = runner_reconcile.load_profile(PROFILE)
+    spec = runner_reconcile.load_spec(BASELINE)
+    # replay statuses shape the prevented-class contract: the egress jail
+    # refuses the tcp attempt (error with the refusal errno); the udp send
+    # succeeds locally (ok — the served layer adjudicates effect)
+    statuses = {"a021": ("error", "[Errno 111] Connection refused")}
+    replay = {"ok": False, "executed": len(spec["actions"]), "failed": 1,
+              "window_epoch_ns": {"start": 1, "end": 2},
+              "results": [{"id": a["id"], "class": a["class"],
+                           "op": a["op"],
+                           "status": statuses.get(a["id"], ("ok", None))[0],
+                           "error": statuses.get(a["id"], ("ok", None))[1]}
+                          for a in spec["actions"]]}
+    report = runner_reconcile.Reconciler(
+        spec, profile, replay, [], [], None, design="t3").run()
+    checks = {c["id"]: c["status"] for c in report["checks"]}
+    assert checks["R1-replay-layer"] == "pass"
+    n_tool_calls = (sum(1 for a in spec["actions"]
+                        if a["class"] == "stdio_tool_call")
+                    + sum(1 for a in spec["actions"]
+                          if a["class"] == "http_tool_call"))
+    for cls in ("stdio_tool_call", "http_tool_call"):
+        assert checks[f"R3-kernel-{cls}"] == "fail"
+        result = report["kernel"]["per_class"][cls]
+        assert result["evidence"] == "kernel-pooled-shared"
+        assert result["problems"] == [
+            f"0 pooled gateway connects outside [1, {n_tool_calls}]"]
+    assert runner_reconcile.T3_SHARED_POOL_DESIGNS == {"t3"}
+
+
 # --------------------------------------------------------- compose fixtures
 
-@pytest.mark.parametrize("design", ["t0", "t1", "t2"])
+@pytest.mark.parametrize("design", ["t0", "t1", "t2", "t3"])
 def test_compose_fixture_shape(design):
     """Schema-level sanity on the mock fixtures: the harness slot carries
     the mock-harness service (container t{N}-mock, sleep idle command, the
-    mounted repo + replay volume, GATEWAY_URL for t1/t2), the t{N}-mock-*
+    mounted repo + replay volume, GATEWAY_URL for t1/t2/t3), the t{N}-mock-*
     container prefixes hold, the sensor stays behind --profile sensor, and
-    the t2 jail shares the mock service's netns."""
+    the t2/t3 jail shares the mock service's netns. The t3 fixture is the
+    t3 topology verbatim (fs tools proxied behind the gateway,
+    policy-t3.yaml) minus the pi/openclaw harness services."""
     path = ROOT / "compose" / f"{design}-mock.yaml"
     doc = yaml.safe_load(path.read_text())
     assert doc["name"] == f"inspection-{design}-mock"
@@ -490,13 +602,28 @@ def test_compose_fixture_shape(design):
         assert jail["network_mode"] == "service:mock-harness"
         assert jail["container_name"] == "t2-mock-egress-jail"
         assert jail["restart"] == "no"
+    elif design == "t3":
+        # the t3 topology: the fs tool server proxied behind the gateway
+        assert doc["services"]["mcp-fs-http"]["container_name"] \
+            == "t3-mock-mcp-fs-http"
+        gw_env = doc["services"]["gateway"]["environment"]
+        assert gw_env["UPSTREAM_FS_URL"] == "http://mcp-fs-http:8092/mcp"
+        assert gw_env["GATEWAY_POLICY"] == "/opt/inspection/gateway/policy-t3.yaml"
+        assert gw_env["GATEWAY_AGENT_ID"] == "t3-mock-replay"
+        assert "mcp-fs-http" in doc["services"]["gateway"]["depends_on"]
+        # same forced egress as t2, attached to the mock service's netns
+        jail = doc["services"]["egress-jail-mock"]
+        assert jail["network_mode"] == "service:mock-harness"
+        assert jail["container_name"] == "t3-mock-egress-jail"
+        assert jail["restart"] == "no"
     else:
         assert "egress-jail-mock" not in doc["services"]
+        assert "mcp-fs-http" not in doc["services"]
 
 
 @pytest.mark.skipif(shutil.which("docker") is None,
                     reason="docker not available locally")
-@pytest.mark.parametrize("design", ["t0", "t1", "t2"])
+@pytest.mark.parametrize("design", ["t0", "t1", "t2", "t3"])
 def test_compose_fixture_config_parses(design):
     """docker compose config accepts each mock fixture (parse-level
     validation; building/starting the topology is the live pass)."""
@@ -514,6 +641,7 @@ def test_compose_fixture_config_parses(design):
     ("t0-mock.yaml", None, "t0"),
     ("t1-mock.yaml", "agt-gateway", "t1"),
     ("t2-mock.yaml", "agt-gateway", "t2"),
+    ("t3-mock.yaml", "agt-gateway", "t3"),
 ])
 def test_example_experiments_validate(name, control, design):
     path = ROOT / "examples" / name
@@ -528,21 +656,33 @@ def test_example_experiments_validate(name, control, design):
     assert experiment.off_matrix is False
 
 
-def test_mock_harness_t1_t2_with_gateway_control_loads():
-    """harness mock-harness accepts control agt-gateway for t1/t2 because
+def test_mock_harness_gateway_designs_with_control_loads():
+    """harness mock-harness accepts control agt-gateway for t1/t2/t3 because
     experiment validation reads the capability manifests (the mock
     manifest declares the same gateway-slot semantics as pi)."""
-    for design in ("t1", "t2"):
+    for design in ("t1", "t2", "t3"):
         doc = {"schema": 1, "control": "agt-gateway", "designs": [design],
                "harness": "mock-harness"}
         experiment = load_experiment(_write_experiment(Path("/tmp"), doc,
                                                        f"mock-{design}.yaml"))
         assert experiment.designs == [design]
-    # and a design with no mock fixture is a load-time error naming it
-    doc = {"schema": 1, "control": None, "designs": ["t3"],
+    # and a design outside the manifest's supported set is a load-time
+    # error naming it (the harness-native designs host no mock fixture)
+    doc = {"schema": 1, "control": None, "designs": ["t4"],
            "harness": "mock-harness"}
-    with pytest.raises(Exception, match="t3 not supported by harness"):
-        load_experiment(_write_experiment(Path("/tmp"), doc, "mock-t3.yaml"))
+    with pytest.raises(Exception, match="t4 not supported by harness"):
+        load_experiment(_write_experiment(Path("/tmp"), doc, "mock-t4.yaml"))
+
+
+def test_plugin_manifest_declares_the_fixture_set():
+    """plugins/mock-harness/manifest.json declares the supported designs
+    (the fixture set) and documents the t3 stdio gateway route — the same
+    set runner/run.py's fixture gate enforces."""
+    manifest = json.loads(
+        (ROOT / "plugins" / "mock-harness" / "manifest.json").read_text())
+    assert manifest["supported_designs"] == ["t0", "t1", "t2", "t3"]
+    assert "routes.stdio=gateway" in manifest["notes"]
+    assert "t3-mock.yaml" in manifest["notes"]
 
 
 # --------------------------------------------------------- version pins

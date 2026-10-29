@@ -1,0 +1,171 @@
+# compose/t3-mock.yaml — deployment design T3 (gateway as sole enforcement
+# point, all tools behind it; DESIGN.md 7) with the harness slot filled by the
+# mock harness. The topology is compose/t3.yaml verbatim minus the
+# pi/openclaw harness services (container names re-prefixed, project
+# distinct): the gateway routes BOTH tool classes — the fs tool server is
+# proxied behind it (UPSTREAM_FS_URL -> mcp-fs-http; the stdio transport is
+# eliminated at the harness, exactly like the real harness's GATEWAY_FS=1) —
+# and the default-deny egress policy is applied to the MOCK service's netns
+# (the jail shares the mock-harness service's network namespace by service
+# name and exits; the egress jail is silent environment topology, hashed
+# into the fixture fingerprint, never part of the control — DESIGN.md 3).
+#
+# Both twins cross the gateway under the pinned plan
+# mock_harness/plans/t3.json (routes.http=gateway AND routes.stdio=gateway):
+# each stdio action becomes one MCP tools/call JSON-RPC POST to
+# gateway:8090 (no local stdio server child), carrying the
+# io.inspection/action_id + attempt carriers in params._meta.
+#
+#   mock-harness ──MCP tools/call POST:8090──▶ t3-mock-gateway ──▶ t3-mock-mcp-http    (http tools)
+#        │                                        │ (route by tool name, FS_TOOLS)      │ raw HTTP:8080
+#        │ (stdio twins: the same pooled gateway origin, no stdio child)  ▼
+#        │                                        └──▶ t3-mock-mcp-fs-http (fs tools)   t3-mock-http-endpoint
+#   mock-harness ──▶ net-peer (REJECTED by the netns output policy: prevented)
+#   mock-harness ── raw exec/fs/secrets (NO gateway, NO egress — inside the netns)
+#
+# Outcomes per action class: http_tool_call and stdio_tool_call checked
+# (both cross the gateway); direct_network PREVENTED (netns output policy);
+# process_spawn / file_write / credential_access bypass (inside the netns —
+# the process-level escape T3 leaves open). At the kernel, ALL tool calls
+# share one pooled connect origin (gateway:8090) — the t3 finding; the
+# shared pooled envelope is reconciled in runner/reconcile.py.
+#
+# The runner gates the replay on the jail's clean exit (run.py docker-waits
+# t3-mock-egress-jail), so a run never starts uninspected.
+#
+# The Tracee sensor runs OUTSIDE the deployed topology (no t3net attachment):
+#   docker compose -f compose/t3-mock.yaml --profile sensor up -d tracee
+
+name: inspection-t3-mock
+
+services:
+  http-endpoint:
+    build:
+      context: ../targets
+      dockerfile: http-endpoint/Dockerfile
+    image: inspection/http-endpoint
+    container_name: t3-mock-http-endpoint
+    networks: [t3net]
+    volumes:
+      - target-logs:/var/log/targets
+    restart: unless-stopped
+
+  mcp-http:
+    build:
+      context: ../targets
+      dockerfile: mcp-http/Dockerfile
+    image: inspection/mcp-http
+    container_name: t3-mock-mcp-http
+    networks: [t3net]
+    environment:
+      HTTP_ENDPOINT_URL: http://http-endpoint:8080
+    volumes:
+      - target-logs:/var/log/targets
+    restart: unless-stopped
+
+  # T3: the fs tool server, proxied behind the gateway (its stdio transport
+  # is eliminated at the harness — targets/mcp-fs-http/server.py). Same
+  # served-log target name ("toy-mcp-fs") as the stdio server, so R2 and the
+  # profiles' served_targets are unchanged across designs.
+  mcp-fs-http:
+    build:
+      context: ../targets
+      dockerfile: mcp-fs-http/Dockerfile
+    image: inspection/mcp-fs-http
+    container_name: t3-mock-mcp-fs-http
+    networks: [t3net]
+    volumes:
+      - target-logs:/var/log/targets
+    restart: unless-stopped
+
+  gateway:
+    build:
+      context: ..
+      dockerfile: gateway/Dockerfile
+    image: inspection/gateway
+    container_name: t3-mock-gateway
+    networks: [t3net]
+    environment:
+      UPSTREAM_URL: http://mcp-http:8091/mcp
+      UPSTREAM_FS_URL: http://mcp-fs-http:8092/mcp    # T3: fs tools behind the gateway
+      GATEWAY_POLICY: /opt/inspection/gateway/policy-t3.yaml
+      GATEWAY_LOG_DIR: /var/log/gateway
+      GATEWAY_AGENT_ID: t3-mock-replay
+    volumes:
+      - gateway-logs:/var/log/gateway
+    depends_on: [mcp-http, mcp-fs-http]
+    restart: unless-stopped
+
+  net-peer:
+    build:
+      context: ../targets
+      dockerfile: net-peer/Dockerfile
+    image: inspection/net-peer
+    container_name: t3-mock-net-peer
+    networks: [t3net]
+    volumes:
+      - target-logs:/var/log/targets
+    restart: unless-stopped
+
+  tracee:
+    build:
+      context: ../sensor
+      dockerfile: Dockerfile.tracee
+    image: inspection/tracee
+    container_name: t3-mock-tracee
+    privileged: true
+    pid: host
+    cgroup: host
+    volumes:
+      - /etc/os-release:/etc/os-release-host:ro
+      - /var/run:/var/run:ro
+      - tracee-data:/tmp/tracee
+    profiles: [sensor]
+    restart: unless-stopped
+
+  mock-harness:
+    build:
+      context: ..
+      dockerfile: mock_harness/Dockerfile
+    image: inspection/mock-harness
+    container_name: t3-mock
+    networks: [t3net]
+    environment:
+      TARGET_LOG_DIR: /var/log/targets
+      REPLAY_LOG_DIR: /workspace/replay
+      GATEWAY_URL: http://gateway:8090      # T3: both twins' gateway route
+    volumes:
+      - target-logs:/var/log/targets
+      - ../runs/mock:/workspace/replay   # driver artifacts retained per-run
+      - ..:/repo:ro                     # the repo, read-only (no repo baked in)
+    working_dir: /workspace
+    command:
+      - sh
+      - -c
+      - /repo/targets/fs/setup.sh && /repo/targets/credentials/seed.sh && sleep infinity
+    depends_on: [gateway]
+    restart: unless-stopped
+
+  # --- forced egress (T2/T3 topology): one-shot jail on the mock netns --
+  # Shares the mock-harness service's netns (network_mode: service:<name>),
+  # applies the default-deny nftables output policy allowing only
+  # gateway:8090 (+ loopback/DNS), exits. The runner docker-waits it before
+  # docker-exec'ing the driver.
+  egress-jail-mock:
+    build:
+      context: ../targets
+      dockerfile: egress-jail/Dockerfile
+    image: inspection/egress-jail
+    container_name: t3-mock-egress-jail
+    network_mode: "service:mock-harness"
+    cap_add: [NET_ADMIN]
+    depends_on: [mock-harness, gateway]
+    restart: "no"
+
+networks:
+  t3net: {}
+
+volumes:
+  target-logs: {}
+  gateway-logs: {}
+  tracee-data: {}

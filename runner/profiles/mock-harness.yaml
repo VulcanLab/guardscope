@@ -30,6 +30,28 @@
 #     action, but the manifest declares [1,2] (the harness-side double
 #     open); keeping the manifest envelope until the calibration diff runs
 #     hides less if the container filesystem layers an extra open.
+#
+# Design-awareness (t3): the profile itself stays one document — the t3
+# branches live in runner/reconcile.py, keyed off the run's design
+# (T3_SHARED_POOL_DESIGNS), exactly like the pi profile. Under the t3 plan
+# (mock_harness/plans/t3.json, routes.stdio=gateway) BOTH twins cross the
+# gateway, so:
+#   - the stdio twins' kernel evidence becomes gateway connects (dst port
+#     8090), pooled with the http twins' — one shared envelope
+#     [http_connects_min, n_tool_calls] over in-window connects from any
+#     testbed container (the t3 finding; per-action evidence moves to the
+#     served + decision layers);
+#   - the stdio twins spawn NO local server child: no local-server execve
+#     (the mcp-server-spawn expected extra never fires under that route)
+#     and no stdio pipe/handshake writes (stdio_handshake_extra_writes is
+#     not consulted by the t3 pooled branch);
+#   - the fs server's file opens happen in the mcp-fs-http container
+#     (outside the harness scope), so the mcp-write-file-opens extra never
+#     fires either.
+# These are DERIVED from the originators' deterministic behavior; the
+# pooled-connect envelope (and whether python's no-pooling client gives
+# exactly n connects) is confirmed in the live pass, like every envelope
+# above.
 
 profile: mock-harness/v1
 harness: mock-harness
@@ -163,7 +185,9 @@ expected_extras:
     reason: >
       the stdio twin's MCP tool server is spawned as a driver child (the
       a001-a003 transport); its successful execve maps as process_spawn but
-      belongs to no canonical action.
+      belongs to no canonical action. Under the t3 plan (routes.stdio=
+      gateway) the twin never spawns a local server, so this extra never
+      fires there — allowances need not occur.
     class: process_spawn
     where:
       any_of:
@@ -174,7 +198,9 @@ expected_extras:
     reason: >
       an MCP write_file tool call opens the target file from the SERVER
       child in write mode: the kernel observation maps as file_write but
-      belongs to the stdio action (a001).
+      belongs to the stdio action (a001). Under the t3 plan the server-side
+      opens happen in the mcp-fs-http container (outside the harness
+      scope), so this extra never fires there.
     class: file_write
     where: { path: /workspace/out/a.txt, due_to: a001 }
 
@@ -183,7 +209,12 @@ multiplicity:
   # (one session per run; derived — see the header note)
   stdio_handshake_extra_writes: 1
   # python opens one connection per request (no pooling), raw AND gateway
-  # routes: observed connect count must be within [1, n_actions]
+  # routes: observed connect count must be within [1, n_actions]. Under t3
+  # this same key is the shared pooled envelope's lower bound for BOTH
+  # tool classes (runner/reconcile.py T3_SHARED_POOL_DESIGNS: in-window
+  # gateway connects within [1, n_tool_calls] from any testbed container);
+  # python's one-connect-per-request shape should give exactly n_tool_calls,
+  # confirmed in the live pass
   http_connects_min: 1
   # raw TCP: one connect per tcp_connect action (no pooling)
   tcp_connects_per_action: 1

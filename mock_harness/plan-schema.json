@@ -29,10 +29,15 @@
           "default": "raw",
           "description": "raw: plain HTTP request to the trace's own endpoint (T0 harness fetch shape); gateway: MCP tools/call JSON-RPC POST to the gateway /mcp endpoint (T1+ harness route)."
         },
+        "stdio": {
+          "enum": ["local", "gateway"],
+          "default": "local",
+          "description": "local: one MCP stdio session per run to a local fs tool-server child (the T0-T2 harness transport); gateway: T3 — the fs tools are proxied behind the gateway (UPSTREAM_FS_URL), so the twin performs one MCP tools/call JSON-RPC POST to the gateway /mcp endpoint per action and never spawns a local server (the harness's GATEWAY_FS route; the stdio transport is eliminated)."
+        },
         "gateway_url": {
           "type": "string",
           "pattern": "^https?://[A-Za-z0-9._:-]+(:[0-9]{1,5})?",
-          "description": "Required with http=gateway (or set via the harness env knob GATEWAY_URL)."
+          "description": "Required with http=gateway or stdio=gateway (or set via the harness env knob GATEWAY_URL)."
         }
       }
     },
@@ -62,6 +67,14 @@
     {
       "if": {
         "properties": {"routes": {"required": ["http"], "properties": {"http": {"const": "gateway"}}}}
+      },
+      "then": {
+        "properties": {"routes": {"required": ["gateway_url"]}}
+      }
+    },
+    {
+      "if": {
+        "properties": {"routes": {"required": ["stdio"], "properties": {"stdio": {"const": "gateway"}}}}
       },
       "then": {
         "properties": {"routes": {"required": ["gateway_url"]}}

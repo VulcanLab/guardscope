@@ -203,11 +203,12 @@ def check_plan_against_spec(plan: dict, spec: dict) -> list[str]:
         if by_id[action_id]["class"] != "process_spawn":
             problems.append(f"{action_id}: variant {override.get('variant')!r} "
                             "selected for a non-process_spawn class")
-    if (plan.get("routes") or {}).get("http") == "gateway" and \
-            not (plan.get("routes") or {}).get("gateway_url"):
-        if not os.environ.get("GATEWAY_URL"):
-            problems.append("routes.http=gateway requires routes.gateway_url "
-                            "(or env GATEWAY_URL)")
+    for route in ("http", "stdio"):
+        if (plan.get("routes") or {}).get(route) == "gateway" and \
+                not (plan.get("routes") or {}).get("gateway_url"):
+            if not os.environ.get("GATEWAY_URL"):
+                problems.append(f"routes.{route}=gateway requires "
+                                "routes.gateway_url (or env GATEWAY_URL)")
     return problems
 
 

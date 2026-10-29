@@ -354,6 +354,8 @@ def test_plan_schema_rejects_bad_plans(plan_validator):
         {**drv.DEFAULT_PLAN, "actions": {"a031": {}}, "schema": "mock-harness-plan/1"},  # no variant
         {**drv.DEFAULT_PLAN, "routes": {"http": "gateway"}},        # gateway without url
         {**drv.DEFAULT_PLAN, "routes": {"http": "carrier-pigeon"}}, # unknown route
+        {**drv.DEFAULT_PLAN, "routes": {"stdio": "gateway"}},       # stdio gateway without url
+        {**drv.DEFAULT_PLAN, "routes": {"stdio": "carrier-pigeon"}}, # unknown stdio route
         {**drv.DEFAULT_PLAN, "schema": "mock-harness-plan/9"},         # wrong schema const
     ]
     for plan in bad:
@@ -363,6 +365,10 @@ def test_plan_schema_rejects_bad_plans(plan_validator):
 
 def test_gateway_route_requires_url_in_schema(plan_validator):
     plan = {**drv.DEFAULT_PLAN, "routes": {"http": "gateway",
+                                           "gateway_url": "http://gateway:8090"}}
+    plan_validator.validate(plan)
+    # the stdio gateway route (t3) carries the same requirement
+    plan = {**drv.DEFAULT_PLAN, "routes": {"stdio": "gateway",
                                            "gateway_url": "http://gateway:8090"}}
     plan_validator.validate(plan)
 
@@ -377,6 +383,9 @@ def test_driver_rejects_plan_drift(spec):
     # gateway route without a url
     plan = {**drv.DEFAULT_PLAN, "routes": {"http": "gateway"}}
     assert any("gateway_url" in p for p in drv.check_plan_against_spec(plan, spec))
+    # stdio gateway route (t3) without a url
+    plan = {**drv.DEFAULT_PLAN, "routes": {"stdio": "gateway"}}
+    assert any("stdio=gateway" in p for p in drv.check_plan_against_spec(plan, spec))
 
 
 # ------------------------------------------------------------------- driver runs
@@ -678,6 +687,105 @@ def test_stdio_twin_session_reused_per_run(monkeypatch, spec):
     assert sum(1 for f in initialize_frames
                if f.get("method") == "initialize") == 1
     assert len([c for c in fake.calls if c[0] == "fork"]) == 1  # one server child
+
+
+def test_stdio_twin_gateway_route(monkeypatch, spec):
+    """T3 (routes.stdio=gateway): the twin performs ONE MCP tools/call
+    JSON-RPC POST to the gateway /mcp endpoint per action — bare fs tool
+    name, the action's own arguments, the _meta carriers — and spawns NO
+    local server child (the stdio transport is eliminated; the harness
+    GATEWAY_FS route)."""
+    fake = install_fake(monkeypatch, FakeSyscalls())
+    plan = {"schema": "mock-harness-plan/1",
+            "routes": {"http": "raw", "stdio": "gateway",
+                       "gateway_url": "http://gateway:8090"}}
+    ctx = ctx_for(plan)
+    ctx.action_id = "a001"
+    detail = org.stdio_tool_call(compiled("a001", spec), ctx)
+    # no local stdio session on this route
+    assert "fork" not in names(fake) and "execv" not in names(fake)
+    method, url, body, headers = next(c[1:] for c in fake.calls
+                                      if c[0] == "http_request")
+    assert method == "POST" and url == "http://gateway:8090/mcp"
+    frame = json.loads(body)
+    assert frame["method"] == "tools/call"
+    assert frame["jsonrpc"] == "2.0"
+    # bare fs tool name (the gateway's FS_TOOLS routing), the action's args
+    assert frame["params"]["name"] == "write_file"
+    assert frame["params"]["arguments"] == {"path": "/workspace/out/a.txt",
+                                             "data": "hello from mcp fs"}
+    # carrier 1 (DESIGN.md 5): the _meta namespaced keys
+    assert frame["params"]["_meta"] == {"io.inspection/action_id": "a001",
+                                        "io.inspection/attempt": 0}
+    assert detail["via"] == "gateway" and detail["gateway_tool"] == "write_file"
+    assert detail["response_bytes"] == 2   # the fake serves content text "ok"
+    # the OS channel under the gateway route is the pooled http-connect
+    assert org.origin_channel(org.stdio_tool_call, "default", ctx) \
+        == "http-connect"
+    assert "gateway" in org.origin_channel_detail(org.stdio_tool_call,
+                                                   "default", ctx)
+
+
+def test_stdio_twin_gateway_route_without_url_is_an_error(monkeypatch, spec):
+    """A gateway stdio route without a gateway_url (and no env fallback) is
+    an error raised to the driver — recorded as data, never a run failure
+    — and nothing is attempted on the network."""
+    fake = install_fake(monkeypatch, FakeSyscalls())
+    monkeypatch.delenv("GATEWAY_URL", raising=False)
+    plan = {"schema": "mock-harness-plan/1",
+            "routes": {"stdio": "gateway"}}
+    ctx = ctx_for(plan)
+    ctx.action_id = "a001"
+    with pytest.raises(org.SpawnError, match="gateway_url"):
+        org.stdio_tool_call(compiled("a001", spec), ctx)
+    assert "http_request" not in names(fake)
+
+
+def test_stdio_twin_namespaced_tool_maps_to_bare_name(monkeypatch, spec):
+    """The gateway routes fs tools by their bare names (FS_TOOLS); the
+    compiled stdio actions already carry the bare op, and a namespaced
+    form (the pi adapter's stdio tool names) maps to the same bare tool."""
+    assert org.gateway_tool_name("write_file") == "write_file"
+    assert org.gateway_tool_name("mcp__toy-mcp-fs__write_file") == "write_file"
+    assert org.gateway_tool_name("mcp__toy-mcp-fs__list_directory") \
+        == "list_directory"
+    fake = install_fake(monkeypatch, FakeSyscalls())
+    plan = {"schema": "mock-harness-plan/1",
+            "routes": {"stdio": "gateway",
+                       "gateway_url": "http://gateway:8090"}}
+    ctx = ctx_for(plan)
+    ctx.action_id = "a003"
+    rec = compiled("a003", spec)
+    rec["tool"] = "mcp__toy-mcp-fs__list_directory"   # the namespaced form
+    org.stdio_tool_call(rec, ctx)
+    frame = json.loads(next(c[3] for c in fake.calls if c[0] == "http_request"))
+    assert frame["params"]["name"] == "list_directory"   # bare name on the wire
+
+
+def test_stdio_twin_gateway_denial_is_an_error(monkeypatch, spec):
+    """A gateway JSON-RPC error response (a denied/failed call) is an error
+    raised to the driver — errors-as-data, the twin never self-reports an
+    outcome."""
+
+    class DenyingGateway(FakeSyscalls):
+        def http_request(self, method, url, body=None, headers=None):
+            self.calls.append(("http_request", method, url, body,
+                               dict(headers) if headers else None))
+            frame = json.loads(body)
+            return 200, json.dumps({
+                "jsonrpc": "2.0", "id": frame["id"],
+                "error": {"code": -32001,
+                           "message": "gateway denied 'write_file': not allowed"}}
+            ).encode()
+
+    install_fake(monkeypatch, DenyingGateway())
+    plan = {"schema": "mock-harness-plan/1",
+            "routes": {"stdio": "gateway",
+                       "gateway_url": "http://gateway:8090"}}
+    ctx = ctx_for(plan)
+    ctx.action_id = "a001"
+    with pytest.raises(org.SpawnError, match="gateway denied"):
+        org.stdio_tool_call(compiled("a001", spec), ctx)
 
 
 def test_http_twin_raw_route(monkeypatch, spec):

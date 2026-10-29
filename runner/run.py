@@ -93,9 +93,12 @@ HARNESSES = {
     # docker exec — same pattern as pi, one exec per run — and reads the
     # canonical trace directly (no compiled-trace step: the driver compiles
     # each action through the same pi compiler in-container). Plan per
-    # design: t0 runs the driver's built-in default plan (raw http route);
-    # t1/t2 run the pinned gateway-route plan so the http twin crosses the
-    # design's enforcement point (the inspected-twin parity, DESIGN.md 8).
+    # design: t0 runs the driver's built-in default plan (raw http route +
+    # local stdio session); t1/t2 run the pinned gateway-route plan for the
+    # http twin so it crosses the design's enforcement point (the
+    # inspected-twin parity, DESIGN.md 8); t3 routes BOTH twins via the
+    # gateway (the stdio twin's fs tools are proxied behind it — the T3
+    # topology where the stdio transport is eliminated).
     "mock-harness": {
         "container": "t0-mock",
         "replay_dir": DEFAULT_RUNS_DIR / "mock",
@@ -156,12 +159,12 @@ def harness_cfg(harness: str, design: str = "t0") -> dict:
         raise ValueError(f"design {design} uses the harness-native "
                          "enforcement surface; validated on the pi and "
                          "openclaw harnesses (see T4-INVESTIGATION.md)")
-    # the mock-harness fixtures exist for t0/t1/t2 only (compose/t{N}-mock.yaml;
+    # the mock-harness fixtures exist for t0..t3 (compose/t{N}-mock.yaml;
     # plugins/mock-harness/manifest.json declares the same set)
-    if harness == "mock-harness" and design not in ("t0", "t1", "t2"):
+    if harness == "mock-harness" and design not in ("t0", "t1", "t2", "t3"):
         raise ValueError(f"design {design} has no mock-harness fixture "
-                         "(fixtures exist for t0, t1, t2; "
-                         "compose/t0-mock.yaml..t2-mock.yaml)")
+                         "(fixtures exist for t0, t1, t2, t3; "
+                         "compose/t0-mock.yaml..t3-mock.yaml)")
     cfg = dict(HARNESSES[harness])
     prefix = DESIGNS[design]["prefix"]
     cfg["container"] = f"{prefix}-{harness}"
@@ -174,10 +177,13 @@ def harness_cfg(harness: str, design: str = "t0") -> dict:
         # container names from cfg["prefix"], so one prefix covers all)
         cfg["container"] = f"{prefix}-mock"
         cfg["prefix"] = f"{prefix}-mock"
-        # the http twin's route is plan data: t1/t2 run the pinned gateway
-        # plan in-container (mock_harness/plans/t{N}.json); t0 keeps the
-        # built-in default plan (raw fetch, no enforcement point to cross)
-        if design in ("t1", "t2"):
+        # the twins' routes are plan data: t1/t2 run the pinned gateway
+        # plan for the http twin in-container (mock_harness/plans/t{N}.json);
+        # t3 routes BOTH twins via the gateway (the stdio twin's fs tools are
+        # proxied behind it, no local server child); t0 keeps the built-in
+        # default plan (raw http fetch + local stdio session, no enforcement
+        # point to cross)
+        if design in ("t1", "t2", "t3"):
             cfg["mock_plan"] = (f"{MOCK_HARNESS_REPO_MOUNT}/mock_harness/"
                                f"plans/{design}.json")
     return cfg
@@ -291,8 +297,9 @@ def mock_trigger_command(cfg: dict, run_id: str) -> list[str]:
     run identity as env (the driver's dispatch records read
     INSPECTION_RUN_ID; DESIGN.md 4), sets the container cwd to the mounted
     repo, and runs `python3 -m mock_harness.driver` with the canonical trace
-    + the per-design plan (harness_cfg: t1/t2 the pinned gateway route, t0
-    the driver's built-in default plan)."""
+    + the per-design plan (harness_cfg: t1/t2 the pinned gateway route for
+    the http twin, t3 the pinned gateway route for BOTH twins, t0 the
+    driver's built-in default plan)."""
     cmd = ["docker", "exec",
            "-e", f"INSPECTION_RUN_ID={run_id}",
            # the repo mount is read-only; bytecode writes would fail with

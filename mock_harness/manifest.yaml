@@ -152,7 +152,10 @@ paths:
       one MCP stdio session per run (python3 -u .../mcp-stdio/server.py as
       a mock-harness child): initialize + notifications/initialized, then
       NDJSON JSON-RPC tools/call {write_file, {path, data}} on the child's
-      stdin pipe, response read from its stdout pipe.
+      stdin pipe, response read from its stdout pipe. gateway route (t3
+      plan, routes.stdio=gateway): one MCP tools/call JSON-RPC POST to the
+      gateway per action with the bare tool name (the harness GATEWAY_FS
+      route; the stdio transport eliminated, no local server child).
     kernel_signature:
       syscalls: [execve, security_file_open, write]
       attributes:
@@ -166,7 +169,7 @@ paths:
       t0: {disposition: none, note: "no enforcement point in T0"}
       t1: {disposition: bypassed, note: "T1 inspects only the http transport; the fs stdio transport stays outside the gateway"}
       t2: {disposition: bypassed, note: "same as T1 (egress affects only direct network)"}
-      t3: {disposition: bypassed, note: "FIDELITY LIMITATION: the design inspects fs calls by routing them through the gateway (GATEWAY_FS); the twin keeps the T0 stdio child transport and never touches the gateway — see notes"}
+      t3: {disposition: checked, note: "under the t3 plan (routes.stdio=gateway, mock_harness/plans/t3.json) the twin proxies the fs call through the gateway like the harness's GATEWAY_FS route — write_file allowed by policy-t3; bypassed only under the default local-stdio route"}
       t4: {disposition: bypassed, note: "the enforcement point is INSIDE the harness process; the mock harness is a separate process in the trust domain, so its calls cannot cross it — see notes"}
       t5: {disposition: bypassed, note: "same placement limitation as t4 (the harness chain is in-process; the fs tools are not gateway-routed in t5)"}
       t6: {disposition: bypassed, note: "same placement limitation as t4/t5"}
@@ -182,12 +185,19 @@ paths:
       Twin fidelity: reproduces the harness's OWN T0-T2 transport for this
       class (McpSession parity — initialize, notifications/initialized,
       tools/call; protocolVersion 2025-06-18; clientInfo
-      inspection-mock-harness). In t3+ the harness itself routes fs tools
-      differently (t3: gateway over HTTP; t4-t6: the harness MCP pipeline),
-      and the mock harness cannot cross those points from a foreign process;
-      the twin keeps the stdio child shape so the kernel signature stays
-      the T0 one. The server response is consumed over the pipe
-      (dispatch-free output consumption), mirroring the harness.
+      inspection-mock-harness). Route per design plan — the default keeps
+      the stdio child shape so the kernel signature stays the T0 one;
+      under the t3 plan (routes.stdio=gateway, mock_harness/plans/t3.json)
+      the twin reproduces the harness's GATEWAY_FS route instead: the
+      stdio transport eliminated, one MCP tools/call JSON-RPC POST to the
+      gateway per action, no local server child; the kernel signature is
+      then the pooled gateway connect (http-connect — the t3 finding).
+      t4-t6 keep the placement limitation: those enforcement points are
+      INSIDE the harness process and the mock harness is a foreign process,
+      so its calls cannot cross them; the gateway of t3 is a network service,
+      so it can. The server response is consumed over the pipe
+      (dispatch-free output consumption), mirroring the harness on the
+      local route.
 
   - id: a002
     class: stdio_tool_call
@@ -195,7 +205,9 @@ paths:
     origin_channel: mcp-stdio-child-pipe
     origin_channel_detail: >-
       same session as a001: tools/call {read_file, {path}} over the child
-      pipes.
+      pipes. gateway route (t3 plan, routes.stdio=gateway): the same MCP
+      tools/call JSON-RPC POSTed to the gateway per action, the fs tool
+      proxied behind it — no local server child (see a001 notes).
     kernel_signature:
       syscalls: [write]
       attributes:
@@ -207,7 +219,7 @@ paths:
       t0: {disposition: none, note: "no enforcement point in T0"}
       t1: {disposition: bypassed, note: "stdio transport outside the gateway"}
       t2: {disposition: bypassed, note: "same as T1"}
-      t3: {disposition: bypassed, note: "fidelity limitation — twin keeps the T0 stdio transport (see a001 notes)"}
+      t3: {disposition: checked, note: "t3 plan gateway route (see a001 notes): read_file allowed by policy-t3; bypassed only under the default local-stdio route"}
       t4: {disposition: bypassed, note: "in-process point not crossed by a foreign process (see a001 notes)"}
       t5: {disposition: bypassed, note: "same as t4"}
       t6: {disposition: bypassed, note: "same as t4"}
@@ -217,14 +229,19 @@ paths:
       rule: synchronous — session child pid within the record window.
       deferred: false
     notes: >-
-      Same twin fidelity caveat as a001; no server-side write effect (the
-      read open stays unmapped tool noise by design).
+      Same twin fidelity caveats as a001; no server-side write effect (the
+      read open stays unmapped tool noise by design on the local route; under
+      the t3 gateway route the server-side opens happen in the mcp-fs-http
+      container, outside the harness scope).
 
   - id: a003
     class: stdio_tool_call
     operation: list_directory
     origin_channel: mcp-stdio-child-pipe
-    origin_channel_detail: same session; tools/call {list_directory, {path}}.
+    origin_channel_detail: >-
+      same session; tools/call {list_directory, {path}}. gateway route
+      (t3 plan): same shape as a001's gateway route (one JSON-RPC POST per
+      action, no local server child).
     kernel_signature:
       syscalls: [write]
       attributes:
@@ -236,7 +253,7 @@ paths:
       t0: {disposition: none, note: "no enforcement point in T0"}
       t1: {disposition: bypassed, note: "stdio transport outside the gateway"}
       t2: {disposition: bypassed, note: "same as T1"}
-      t3: {disposition: bypassed, note: "fidelity limitation — twin keeps the T0 stdio transport (see a001 notes)"}
+      t3: {disposition: checked, note: "t3 plan gateway route (see a001 notes): list_directory allowed by policy-t3; bypassed only under the default local-stdio route"}
       t4: {disposition: bypassed, note: "in-process point not crossed by a foreign process (see a001 notes)"}
       t5: {disposition: bypassed, note: "same as t4"}
       t6: {disposition: bypassed, note: "same as t4"}

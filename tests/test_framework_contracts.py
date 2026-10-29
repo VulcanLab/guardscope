@@ -59,9 +59,10 @@ def test_harness_manifests_declare_hostable_points():
 def test_mock_harness_declares_reduced_contract_and_mock_fixtures():
     manifest = load_capabilities("mock-harness")
     assert manifest["kind"] == "harness-adapter"
-    # the fixtures that exist (compose/t0-mock.yaml..t2-mock.yaml); the
-    # t3+ designs have no mock fixture yet (DESIGN.md 8 evidence gates)
-    assert manifest["supported_designs"] == ["t0", "t1", "t2"]
+    # the fixtures that exist (compose/t0-mock.yaml..t3-mock.yaml); the
+    # harness-native designs (t4-t6) have no mock fixture (DESIGN.md 8
+    # evidence gates; the in-process points cannot be crossed by the driver)
+    assert manifest["supported_designs"] == ["t0", "t1", "t2", "t3"]
     assert "hostable_enforcement_points" not in manifest
     assert "Reduced form" in manifest["notes"]
     assert "no host mode" in manifest["notes"].lower()

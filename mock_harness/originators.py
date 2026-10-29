@@ -10,7 +10,11 @@ function resolved by (class, op):
   stdio_tool_call   -> the inspected twin of the harness's own T0-T2
                        transport: one MCP stdio session per run (the fs tool
                        server as a mock-harness child), NDJSON JSON-RPC
-                       initialize + tools/call over pipes
+                       initialize + tools/call over pipes; T3 plan route
+                       (routes.stdio=gateway): one MCP tools/call JSON-RPC
+                       POST to the gateway per action instead (the harness's
+                       GATEWAY_FS route — the stdio transport eliminated,
+                       no local server child)
   http_tool_call    -> raw route: plain HTTP request to the trace's own
                        endpoint (the T0 fetch shape); gateway route: MCP
                        tools/call JSON-RPC POST to the gateway /mcp endpoint
@@ -71,6 +75,14 @@ GATEWAY_TOOL_ROUTES = {
     ("PUT", "/state"): "put_state",
 }
 
+# T3: the gateway routes the fs tools by their BARE names (gateway/server.py
+# FS_TOOLS — write_file/read_file/list_directory, the names policy-t3.yaml
+# allows). The compiled stdio actions carry the bare op as the tool name
+# (trace/compile/pi/compile.py), but a namespaced form (mcp__<server>__<tool>,
+# the pi adapter's stdio tool names) maps to the same bare tool.
+def gateway_tool_name(tool: str) -> str:
+    return tool.split("__")[-1] if tool.startswith("mcp__") else tool
+
 SPAWN_VARIANTS = ("ordinary", "outliving", "daemon")
 DEFAULT_STDIO_SERVER_CMD = [
     "python3", "-u",
@@ -81,6 +93,32 @@ DEFAULT_STDIO_SERVER_CMD = [
 
 class SpawnError(Exception):
     """A spawn variant failed (exec error, nonzero exit)."""
+
+
+def gateway_tools_call(ctx: "RunContext", tool: str,
+                       arguments: dict) -> tuple[int, dict]:
+    """One MCP tools/call JSON-RPC POST to the gateway /mcp endpoint, with
+    the io.inspection carriers in params._meta (carrier 1, DESIGN.md 5) —
+    the shared request builder for BOTH twins' gateway routes: the http
+    twin's T1+ route and the stdio twin's T3 route (the fs tools proxied
+    behind the gateway, UPSTREAM_FS_URL). A route without a gateway_url is
+    an error raised to the driver (recorded as data, never a run failure)."""
+    if not ctx.gateway_url:
+        raise SpawnError("gateway route selected but no gateway_url (plan "
+                         "routes.gateway_url or env GATEWAY_URL)")
+    msg = {"jsonrpc": "2.0", "id": ctx.next_rpc_id(),
+           "method": "tools/call",
+           "params": {"name": tool, "arguments": arguments,
+                      "_meta": {META_ACTION_ID: ctx.action_id,
+                                META_ATTEMPT: 0}}}
+    status, body = syscalls.http_request(
+        "POST", ctx.gateway_url.rstrip("/") + "/mcp",
+        json.dumps(msg, separators=(",", ":")))
+    data = json.loads(body.decode("utf-8"))
+    if data.get("error"):
+        raise SpawnError(f"gateway returned a json-rpc error response "
+                         f"for {tool}: {json.dumps(data['error'])}")
+    return status, data
 
 
 # --- child-side helpers ------------------------------------------------------
@@ -284,10 +322,33 @@ def _spawn_daemon(argv: list[str], ctx: "RunContext") -> dict:
 # --- per-class originators ------------------------------------------------------
 
 def stdio_tool_call(rec: dict, ctx: "RunContext", variant: str = "default") -> dict:
-    """The inspected twin: tools/call over the run's MCP stdio session
-    (the harness's own T0-T2 transport for this class)."""
-    session = ctx.stdio()
+    """The inspected twin, plan-routed (routes.stdio, DESIGN.md 8):
+
+    local (default)   the harness's own T0-T2 transport — tools/call over
+                      the run's MCP stdio session to a local server child
+    gateway (T3)      the harness's GATEWAY_FS route — the stdio transport
+                      is ELIMINATED and the fs tools are proxied behind the
+                      gateway: one MCP tools/call over HTTP per action, no
+                      local server child (compose/t3.yaml)
+    """
     arguments = rec.get("arguments") or {}
+    # the gateway routes the fs tools by their bare names (FS_TOOLS); the
+    # compiled tool name is the bare op already, namespaced forms map to it
+    tool = gateway_tool_name(rec["tool"])
+    if ctx.stdio_route == "gateway":
+        status, resp = gateway_tools_call(ctx, tool, arguments)
+        text = resp["result"]["content"][0]["text"]
+        return {
+            "server": rec["server"],
+            "tool": rec["tool"],
+            "arguments": arguments,
+            "via": "gateway",
+            "gateway_tool": tool,
+            "gateway_url": ctx.gateway_url,
+            "http_status": status,
+            "response_bytes": len(text.encode("utf-8")),
+        }
+    session = ctx.stdio()
     # carrier 1 (DESIGN.md 5): the tools/call params._meta namespaced keys —
     # the same carrier the pi adapter injects on every stdio tools/call
     resp = session.call(rec["tool"], arguments,
@@ -311,26 +372,12 @@ def http_tool_call(rec: dict, ctx: "RunContext", variant: str = "default") -> di
         tool = GATEWAY_TOOL_ROUTES.get((rec["op"], url_path))
         if tool is None:
             raise SpawnError(f"no gateway tool route for {rec['op']} {url_path}")
-        if not ctx.gateway_url:
-            raise SpawnError("gateway route selected but no gateway_url (plan "
-                             "routes.gateway_url or env GATEWAY_URL)")
         arguments = {}
         if rec.get("body") is not None:
             arguments["body"] = rec["body"]
-        msg = {"jsonrpc": "2.0", "id": ctx.next_rpc_id(),
-               "method": "tools/call",
-               "params": {"name": tool, "arguments": arguments,
-                          # carrier 1 (DESIGN.md 5): _meta on the gateway-
-                          # routed tools/call, mirroring the pi adapter
-                          "_meta": {META_ACTION_ID: ctx.action_id,
-                                    META_ATTEMPT: 0}}}
-        status, body = syscalls.http_request(
-            "POST", ctx.gateway_url.rstrip("/") + "/mcp",
-            json.dumps(msg, separators=(",", ":")))
-        data = json.loads(body.decode("utf-8"))
-        if data.get("error"):
-            raise SpawnError(f"gateway returned a json-rpc error response "
-                             f"for {tool}: {json.dumps(data['error'])}")
+        # the shared gateway request builder (same JSON-RPC POST + _meta
+        # carriers as the stdio twin's gateway route)
+        status, _data = gateway_tools_call(ctx, tool, arguments)
         return {
             "via": "gateway",
             "tool": tool,
@@ -474,9 +521,14 @@ def origin_channel(fn, variant: str, ctx: "RunContext") -> str:
     """The OS channel this originator performs its action through — known
     BEFORE execution (it is a property of the resolved originator + plan),
     so error records carry it too. Must equal the manifest's origin_channel
-    for the action."""
+    for the action, EXCEPT the stdio twin under the T3 gateway route: the
+    route eliminates the local stdio child (the manifest's canonical
+    mcp-stdio-child-pipe) and performs the tools/call as an HTTP connect to
+    the gateway — the same pooled origin as the http twin, which is the t3
+    finding itself (kernel sees one pooled connect per tool call)."""
     if fn is stdio_tool_call:
-        return "mcp-stdio-child-pipe"
+        return ("http-connect" if ctx.stdio_route == "gateway"
+                else "mcp-stdio-child-pipe")
     if fn is http_tool_call:
         return "http-connect"
     if fn is direct_network_tcp:
@@ -495,6 +547,9 @@ def origin_channel(fn, variant: str, ctx: "RunContext") -> str:
 def origin_channel_detail(fn, variant: str, ctx: "RunContext") -> str:
     """Human-readable variant/routing detail for the record (the manifest's
     origin_channel_detail carries the same content per path)."""
+    if fn is stdio_tool_call and ctx.stdio_route == "gateway":
+        return ("MCP tools/call JSON-RPC POST via the gateway (fs tool "
+                "proxied; no local stdio server child)")
     if fn is http_tool_call:
         return ("MCP tools/call JSON-RPC POST via the gateway"
                 if ctx.http_route == "gateway"
@@ -519,6 +574,7 @@ class RunContext:
         self.deferred: list[dict] = []
         routes = plan.get("routes") or {}
         self.http_route = routes.get("http", "raw")
+        self.stdio_route = routes.get("stdio", "local")
         self.gateway_url = routes.get("gateway_url") or os.environ.get("GATEWAY_URL")
         cmd = plan.get("stdio_server_cmd") or os.environ.get("MCP_SERVER_CMD")
         self.stdio_server_cmd = (json.loads(cmd) if isinstance(cmd, str)

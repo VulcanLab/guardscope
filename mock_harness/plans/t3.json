@@ -1,0 +1,8 @@
+{
+  "schema": "mock-harness-plan/1",
+  "routes": {
+    "http": "gateway",
+    "stdio": "gateway",
+    "gateway_url": "http://gateway:8090"
+  }
+}
