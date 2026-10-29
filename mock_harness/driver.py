@@ -233,7 +233,14 @@ def select_actions(spec: dict, mode: str, select: list[str] | None) -> list[dict
 
 def git_state() -> dict:
     """Best-effort git provenance; recorded null when unavailable (the
-    checkout may not be a git work tree)."""
+    checkout may not be a git work tree). When git is not installed, skip
+    the calls entirely: a missing-binary subprocess call probes every PATH
+    entry with execve attempts, and those kernel events land in the capture
+    (the mock harness runs its provenance stamp after its window closes)."""
+    import shutil
+    if shutil.which("git") is None:
+        return {"commit": None, "dirty": None,
+                "note": "git not installed in the runtime image"}
     try:
         commit = subprocess.run(
             ["git", "-C", str(REPO_ROOT), "rev-parse", "HEAD"],

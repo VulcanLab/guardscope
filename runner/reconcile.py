@@ -112,7 +112,13 @@ T3_TOOL_CLASSES = ("stdio_tool_call", "http_tool_call")
 # which is slow and non-deterministic — the jail uses reject)
 _REFUSAL_RE = re.compile(
     r"ECONNREFUSED|EHOSTUNREACH|ENETUNREACH|ENETDOWN|ENETRESET"
-    r"|ECONNABORTED|ECONNRESET|EHOSTDOWN|EACCES|EPERM|ICMP")
+    r"|ECONNABORTED|ECONNRESET|EHOSTDOWN|EACCES|EPERM|ICMP"
+    # the same refusals as Python OSError text (the mock harness records
+    # exceptions verbatim, e.g. "[Errno 111] Connection refused"; the
+    # real-harness adapters format errno names)
+    r"|Connection refused|Operation not permitted|Permission denied"
+    r"|Network is unreachable|Network is down|Network dropped"
+    r"|Connection aborted|Connection reset|No route to host")
 
 # slack (ns) around the replay window for target-log timestamps (container
 # clocks are the host clock; small scheduling jitter tolerated)

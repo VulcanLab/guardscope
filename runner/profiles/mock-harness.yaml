@@ -103,7 +103,7 @@ noise:
         - /lib/
         - /lib64/
         - /etc/
-        - /repo/                 # the mounted repo: interpreter imports + the pinned trace/manifests
+        - /repo                  # the mounted repo (bare dir open + imports + pinned trace/manifests)
         - /workspace/replay     # driver outputs (bare dir too)
 
   - id: infra-paths
