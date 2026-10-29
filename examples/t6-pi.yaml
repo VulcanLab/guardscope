@@ -1,0 +1,5 @@
+schema: 1
+control: null
+designs: [t6]
+harness: pi
+workload: baseline-15
