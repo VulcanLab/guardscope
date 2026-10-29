@@ -599,7 +599,9 @@ def test_t3_zero_gateway_connects_fail():
 
 
 def test_t3_pooled_connects_above_n_fail():
-    """More pooled connects than tool calls is out of the documented envelope."""
+    """More pooled connects than the documented envelope (n tool calls +
+    n http downstream: a no-pooling client contributes one connect per
+    call, the gateway one downstream connect per http twin) fails loud."""
     s = t3_stream()
     s.append(rec("http_tool_call", "connect", 9_000_000, 100,
                  detail={"target_port": 8090, "transport": "tcp"}))
@@ -613,6 +615,9 @@ def test_t3_pooled_connects_above_n_fail():
                  detail={"target_port": 8090, "transport": "tcp"}))
     s.append(rec("http_tool_call", "connect", 9_500_000, 100,
                  detail={"target_port": 8090, "transport": "tcp"}))
+    for i in range(9_600_000, 9_600_000 + 7 * 100_000, 100_000):
+        s.append(rec("http_tool_call", "connect", i, 100,
+                     detail={"target_port": 8090, "transport": "tcp"}))
     report = reconcile(s, replay=t2_replay(),
                        target_logs=t3_target_logs(), design="t3")
     assert report["status"] == "fail"

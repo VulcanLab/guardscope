@@ -548,8 +548,11 @@ def test_mock_profile_t3_pooled_envelope():
         assert checks[f"R3-kernel-{cls}"] == "fail"
         result = report["kernel"]["per_class"][cls]
         assert result["evidence"] == "kernel-pooled-shared"
+        n_http = len([a for a in spec["actions"]
+                      if a["class"] == "http_tool_call"])
         assert result["problems"] == [
-            f"0 pooled gateway connects outside [1, {n_tool_calls}]"]
+            f"0 pooled gateway connects outside "
+            f"[1, {n_tool_calls + n_http}]"]
     assert runner_reconcile.T3_SHARED_POOL_DESIGNS == {"t3"}
 
 

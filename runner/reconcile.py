@@ -1057,9 +1057,18 @@ class Reconciler:
                         result["evidence"] += "+gateway-stdio-wire-prelude"
                 else:
                     problems = []
-                    if not 1 <= len(recs) <= n_tool_calls:
+                    # The pooled envelope upper bound: a pooling client
+                    # contributes ~1 gateway connect (pi) and the gateway's
+                    # downstream connects to the http endpoint (one per
+                    # http twin) are the per-call evidence; a no-pooling
+                    # client (the mock harness, plain python) contributes
+                    # one connect per tool call, so the bound that holds for
+                    # both is n_tool_calls + n_http (e.g. t3: 1+4=5 pi,
+                    # 7+4=11 mock; DESIGN.md 9 kernel evidence).
+                    upper = n_tool_calls + len(self.by_class["http_tool_call"])
+                    if not 1 <= len(recs) <= upper:
                         problems.append(f"{len(recs)} pooled gateway connects "
-                                        f"outside [1, {n_tool_calls}]")
+                                        f"outside [1, {upper}]")
                     result = {"spec": len(self.by_class[cls]),
                               "kernel_raw": len(recs),
                               "evidence": "kernel-pooled-shared",
