@@ -1,4 +1,4 @@
-"""Exerciser tests (path-originator fixture v1).
+"""Mock harness tests (path-originator fixture v1).
 
 Covers the v1 acceptance surface: the pinned path manifest (schema + hash),
 the plan schema, the driver's per-action records (ids/classes in trace
@@ -9,7 +9,7 @@ tests), real-fs behavior of the file/credential originators, and the
 policy-blindness guard (no inspection-layer imports, no classification
 logic, no self-reported outcomes).
 
-Run from code/:  python3 -m pytest tests/test_exerciser.py -v
+Run from code/:  python3 -m pytest tests/test_mock_harness.py -v
 """
 
 import ast
@@ -27,16 +27,16 @@ import yaml
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from exerciser import driver as drv  # noqa: E402
-from exerciser import originators as org  # noqa: E402
-from exerciser import syscalls as sc  # noqa: E402
-from exerciser import trace_spec as tspec  # noqa: E402
+from mock_harness import driver as drv  # noqa: E402
+from mock_harness import originators as org  # noqa: E402
+from mock_harness import syscalls as sc  # noqa: E402
+from mock_harness import trace_spec as tspec  # noqa: E402
 
 BASELINE = ROOT / "trace" / "traces" / "baseline.yaml"
-MANIFEST_PATH = ROOT / "exerciser" / "manifest.yaml"
-MANIFEST_SCHEMA = ROOT / "exerciser" / "manifest.schema.json"
-PLAN_SCHEMA = ROOT / "exerciser" / "plan-schema.json"
-RECORD_SCHEMA = ROOT / "exerciser" / "record.schema.json"
+MANIFEST_PATH = ROOT / "mock_harness" / "manifest.yaml"
+MANIFEST_SCHEMA = ROOT / "mock_harness" / "manifest.schema.json"
+PLAN_SCHEMA = ROOT / "mock_harness" / "plan-schema.json"
+RECORD_SCHEMA = ROOT / "mock_harness" / "record.schema.json"
 HASH_TOOL = ROOT / "trace" / "hash_spec.py"
 
 SPEC_IDS = [f"a{n:03d}" for n in (1, 2, 3, 11, 12, 13, 14, 21, 22, 31, 32, 41, 42, 51, 52)]
@@ -56,7 +56,7 @@ class FakeSocket:
 
 
 class FakeSyscalls:
-    """Drop-in replacement for exerciser.syscalls: records every attempted
+    """Drop-in replacement for mock_harness.syscalls: records every attempted
     effect, never touches the OS (no network, no children, no files)."""
 
     def __init__(self):
@@ -196,7 +196,7 @@ class FakeSyscalls:
 
 
 def install_fake(monkeypatch, fake):
-    """Substitute the exerciser's syscall layer wholesale."""
+    """Substitute the mock harness's syscall layer wholesale."""
     for name in dir(fake):
         if name.startswith("_"):
             continue
@@ -350,10 +350,10 @@ def test_plan_schema_rejects_bad_plans(plan_validator):
     bad = [
         {**drv.DEFAULT_PLAN, "inter_action_delay_s": -1},          # negative delay
         {**drv.DEFAULT_PLAN, "actions": {"a031": {"variant": "ghost"}}},  # unknown variant
-        {**drv.DEFAULT_PLAN, "actions": {"a031": {}}, "schema": "exerciser-plan/1"},  # no variant
+        {**drv.DEFAULT_PLAN, "actions": {"a031": {}}, "schema": "mock-harness-plan/1"},  # no variant
         {**drv.DEFAULT_PLAN, "routes": {"http": "gateway"}},        # gateway without url
         {**drv.DEFAULT_PLAN, "routes": {"http": "carrier-pigeon"}}, # unknown route
-        {**drv.DEFAULT_PLAN, "schema": "exerciser-plan/9"},         # wrong schema const
+        {**drv.DEFAULT_PLAN, "schema": "mock-harness-plan/9"},         # wrong schema const
     ]
     for plan in bad:
         with pytest.raises(jsonschema.ValidationError):
@@ -409,8 +409,8 @@ def test_driver_run_manifest_validates_and_pins(monkeypatch, tmp_path,
 def test_every_record_carries_provenance(monkeypatch, tmp_path):
     _, _, records = run_driver(monkeypatch, tmp_path)
     for record in records:
-        assert record["provenance"] == "exerciser"
-        assert record["originator"]["exerciser_version"]
+        assert record["provenance"] == "mock-harness"
+        assert record["originator"]["mock_harness_version"]
         assert record["originator"]["action_index"] >= 0
         assert record["run_id"]
 
@@ -691,7 +691,7 @@ def test_http_twin_raw_route(monkeypatch, spec):
 
 def test_http_twin_gateway_route(monkeypatch, spec):
     fake = install_fake(monkeypatch, FakeSyscalls())
-    plan = {"schema": "exerciser-plan/1",
+    plan = {"schema": "mock-harness-plan/1",
             "routes": {"http": "gateway", "gateway_url": "http://gateway:8090"}}
     ctx = ctx_for(plan)
     detail = org.http_tool_call(compiled("a011", spec), ctx)
@@ -708,7 +708,7 @@ def test_http_twin_a014_shares_the_a011_route(monkeypatch, spec):
     """The checked-DENY probe uses the same route/tool as a011 with its own
     argument value — identical to the harness route shape."""
     fake = install_fake(monkeypatch, FakeSyscalls())
-    plan = {"schema": "exerciser-plan/1",
+    plan = {"schema": "mock-harness-plan/1",
             "routes": {"http": "gateway", "gateway_url": "http://gateway:8090"}}
     ctx = ctx_for(plan)
     detail = org.http_tool_call(compiled("a014", spec), ctx)
@@ -760,12 +760,12 @@ FORBIDDEN_SYMBOLS = re.compile(
     re.IGNORECASE)
 
 
-def exerciser_sources():
-    return sorted((ROOT / "exerciser").glob("*.py"))
+def mock_harness_sources():
+    return sorted((ROOT / "mock_harness").glob("*.py"))
 
 
 def test_no_inspection_layer_imports():
-    for path in exerciser_sources():
+    for path in mock_harness_sources():
         tree = ast.parse(path.read_text())
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
@@ -779,9 +779,9 @@ def test_no_inspection_layer_imports():
 
 
 def test_no_classification_or_enforcement_symbols():
-    """No function/class in the exerciser package classifies, permits,
+    """No function/class in the mock harness package classifies, permits,
     denies, or otherwise evaluates actions — it only performs them."""
-    for path in exerciser_sources():
+    for path in mock_harness_sources():
         tree = ast.parse(path.read_text())
         for node in ast.walk(tree):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
@@ -864,11 +864,11 @@ def test_cli_main(monkeypatch, tmp_path):
     assert (tmp_path / "run-manifest.json").is_file()
     run_manifest = json.loads((tmp_path / "run-manifest.json").read_text())
     assert run_manifest["summary"]["executed"] == 8
-    assert run_manifest["exerciser"]["git"]["available"] in (True, False)
+    assert run_manifest["mock_harness"]["git"]["available"] in (True, False)
 
 
 def test_cli_bad_plan_exits_two(monkeypatch, tmp_path):
     install_fake(monkeypatch, FakeSyscalls())
     bad_plan = tmp_path / "bad-plan.yaml"
-    bad_plan.write_text("schema: exerciser-plan/9\n")
+    bad_plan.write_text("schema: mock-harness-plan/9\n")
     assert drv.main(["--out", str(tmp_path), "--plan", str(bad_plan)]) == 2

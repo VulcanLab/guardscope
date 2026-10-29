@@ -205,7 +205,7 @@ def test_c6_window_scoping(tmp_path):
 
 def test_c6_effect_classes_use_the_manifest_signatures(tmp_path):
     # per-action classes (exact target match): file_write, credential, and
-    # the direct-network ports derive from the exerciser manifest + spec
+    # the direct-network ports derive from the mock harness manifest + spec
     write_mapped(tmp_path, [
         # a041's write effect present (deny ineffective)
         mapped("file_write", "security_file_open", WINDOW[0] + 100,

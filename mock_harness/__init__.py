@@ -1,4 +1,4 @@
-"""Path-originator exerciser (v1): a policy-blind instrument that
+"""Path-originator mock harness (v1): a policy-blind instrument that
 deterministically performs the canonical 15-action surface directly at the
 OS level, from inside the harness trust domain.
 
@@ -21,11 +21,11 @@ Layout:
   driver.py                   CLI: reads the trace, runs the originators, writes the logs
 """
 
-EXERCISER_VERSION = "exerciser@1"
-PATH_MANIFEST_SCHEMA = "exerciser-path-manifest/1"
-ACTION_RECORD_SCHEMA = "exerciser-action-record/1"
-RUN_MANIFEST_SCHEMA = "exerciser-run-manifest/1"
-PLAN_SCHEMA = "exerciser-plan/1"
+MOCK_HARNESS_VERSION = "mock-harness@1"
+PATH_MANIFEST_SCHEMA = "mock-harness-path-manifest/1"
+ACTION_RECORD_SCHEMA = "mock-harness-action-record/1"
+RUN_MANIFEST_SCHEMA = "mock-harness-run-manifest/1"
+PLAN_SCHEMA = "mock-harness-plan/1"
 
 # The five escape-path categories the instrument exercises (manifest.yaml
 # `escape_paths` is the authoritative declaration; this is the code-side list

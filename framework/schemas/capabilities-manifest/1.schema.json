@@ -111,7 +111,7 @@
       "items": {"type": "string", "minLength": 1}
     },
     "notes": {
-      "$comment": "Free-text factual notes (e.g. the exerciser's reduced contract form, DESIGN.md 3).",
+      "$comment": "Free-text factual notes (e.g. the mock harness's reduced contract form, DESIGN.md 3).",
       "type": "string"
     }
   }

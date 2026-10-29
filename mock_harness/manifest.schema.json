@@ -1,13 +1,13 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://agentic-security/inspection/exerciser/manifest.schema.json",
-  "title": "Exerciser path manifest",
-  "description": "Pinned declaration of the 15 canonical action paths the exerciser originates: class, operation, origin channel, expected kernel-visible signature, expected inspection points per design, and the attribution rule for deferred/async instances. Written as an independent declaration (based on the sensor mapping rules' observable attributes, but not imported from the mapper). The driver cross-checks it against the canonical trace spec (ids/classes/ops) and refuses to run on drift; the manifest never feeds the action execution list.",
+  "$id": "https://agentic-security/inspection/mock-harness/manifest.schema.json",
+  "title": "Mock harness path manifest",
+  "description": "Pinned declaration of the 15 canonical action paths the mock harness originates: class, operation, origin channel, expected kernel-visible signature, expected inspection points per design, and the attribution rule for deferred/async instances. Written as an independent declaration (based on the sensor mapping rules' observable attributes, but not imported from the mapper). The driver cross-checks it against the canonical trace spec (ids/classes/ops) and refuses to run on drift; the manifest never feeds the action execution list.",
   "type": "object",
   "required": ["schema", "version", "description", "escape_paths", "trace", "placement", "variants", "paths"],
   "additionalProperties": false,
   "properties": {
-    "schema": {"const": "exerciser-path-manifest/1"},
+    "schema": {"const": "mock-harness-path-manifest/1"},
     "version": {"type": "integer", "minimum": 1},
     "description": {"type": "string"},
     "trace": {
@@ -36,7 +36,7 @@
       "required": ["originator", "record_field", "placement_attach_point"],
       "additionalProperties": false,
       "properties": {
-        "originator": {"const": "exerciser"},
+        "originator": {"const": "mock-harness"},
         "record_field": {"type": "string"},
         "placement_attach_point": {"type": "string"}
       }

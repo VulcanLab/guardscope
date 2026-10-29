@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "id": "exerciser",
+  "id": "mock-harness",
   "version": "1",
   "kind": "harness-adapter",
   "positions": [
@@ -23,5 +23,5 @@
     "echoes_header": false
   },
   "supported_designs": ["t0", "t1", "t2", "t3", "t4", "t5", "t6", "t7"],
-  "notes": "Reduced form of the harness adapter contract (DESIGN.md 3): describe/inject plus dispatch records only. The exerciser is a path-originator fixture on the workload side, never an evaluated component and never a row or column of the grid; it hosts no enforcement points."
+  "notes": "Reduced form of the harness adapter contract (DESIGN.md 3): describe/inject plus dispatch records only. The mock harness is a path-originator fixture on the workload side, never an evaluated component and never a row or column of the grid; it hosts no enforcement points."
 }

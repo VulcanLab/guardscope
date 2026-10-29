@@ -1,12 +1,12 @@
 """Trace-spec loading, verification, and compiled-plan derivation (v1).
 
-Read-only reuse of the canonical trace tooling (the exerciser must not
+Read-only reuse of the canonical trace tooling (the mock harness must not
 re-encode the action list in a parallel file):
 
   - trace/schema/trace.schema.json validates the spec
   - trace/hash_spec.py provides the canonical/raw SHA-256 (sidecar pin)
   - trace/compile/pi/compile.py derives the per-action execution plan, so
-    the exerciser's argv/url/path shapes are byte-identical to the harness
+    the mock harness's argv/url/path shapes are byte-identical to the harness
     replay's compiled plan for the same spec
 
 Nothing here writes to trace/ and nothing here imports the inspection layer
@@ -76,7 +76,7 @@ def verify_sidecar(path: Path) -> bool | None:
 
 def load_pi_compile():
     """Import trace/compile/pi/compile.py under a private module name."""
-    spec = importlib.util.spec_from_file_location("inspection_exerciser_pi_compile", PI_COMPILE_PATH)
+    spec = importlib.util.spec_from_file_location("inspection_mock_harness_pi_compile", PI_COMPILE_PATH)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
@@ -85,7 +85,7 @@ def load_pi_compile():
 def compile_action(action: dict) -> dict:
     """Canonical action -> the harness replay's execution plan for it.
 
-    Same compiler the pi replay adapter consumes: the exerciser's spawn
+    Same compiler the pi replay adapter consumes: the mock harness's spawn
     argv, http url/method/body, network host/port/payload, file path/data,
     and credential path are byte-identical to the harness replay's.
     """

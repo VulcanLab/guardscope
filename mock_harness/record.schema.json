@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://agentic-security/inspection/exerciser/record.schema.json",
-  "title": "Exerciser action record / run manifest",
-  "description": "Schemas for the two artifacts each run writes: one action-log record per executed action (action-log.jsonl) and the run manifest (run-manifest.json). Records deliberately carry NO classification/outcome field (caught/bypassed/allowed/denied/inspected): the exerciser is policy-blind and never self-reports whether an action was caught; classification happens only in the reconcile step against Tracee. Timing fields (started/ended_epoch_ns) and process-identity fields (pid, *_pid) are excluded from the run's action-log digest so two runs with the same config produce identical digests.",
+  "$id": "https://agentic-security/inspection/mock-harness/record.schema.json",
+  "title": "Mock harness action record / run manifest",
+  "description": "Schemas for the two artifacts each run writes: one action-log record per executed action (action-log.jsonl) and the run manifest (run-manifest.json). Records deliberately carry NO classification/outcome field (caught/bypassed/allowed/denied/inspected): the mock harness is policy-blind and never self-reports whether an action was caught; classification happens only in the reconcile step against Tracee. Timing fields (started/ended_epoch_ns) and process-identity fields (pid, *_pid) are excluded from the run's action-log digest so two runs with the same config produce identical digests.",
   "$ref": "#/$defs/action_record",
   "$defs": {
     "action_record": {
@@ -27,7 +27,7 @@
       "additionalProperties": false,
       "properties": {
         "schema": {
-          "const": "exerciser-action-record/1"
+          "const": "mock-harness-action-record/1"
         },
         "run_id": {
           "type": "string",
@@ -96,19 +96,19 @@
           "minimum": 0
         },
         "provenance": {
-          "const": "exerciser",
-          "description": "Every record identifies its originator as the exerciser. Placement is attached per RUN (run manifest placement field), not per record; records reference it via run_id."
+          "const": "mock-harness",
+          "description": "Every record identifies its originator as the mock harness. Placement is attached per RUN (run manifest placement field), not per record; records reference it via run_id."
         },
         "originator": {
           "type": "object",
           "required": [
-            "exerciser_version",
+            "mock_harness_version",
             "function",
             "action_index"
           ],
           "additionalProperties": false,
           "properties": {
-            "exerciser_version": {
+            "mock_harness_version": {
               "type": "string",
               "minLength": 1
             },
@@ -139,7 +139,7 @@
         "schema",
         "run_id",
         "created",
-        "exerciser",
+        "mock_harness",
         "trace",
         "path_manifest",
         "plan",
@@ -153,7 +153,7 @@
       "additionalProperties": false,
       "properties": {
         "schema": {
-          "const": "exerciser-run-manifest/1"
+          "const": "mock-harness-run-manifest/1"
         },
         "run_id": {
           "type": "string",
@@ -163,7 +163,7 @@
           "type": "string",
           "minLength": 1
         },
-        "exerciser": {
+        "mock_harness": {
           "type": "object",
           "required": [
             "version",

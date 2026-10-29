@@ -166,10 +166,10 @@ def _load_capabilities(plugin_id: str) -> dict | None:
 # derived; summary rows and aggregate badges take the worst contributing
 # class". Worst-first ranking of the evidence classes (DESIGN.md 9): derived
 # (a claim-based recomputation with no kernel corroboration) is weakest, then
-# self-reported (the degraded mode), then exerciser-run, then harness-run.
+# self-reported (the degraded mode), then mock-run, then harness-run.
 # An unknown class ranks worst (conservative: never upgrade what is not
 # understood).
-EVIDENCE_CLASS_WORST_FIRST = ("derived", "self-reported", "exerciser-run",
+EVIDENCE_CLASS_WORST_FIRST = ("derived", "self-reported", "mock-run",
                               "harness-run")
 
 

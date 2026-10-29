@@ -1,28 +1,28 @@
-# Path-originator manifest (exerciser v1, pinned).
+# Path-originator manifest (mock harness v1, pinned).
 #
-# The FIRST artifact of the exerciser: an independent, data-only declaration
+# The FIRST artifact of the mock harness: an independent, data-only declaration
 # of the 15 canonical action paths the instrument originates, one per action
 # in trace/traces/baseline.yaml. For each path: class, operation, origin
 # channel, the expected kernel-visible signature (syscall names + key
 # attributes, based on the observable attributes the sensor mapping layer
-# classifies on, but declared here independently — the exerciser never
+# classifies on, but declared here independently — the mock harness never
 # imports from the mapper), the expected inspection points per design
 # (T0-T6), and the attribution rule for deferred/async instances (daemon
 # submission, outliving processes).
 #
-# The manifest is hash-pinned like the canonical trace (exerciser/
+# The manifest is hash-pinned like the canonical trace (mock_harness/
 # manifest.yaml.sha256, canonical form over normalized YAML via trace/
 # hash_spec.py). The DRIVER cross-checks it against the trace spec (ids,
 # classes, ops must match 1:1) and refuses to run on drift; the manifest
 # itself never feeds the action execution list — the spec is the single
 # source of truth for what runs, in what order, with which arguments.
-schema: exerciser-path-manifest/1
+schema: mock-harness-path-manifest/1
 version: 1
 description: >-
   Path-originator fixture declaration: each of the 15 canonical actions,
-  the OS-level channel the exerciser originates it through, what the kernel
+  the OS-level channel the mock harness originates it through, what the kernel
   is expected to observe, which enforcement points each design would (not)
-  see it at, and how deferred instances are attributed. The exerciser is
+  see it at, and how deferred instances are attributed. The mock harness is
   policy-blind: these are expectations to reconcile against Tracee AFTER
   the fact, never conditions checked before or during execution.
 
@@ -37,7 +37,7 @@ trace:
     against the spec at driver start and must match exactly.
 
 placement:
-  # The exerciser is designed to run from inside the harness trust domain
+  # The mock harness is designed to run from inside the harness trust domain
   # (same container/netns/UID as the harness process). The wrapper that
   # places it there is a later concern; each run's descriptor is attached
   # per run (driver --placement, recorded in the run manifest).
@@ -47,14 +47,14 @@ placement:
   note: >-
     v1 records a placeholder; the placement wrapper attaches the concrete
     descriptor per run via `driver --placement <json>` and it lands in the
-    run manifest's placement field. Records carry `provenance: exerciser`
+    run manifest's placement field. Records carry `provenance: mock-harness`
     plus run_id; placement lives per RUN, not per record.
 
 provenance:
-  originator: exerciser
+  originator: mock-harness
   record_field: >-
-    every action-log record carries provenance: "exerciser" plus
-    run_id and an originator block (exerciser version, origin function,
+    every action-log record carries provenance: "mock-harness" plus
+    run_id and an originator block (mock harness version, origin function,
     action index).
   placement_attach_point: run-manifest.json / placement
 
@@ -93,7 +93,7 @@ escape_paths:
       point to observe (the ordinary spawn variant and the MCP stdio twin
       both read child output this way).
 
-# Origin-variant catalog. The plan (exerciser/plan-schema.json) selects one
+# Origin-variant catalog. The plan (mock_harness/plan-schema.json) selects one
 # per action; process_spawn is the only class with more than one variant.
 variants:
   - name: default
@@ -150,13 +150,13 @@ paths:
     origin_channel: mcp-stdio-child-pipe
     origin_channel_detail: >-
       one MCP stdio session per run (python3 -u .../mcp-stdio/server.py as
-      an exerciser child): initialize + notifications/initialized, then
+      a mock-harness child): initialize + notifications/initialized, then
       NDJSON JSON-RPC tools/call {write_file, {path, data}} on the child's
       stdin pipe, response read from its stdout pipe.
     kernel_signature:
       syscalls: [execve, security_file_open, write]
       attributes:
-        server_execve: {pathname: python3 (PATH-resolved, like the harness's node spawn), argv_marker: mcp-stdio/server.py, from: exerciser process, note: "also maps as process_spawn — an expected extra attributed to the run, not a canonical action; it also registers the server process for the stdio write rule"}
+        server_execve: {pathname: python3 (PATH-resolved, like the harness's node spawn), argv_marker: mcp-stdio/server.py, from: mock-harness process, note: "also maps as process_spawn — an expected extra attributed to the run, not a canonical action; it also registers the server process for the stdio write rule"}
         tool_effect_open: {path: /workspace/out/a.txt, flags: O_WRONLY|O_CREAT|O_TRUNC, from: server child process, note: "maps as file_write — the documented expected extra attributed to a001"}
         response_write: {fd: 1, from: server child process, note: "maps as stdio_tool_call; the initialize handshake response is the documented +1 multiplicity"}
     expected_multiplicity:
@@ -167,7 +167,7 @@ paths:
       t1: {disposition: bypassed, note: "T1 inspects only the http transport; the fs stdio transport stays outside the gateway"}
       t2: {disposition: bypassed, note: "same as T1 (egress affects only direct network)"}
       t3: {disposition: bypassed, note: "FIDELITY LIMITATION: the design inspects fs calls by routing them through the gateway (GATEWAY_FS); the twin keeps the T0 stdio child transport and never touches the gateway — see notes"}
-      t4: {disposition: bypassed, note: "the enforcement point is INSIDE the harness process; the exerciser is a separate process in the trust domain, so its calls cannot cross it — see notes"}
+      t4: {disposition: bypassed, note: "the enforcement point is INSIDE the harness process; the mock harness is a separate process in the trust domain, so its calls cannot cross it — see notes"}
       t5: {disposition: bypassed, note: "same placement limitation as t4 (the harness chain is in-process; the fs tools are not gateway-routed in t5)"}
       t6: {disposition: bypassed, note: "same placement limitation as t4/t5"}
     variants: [default]
@@ -182,9 +182,9 @@ paths:
       Twin fidelity: reproduces the harness's OWN T0-T2 transport for this
       class (McpSession parity — initialize, notifications/initialized,
       tools/call; protocolVersion 2025-06-18; clientInfo
-      inspection-exerciser). In t3+ the harness itself routes fs tools
+      inspection-mock-harness). In t3+ the harness itself routes fs tools
       differently (t3: gateway over HTTP; t4-t6: the harness MCP pipeline),
-      and the exerciser cannot cross those points from a foreign process;
+      and the mock harness cannot cross those points from a foreign process;
       the twin keeps the stdio child shape so the kernel signature stays
       the T0 one. The server response is consumed over the pipe
       (dispatch-free output consumption), mirroring the harness.
@@ -264,14 +264,14 @@ paths:
       syscalls: [connect]
       attributes:
         raw: {dst_host: http-endpoint, dst_port: 8080, one_connect_per_request: true, note: "python client opens one connect per request (no pooling): stays inside the profile envelope [1..n]"}
-        gateway: {dst_host: gateway, dst_port: 8090, note: "the harness's own inspected connect under T1+ (mapping v6); the upstream 8080 connect then originates in the mcp-http container, outside the exerciser scope"}
+        gateway: {dst_host: gateway, dst_port: 8090, note: "the harness's own inspected connect under T1+ (mapping v6); the upstream 8080 connect then originates in the mcp-http container, outside the mock-harness scope"}
     inspection_expectation:
       t0: {disposition: none, note: "no enforcement point in T0 (raw route)"}
-      t1: {disposition: checked, via: "gateway route (plan routes.http=gateway)", note: "the gateway is network-level: any process in the harness netns that POSTs tools/call crosses it, including the exerciser"}
+      t1: {disposition: checked, via: "gateway route (plan routes.http=gateway)", note: "the gateway is network-level: any process in the harness netns that POSTs tools/call crosses it, including the mock harness"}
       t2: {disposition: checked, via: "gateway route", note: "same as T1; egress allows gateway:8090"}
       t3: {disposition: checked, via: "gateway route", note: "same as T1"}
-      t4: {disposition: bypassed, note: "the design's point is IN the harness process; the exerciser cannot cross it. The raw route is also uninspected (no gateway in T4)"}
-      t5: {disposition: checked, via: "gateway route", note: "the gateway is the second, process-external point (the harness chain is not crossed — the seam limitation, from the exerciser side)"}
+      t4: {disposition: bypassed, note: "the design's point is IN the harness process; the mock harness cannot cross it. The raw route is also uninspected (no gateway in T4)"}
+      t5: {disposition: checked, via: "gateway route", note: "the gateway is the second, process-external point (the harness chain is not crossed — the seam limitation, from the mock-harness side)"}
       t6: {disposition: bypassed, note: "same placement limitation as t4"}
     variants: [default]
     escape_categories: []
@@ -373,10 +373,10 @@ paths:
       deferred: false
     notes: >-
       Same raw-route client fidelity limitation as a011. The twin executes
-      the FULL action unconditionally (policy-blind): no exerciser code
+      the FULL action unconditionally (policy-blind): no mock-harness code
       knows about the T6 deny rule; whether an instance is denied is a
       reconciliation-time fact about the DESIGN's enforcement point, never
-      about the exerciser.
+      about the mock harness.
 
   # --- direct_network: raw sockets to the net-peer target (unwatched
   # channels). Same target host/port as the canonical trace.
@@ -408,10 +408,10 @@ paths:
       rule: synchronous — connect event with dst_port 9000 within the record window, 1:1 with the record.
       deferred: false
     notes: >-
-      The exerciser performs the attempt unconditionally: under T2/T3 the
+      The mock harness performs the attempt unconditionally: under T2/T3 the
       originator records the refusal (ECONNREFUSED) as an error status and
       the attempt is still the kernel evidence; refusal-vs-success is a
-      design outcome, never exerciser logic.
+      design outcome, never mock-harness logic.
 
   - id: a022
     class: direct_network
@@ -492,7 +492,7 @@ paths:
       The spawn argv is derived by the same compiler the harness replay
       uses (trace/compile/pi/compile.py), so pathname/argv are byte-identical
       to the harness action. Variant selection is plan data
-      (exerciser/plan-schema.json); the driver joins outstanding children
+      (mock_harness/plan-schema.json); the driver joins outstanding children
       before process exit (bounded) so no process outlives the RUN in v1 —
       the outliving property is relative to the ACTION RECORD, which is what
       record-scoped attribution keys on.

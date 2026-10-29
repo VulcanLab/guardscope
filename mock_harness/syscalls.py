@@ -1,4 +1,4 @@
-"""Thin syscall layer for the exerciser originators.
+"""Thin syscall layer for the mock harness originators.
 
 Every OS effect the originators produce goes through this module (no other
 module in the package touches os/socket for effects), for two reasons:

@@ -1,6 +1,6 @@
 """C6: denial effectiveness (DESIGN.md 9, "Denial effectiveness: `prevented`
 = deny record + verified absence of the action's kernel signature; the
-expected per-class kernel signature is derived from exerciser baseline
+expected per-class kernel signature is derived from mock harness baseline
 runs").
 
 C6 turns every DENY decision record (native or v0-mapped) into a verifiable
@@ -20,8 +20,8 @@ the run must NOT contain the action's expected signature. Three outcomes:
                        noise-colliding reads) — recorded with a note, never
                        silently confirmed and never a finding
 
-The expected signatures are derived from the hash-pinned exerciser path
-manifest (exerciser/manifest.yaml, DESIGN.md 8: "a hash-pinned path manifest
+The expected signatures are derived from the hash-pinned mock harness path
+manifest (mock_harness/manifest.yaml, DESIGN.md 8: "a hash-pinned path manifest
 (all 15 paths with class, operation, origin channel, expected kernel-visible
 signature, ...)"), read-only here, cross-referenced with the canonical
 trace spec for the per-action target identity. The kernel evidence is the
@@ -78,7 +78,7 @@ from framework.reconcile import (  # noqa: E402
 C6_ID = "C6"
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-EXERCISER_MANIFEST = REPO_ROOT / "exerciser" / "manifest.yaml"
+MOCK_HARNESS_MANIFEST = REPO_ROOT / "mock_harness" / "manifest.yaml"
 BASELINE_SPEC = REPO_ROOT / "trace" / "traces" / "baseline.yaml"
 
 # The gateway's fs tools (T3+; framework/records.py V0_FS_TOOLS) — the stdio
@@ -90,14 +90,14 @@ V0_FS_TOOLS = ("write_file", "read_file", "list_directory")
 _WRITE_FLAG_TOKENS = ("O_WRONLY", "O_RDWR")
 
 
-# --- the pinned expected signatures (exerciser manifest, DESIGN.md 8) ------------
+# --- the pinned expected signatures (mock harness manifest, DESIGN.md 8) ------------
 
 
 @lru_cache(maxsize=1)
 def _manifest_paths() -> dict:
-    """The exerciser path manifest's `paths` list, by action id (read-only;
+    """The mock harness path manifest's `paths` list, by action id (read-only;
     the manifest is hash-pinned and never written here)."""
-    doc = yaml.safe_load(EXERCISER_MANIFEST.read_text(encoding="utf-8"))
+    doc = yaml.safe_load(MOCK_HARNESS_MANIFEST.read_text(encoding="utf-8"))
     return {p["id"]: p for p in doc.get("paths") or []}
 
 
@@ -135,7 +135,7 @@ def _write_mode(flags) -> bool:
 def expected_effect_signature(action: dict) -> dict:
     """The per-action kernel EFFECT signature: the mapped kernel records the
     action would produce if it took effect (the "action would have produced
-    X" premise of the absence verification). Derived from the exerciser
+    X" premise of the absence verification). Derived from the mock harness
     manifest's per-path kernel_signature + the spec's target identity.
 
     Returns {"class", "predicates": [...], "note": str | None}: each
@@ -200,7 +200,7 @@ def expected_effect_signature(action: dict) -> dict:
 
     return {"class": cls, "predicates": [],
             "note": f"class {cls!r} has no expected signature in the "
-                    f"exerciser manifest"}
+                    f"mock harness manifest"}
 
 
 def _record_matches(rec: dict, pred: dict) -> bool:

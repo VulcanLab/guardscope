@@ -23,13 +23,15 @@ The rule: **plugins are everything the framework measures or exercises; the core
 | Core science | designs T0-T7 + path taxonomy; fixtures (declarative data + bounded hooks); classification semantics (`checked`/`bypassed`/`prevented`); evidence classes; reconciliation engine (C1-C6); badge criteria; selection-rule protocol; conformance suites (golden fixtures); decision log | Not registrable; changed only by a major release (one that changes measurement semantics); grids citable under the design set used |
 | Instrument | kernel sensor (Tracee today) behind a versioned instrument interface | Exactly one approved sensor per release line; it cannot be registered and cannot be chosen in the experiment file; a new candidate is admitted by running it alongside the current sensor on calibration workloads, plus an equivalence study, in a major release |
 | Plugin: control | native controls; shims (`record_source: ingested` + mandatory `raw_ref`); eBPF-enforcing controls (mandatory kernel-interference declaration + pre/post-provision sensor checks); harness-embedded controls (separate registration, `embedded` deploy slot) | Registry, id@digest pin, L1/L2 conformance |
-| Plugin: harness adapter | real harness adapters; the exerciser (reduced form, plus a parity check against a real adapter) | Same |
+| Plugin: harness adapter | real harness adapters; the mock harness (reduced form, plus a parity check against a real adapter) | Same |
 | Plugin: workload | baseline-15 (reference, pinned per major release); adversarial packs; LLM-generated packs (provenance + exploratory flag) | Content-addressed; distinct typed contract (see §8) |
 | Plugin: renderer | report renderers consuming the standard grid export | Open registry; may not recompute coverage or define badge meanings |
 | Plugin-owned data | reconciliation profiles: declarative matchers shipped with the control/shim; golden-set conformance (loose matchers cannot inflate `checked`); migrate core-resident profiles out over two release lines | Validated in conformance |
 | Custom fixtures | experimenter-authored wiring; `off_matrix` flagged | Declared in experiment file; registry-tracked for recurrence; promotion via design RFC only |
 | Registry | manifest index; version-keyed expiring verdicts; per-product capability facts; candidate-design queue | Two tiers: curated (CI re-verified, eligible for the main grid, small, funded) + open (self-attested, labeled) |
 | Experiment file | the four user fields (§6); plugin pins; design references; embeds design-set, contract, and sensor versions | Authored by experimenter; recorded per run |
+
+The mock harness is a policy-blind stand-in that performs the canonical actions directly, for exposure measurements the real harnesses cannot reach; a mock, never a measured subject.
 
 **Sensor exception.** The kernel sensor is not a plugin. It is runner-managed, exactly one per run, one clock source. There is exactly one sensor per run. The runner enforces this (the sensor starts first; it cannot be set from the experiment file) and checks it by behavior (its health report is a required run input; it is re-checked after control provisioning, because a kernel-level control can interfere with or tamper with it; a failed sensor check invalidates the run). The sensor is kept out of every plugin contract, so no plugin can change it. A new sensor (e.g. Falco) must be cross-validated against the current one on calibration workloads, plus a ground-truth equivalence study, and is added in a major release; it is never a plugin registration.
 
@@ -73,7 +75,7 @@ The reconciler enforces the limit: ingested records can support `bypassed` (kern
 | `collect()` | Dispatch-record flush |
 | `teardown()` | State isolation between grid cells; permission state must not leak |
 
-Harness-native enforcement (T4/T6) emits decision records in the main schema with the harness as the `enforcement_point`. Dispatch records use the sibling schema `dispatch-record/1` sharing the identity fields; this shared identity closes the attribution gap between the two record streams (which otherwise share no id). **The exerciser formally implements this contract in reduced form** (`describe` / `inject` / dispatch records), so exerciser-derived cells are treated the same as harness cells and the dispatch tooling is shared. The exerciser is never called a harness: it is a path-originator fixture, an instrument on the workload side, never an evaluated component and never a row or column of the grid. It only adds provenance labels to cells.
+Harness-native enforcement (T4/T6) emits decision records in the main schema with the harness as the `enforcement_point`. Dispatch records use the sibling schema `dispatch-record/1` sharing the identity fields; this shared identity closes the attribution gap between the two record streams (which otherwise share no id). **The mock harness formally implements this contract in reduced form** (`describe` / `inject` / dispatch records), so mock-harness-derived cells are treated the same as harness cells and the dispatch tooling is shared. The mock harness is never called a harness: it is a path-originator fixture, an instrument on the workload side, never an evaluated component and never a row or column of the grid. It only adds provenance labels to cells.
 
 Determinism is a set of contract clauses (replay only, no LLM, pinned loopback targets, fixed argv/paths, declared timeouts), verified by pinned hashes in the run manifest, not a separate receipt artifact.
 
@@ -258,23 +260,23 @@ Workload packs are registered and versioned like plugins, but follow their own s
 | Generation provenance | For generated packs: model + prompt pinned; exploratory until replay-conformance passes |
 | Minimum kernel-signature requirements | What the sensor must be able to see for the pack to be reconcilable |
 
-`baseline-15` is the default pack and the reference workload, pinned per science release. The exerciser is the reference path-originator: a hash-pinned path manifest (all 15 paths with class, operation, origin channel, expected kernel-visible signature, expected inspection points per design, attribution rules for deferred/async instances), a policy-blind originator library (one deterministic primitive per action, syscall-level for the bypass classes, plus an inspected twin per bypass path as negative control; no code shared with the inspection layer or the mapper), and a thin deterministic driver reading the canonical trace from the shared package (one definition used by both replay injection and the exerciser, so the two cannot drift apart). The driver executes the full action surface unconditionally and never knows which paths are expected to bypass; classification comes only from reconciliation.
+`baseline-15` is the default pack and the reference workload, pinned per science release. The mock harness is the reference path-originator: a hash-pinned path manifest (all 15 paths with class, operation, origin channel, expected kernel-visible signature, expected inspection points per design, attribution rules for deferred/async instances), a policy-blind originator library (one deterministic primitive per action, syscall-level for the bypass classes, plus an inspected twin per bypass path as negative control; no code shared with the inspection layer or the mapper), and a thin deterministic driver reading the canonical trace from the shared package (one definition used by both replay injection and the mock harness, so the two cannot drift apart). The driver executes the full action surface unconditionally and never knows which paths are expected to bypass; classification comes only from reconciliation.
 
-**Exerciser placement modes** (configuration of the same code, not separate codebases):
+**Mock harness placement modes** (configuration of the same code, not separate codebases):
 
 - **Mode H (hosted, preferred):** call the originator library from inside the real harness's extension mechanism. Strongest placement: the control being escaped is the real permission chain.
 - **Mode C (co-resident, default for exposure cells):** the driver runs as a second process in the harness's compose service while the real harness replays its inspected actions with the design's controls active. The originators must be policy-blind; the run must have the control present and active. No meaningless cells (a cell measured with no control running).
 - **Mode R (standalone):** driver alone, for the T0 reference row and the T7 observation row; later the base for LLM path discovery.
 
-**Evidence gates** (all mandatory before exerciser-derived bypass cells are citable):
+**Evidence gates** (all mandatory before mock-harness-derived bypass cells are citable):
 
-1. Reanalysis of existing traces first; reconcile and attribution rules fixed on real-harness data before any exerciser cell is recorded.
-2. T0 calibration diff: exerciser kernel signatures indistinguishable from real-harness captures for inspected paths; bypass paths validated against manifest signatures.
+1. Reanalysis of existing traces first; reconcile and attribution rules fixed on real-harness data before any mock-harness cell is recorded.
+2. T0 calibration diff: mock-harness kernel signatures indistinguishable from real-harness captures for inspected paths; bypass paths validated against manifest signatures.
 3. Inspected-twin check per design: the twin must classify as `checked` under that design before that design's bypass rows are recorded.
 4. Capability/placement diff documented per run (exposure claims depend on the privileges of the process).
 5. Tracee integrity check on the target kernel before the T7 row.
 
-Hard properties: per-process determinism with interleaving-independent classification; digest pinning; trust-domain placement documented per run; independence (no self-reporting; Tracee is the sole ground truth); policy-blind originators; never a row or column of the grid; only per-cell provenance labels. Exposure (a path exists and escapes) is a property of the topology: any policy-blind originator inside the trust domain can prove it, if the kernel confirms the action executed. Inhabitation (real agents take the path) is a property of real agents: only real-harness runs can show it. Exerciser cells assert "the path exists and escapes this topology, kernel-confirmed; no agent in the loop." v1 exclusions: no OpenClaw host mode (the hook-API blockage must not drive the design; revisit opportunistically via a harness-spawned MCP server), and no overhead or performance claims from the instrument. Exerciser provenance (origin, placement, digests) is stored in a per-record field; the only other pipeline change is capture-window and attribution support for async paths (daemon submission, outliving processes) with ancestry-based attribution.
+Hard properties: per-process determinism with interleaving-independent classification; digest pinning; trust-domain placement documented per run; independence (no self-reporting; Tracee is the sole ground truth); policy-blind originators; never a row or column of the grid; only per-cell provenance labels. Exposure (a path exists and escapes) is a property of the topology: any policy-blind originator inside the trust domain can prove it, if the kernel confirms the action executed. Inhabitation (real agents take the path) is a property of real agents: only real-harness runs can show it. Mock-harness cells assert "the path exists and escapes this topology, kernel-confirmed; no agent in the loop." v1 exclusions: no OpenClaw host mode (the hook-API blockage must not drive the design; revisit opportunistically via a harness-spawned MCP server), and no overhead or performance claims from the instrument. Mock-harness provenance (origin, placement, digests) is stored in a per-record field; the only other pipeline change is capture-window and attribution support for async paths (daemon submission, outliving processes) with ancestry-based attribution.
 
 **Anti-overfitting rule:** primary published claims require at least one non-baseline pack; grid cells record which pack produced them; generated packs stay exploratory until replay-conformance passes; a leak check ships in conformance.
 
@@ -293,7 +295,7 @@ Hard properties: per-process determinism with interleaving-independent classific
 | C3 | Per-point 1:1 accounting (no missing, duplicated, or unmatched decisions within a stream) |
 | C4 | No inspected-class leakage (unmatched kernel events in inspected classes are findings, not noise) |
 | C5 | Id consistency: echoed ids match the carriers the harness dispatched; fabrication, duplication, and stripping are detected |
-| C6 | Denial effectiveness: `prevented` = deny record + verified absence of the action's kernel signature; the expected per-class kernel signature is derived from exerciser baseline runs |
+| C6 | Denial effectiveness: `prevented` = deny record + verified absence of the action's kernel signature; the expected per-class kernel signature is derived from mock-harness baseline runs |
 
 **Proxy-egress attribution rule:** a gateway proxying a tool call performs the `connect()` itself; kernel events from control processes must be attributed to the inspected action via slot cgroup scope, not to the direct-network escape class, or inspected designs accumulate false bypasses.
 
@@ -301,10 +303,10 @@ Hard properties: per-process determinism with interleaving-independent classific
 
 - `outcome: checked | prevented | bypassed | enforcement_failure | not_observed` (reconciler-only).
 - `claimed[]` (decision records + attribution methods) and `verified` (kernel match) as **separate, never-merged structures**.
-- `attribution_method`; `evidence class: harness-run | exerciser-run | self-reported | derived`; `degraded: [reasons]`; structured C1-C6 findings.
+- `attribution_method`; `evidence class: harness-run | mock-run | self-reported | derived`; `degraded: [reasons]`; structured C1-C6 findings.
 - Per-run leakage counters: unmatched kernel events, unmatched decisions, unmatched expected actions; organic-traffic volume per stream.
 
-The primary reported numbers come from verified results only. Harness-run and exerciser-run cells are reported separately, never aggregated. Stated limit: `prevented` is the only fully kernel-verifiable outcome (deny record + verified absence of the action's kernel signature); `checked` confidence is limited by conformance, determinism, and record plausibility: a fabricated allow-record for an action that did occur passes both the id check and the kernel-presence check.
+The primary reported numbers come from verified results only. Harness-run and mock-run cells are reported separately, never aggregated. Stated limit: `prevented` is the only fully kernel-verifiable outcome (deny record + verified absence of the action's kernel signature); `checked` confidence is limited by conformance, determinism, and record plausibility: a fabricated allow-record for an action that did occur passes both the id check and the kernel-presence check.
 
 **Degraded no-eBPF mode** (the default path for users without kernel privileges, the main obstacle for new users): every output it produces is labeled `self-reported` / unverified. The claimed-vs-verified distinction is preserved even without the sensor.
 
@@ -362,18 +364,18 @@ Three strict layers:
 
 | Milestone | Contents |
 |---|---|
-| M1 | The two contracts (`control`, `harness`); both record schemas (`decision-record/1`, `dispatch-record/1`); the experiment-file runner with load-time validation; the C1-C4 reconcile library; the exerciser and the AGT gateway as the first two control-side plugins (the pi and OpenClaw adapters are equally in scope as the reference harness plugins); the v0 AuditEntry reader mapping |
-| M2 | Fidelity check; C5/C6 (id consistency, denial effectiveness via exerciser-derived kernel signatures); `report --merge` with the comparability key; the registry (two tiers, expiring verdicts); the conformance kit (L1/L2); the degraded no-eBPF mode, labeled self-reported |
+| M1 | The two contracts (`control`, `harness`); both record schemas (`decision-record/1`, `dispatch-record/1`); the experiment-file runner with load-time validation; the C1-C4 reconcile library; the mock harness and the AGT gateway as the first two control-side plugins (the pi and OpenClaw adapters are equally in scope as the reference harness plugins); the v0 AuditEntry reader mapping |
+| M2 | Fidelity check; C5/C6 (id consistency, denial effectiveness via mock-harness-derived kernel signatures); `report --merge` with the comparability key; the registry (two tiers, expiring verdicts); the conformance kit (L1/L2); the degraded no-eBPF mode, labeled self-reported |
 | M3 | First third-party control admitted through the conformance kit; success criterion: that third party reproduces a published reference measurement unaided; the reference badge |
-| M4+ | Scenario packs; LLM-driven path discovery on the exerciser substrate (Mode R); decay-tracking mode (re-running pinned snapshots across control versions, the measurement the framework exists to enable) |
+| M4+ | Scenario packs; LLM-driven path discovery on the mock-harness substrate (Mode R); decay-tracking mode (re-running pinned snapshots across control versions, the measurement the framework exists to enable) |
 
 **Reference snapshot**: a published, dated, hash-pinned set of run manifests that anyone can re-run. The reference badge (M3) is earned by reproducing it.
 
 **Privilege tiers** (what a user needs to install): Tier 0 harness-native (no privileges), Tier 1 gateway designs (plain Docker), Tier 2 kernel/eBPF (privileged, opt-in, restricted kernel families). The degraded no-eBPF mode is the default path and is labeled self-reported/unverified. Multiple harnesses per run-set are allowed (switching the harness does not complicate attribution).
 
-**CI scope (v1).** Determinism test (same trace twice, identical decision stream), schema conformance, and exerciser smoke on one pinned kernel; a manually maintained kernel capability matrix documents the rest, including the two known-failing families. No promise of hosted multi-kernel CI.
+**CI scope (v1).** Determinism test (same trace twice, identical decision stream), schema conformance, and mock-harness smoke on one pinned kernel; a manually maintained kernel capability matrix documents the rest, including the two known-failing families. No promise of hosted multi-kernel CI.
 
-**Release gates (before any public release).** Adapter licensing check; responsible-release review of the exerciser (it is a deterministic bypass-path suite); the framework name stays neutral.
+**Release gates (before any public release).** Adapter licensing check; responsible-release review of the mock harness (it is a deterministic bypass-path suite); the framework name stays neutral.
 
 **Framework conditionality.** The replication kit (M1/M2) is unconditional; the plugin-contract layer beyond it is justified by the longitudinal decay study commitment. If that commitment stops, fall back to the kit rather than maintaining contract features nobody uses.
 
@@ -383,4 +385,4 @@ Scope rule: v1 ships only what has an existing consumer among the two harnesses 
 
 - **Open:** the JSON Schema `$id` host and distribution form (stable framework host vs. a relative-$id convention plus run-manifest-local type records) must be fixed before the first public release; the run-manifest recording mechanism is settled either way.
 - **Open:** whether a `focus`-style field is needed to mark deployment-authoritative runs (platform-team stacks pinning a named fixture) beyond what the optional `fixture` override plus `control: null` already expresses; current reading is that no such field is needed, but the platform-team comparison workflow (two single-control runs against the same named fixture) has not been exercised end to end.
-- **Open:** the exerciser's Mode H (hosted) placement lands with the exerciser plugin in M1 only if the extension-mechanism timebox succeeds; otherwise M1 ships Modes C and R and Mode H follows, per the generic-harness sequencing.
+- **Open:** the mock harness's Mode H (hosted) placement lands with the mock-harness plugin in M1 only if the extension-mechanism timebox succeeds; otherwise M1 ships Modes C and R and Mode H follows, per the generic-harness sequencing.

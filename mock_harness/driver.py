@@ -1,6 +1,6 @@
-"""CLI driver for the path-originator exerciser (v1).
+"""CLI driver for the path-originator mock harness (v1).
 
-  python3 -m exerciser.driver --trace trace/traces/baseline.yaml \
+  python3 -m mock_harness.driver --trace trace/traces/baseline.yaml \
       [--plan <plan.yaml>] --out <dir> \
       [--select a031,a032] [--mode {all,escape,twins}] \
       [--run-id ID] [--placement placement.json]
@@ -18,13 +18,13 @@ Outputs in --out:
                      variant, origin channel, timestamps, exit status,
                      provenance fields) — identical across runs with the
                      same config modulo timing/pid fields (see the digest)
-  run-manifest.json  trace hash, exerciser version + git state, plan,
+  run-manifest.json  trace hash, mock harness version + git state, plan,
                      selection, window, placement descriptor (placeholder
                      unless --placement), the action-log digest, and the
                      deferred-children join results
 
 Exit status: 0 when every action recorded status ok, 1 on any action
-error (the errors themselves are data — the exerciser never aborts mid-run),
+error (the errors themselves are data — the mock harness never aborts mid-run),
 2 on setup/validation failures (bad spec/plan/manifest pins).
 """
 
@@ -43,11 +43,11 @@ from pathlib import Path
 import jsonschema
 import yaml
 
-from exerciser import (
-    ACTION_RECORD_SCHEMA, ESCAPE_CLASSES, EXERCISER_VERSION,
+from mock_harness import (
+    ACTION_RECORD_SCHEMA, ESCAPE_CLASSES, MOCK_HARNESS_VERSION,
     PLAN_SCHEMA, RUN_MANIFEST_SCHEMA, TWIN_CLASSES,
 )
-from exerciser import originators, trace_spec
+from mock_harness import originators, trace_spec
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 MANIFEST_PATH = Path(__file__).resolve().parent / "manifest.yaml"
@@ -248,7 +248,7 @@ def join_deferred(ctx: originators.RunContext, timeout_s: float) -> list[dict]:
 # --- run ------------------------------------------------------------------------
 
 def execute(spec_path: Path, plan: dict, out_dir: Path, mode: str = "all",
-            select: list[str] | None = None, run_id: str = "exerciser-run",
+            select: list[str] | None = None, run_id: str = "mock-run",
             placement: dict | None = None, plan_source: str = "default",
             plan_sha256: str | None = None,
             manifest: dict | None = None) -> dict:
@@ -308,9 +308,9 @@ def execute(spec_path: Path, plan: dict, out_dir: Path, mode: str = "all",
                 "detail": detail,
                 "started_epoch_ns": started,
                 "ended_epoch_ns": ended,
-                "provenance": "exerciser",
+                "provenance": "mock-harness",
                 "originator": {
-                    "exerciser_version": EXERCISER_VERSION,
+                    "mock_harness_version": MOCK_HARNESS_VERSION,
                     "function": fn.__name__,
                     "action_index": index,
                     "deferred": deferred,
@@ -338,8 +338,8 @@ def execute(spec_path: Path, plan: dict, out_dir: Path, mode: str = "all",
         "schema": RUN_MANIFEST_SCHEMA,
         "run_id": run_id,
         "created": datetime.now(timezone.utc).isoformat(),
-        "exerciser": {
-            "version": EXERCISER_VERSION,
+        "mock_harness": {
+            "version": MOCK_HARNESS_VERSION,
             "manifest_sha256": trace_spec.canonical_sha256(MANIFEST_PATH),
             "git": git_state(),
         },
@@ -368,7 +368,7 @@ def execute(spec_path: Path, plan: dict, out_dir: Path, mode: str = "all",
             "note": ("attached per run" if placement is not None else
                      "PLACEHOLDER: attach the harness-trust-domain placement "
                      "descriptor per run via driver --placement (the wrapper "
-                     "that runs the exerciser inside the harness trust "
+                     "that runs the mock harness inside the harness trust "
                      "domain is a later concern)"),
         },
         "action_log": {
@@ -402,7 +402,7 @@ def main(argv: list[str] | None = None) -> int:
                         default=trace_spec.DEFAULT_TRACE,
                         help="canonical trace spec (default: the pinned baseline)")
     parser.add_argument("--plan", type=Path, default=None,
-                        help="run plan (exerciser/plan-schema.json); "
+                        help="run plan (mock_harness/plan-schema.json); "
                              "default: the built-in default plan")
     parser.add_argument("--out", type=Path, required=True,
                         help="output directory (action-log.jsonl + run-manifest.json)")
@@ -412,7 +412,7 @@ def main(argv: list[str] | None = None) -> int:
                         choices=["all", "escape", "twins"],
                         help="preset: all 15 paths; escape = the four escape "
                              "classes; twins = the two tool-call classes")
-    parser.add_argument("--run-id", default="exerciser-run")
+    parser.add_argument("--run-id", default="mock-run")
     parser.add_argument("--placement", type=Path, default=None,
                         help="placement descriptor JSON attached to the run "
                              "manifest (the harness-trust-domain wrapper)")

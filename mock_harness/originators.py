@@ -1,6 +1,6 @@
 """Originators: one deterministic OS-level performer per canonical action.
 
-The exerciser's action surface is the canonical trace spec
+The mock harness's action surface is the canonical trace spec
 (trace/traces/baseline.yaml) — the SINGLE SOURCE OF TRUTH for the action
 list, order, and arguments; this module hardcodes no action ids. The driver
 compiles each spec action through the harness compiler
@@ -9,7 +9,7 @@ function resolved by (class, op):
 
   stdio_tool_call   -> the inspected twin of the harness's own T0-T2
                        transport: one MCP stdio session per run (the fs tool
-                       server as an exerciser child), NDJSON JSON-RPC
+                       server as a mock-harness child), NDJSON JSON-RPC
                        initialize + tools/call over pipes
   http_tool_call    -> raw route: plain HTTP request to the trace's own
                        endpoint (the T0 fetch shape); gateway route: MCP
@@ -27,13 +27,13 @@ function resolved by (class, op):
 
 Policy-blind: no originator checks, classifies, allows, or denies anything.
 Errors (connection refused, ENOENT, nonzero exit) are returned as data to
-the driver's record — the exerciser executes the FULL surface
+the driver's record — the mock harness executes the FULL surface
 unconditionally and never self-reports whether an action was "caught".
 
 Determinism: fixed request shapes, fixed payloads (from the spec), no LLM,
 no wall-clock-dependent branching; timestamps are recorded, never consulted.
 
-All OS effects go through exerciser.syscalls (see that module for why).
+All OS effects go through mock_harness.syscalls (see that module for why).
 """
 
 from __future__ import annotations
@@ -43,10 +43,10 @@ import os
 import shutil
 from urllib.parse import urlsplit
 
-from exerciser import EXERCISER_VERSION, syscalls
+from mock_harness import MOCK_HARNESS_VERSION, syscalls
 
 MCP_PROTOCOL_VERSION = "2025-06-18"
-MCP_CLIENT_INFO = {"name": "inspection-exerciser", "version": "0.1.0"}
+MCP_CLIENT_INFO = {"name": "inspection-mock-harness", "version": "0.1.0"}
 
 # (method, path) -> gateway tool for the http twins under the gateway route.
 # Mirrors targets/mcp-http TOOL_ROUTES and the adapters' GATEWAY_TOOL_ROUTES
@@ -517,4 +517,4 @@ class RunContext:
 
 
 def originator_version() -> str:
-    return EXERCISER_VERSION
+    return MOCK_HARNESS_VERSION

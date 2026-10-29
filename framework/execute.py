@@ -64,7 +64,7 @@ VERSIONS_ENV = REPO_ROOT / "env" / "versions.env"
 BASELINE_SPEC = REPO_ROOT / "trace" / "traces" / "baseline.yaml"
 
 # DESIGN.md 9: evidence class of a run driven through the real harness.
-# Exerciser-run cells are a separate path (DESIGN.md 8) and are not produced
+# Mock-run cells are a separate path (DESIGN.md 8) and are not produced
 # by this module. A run without kernel evidence (the degraded no-eBPF mode)
 # is self-reported (DESIGN.md 9: "every output it produces is labeled
 # self-reported / unverified").

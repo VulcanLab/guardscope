@@ -23,7 +23,7 @@ from framework.contracts import (  # noqa: E402
     readiness_test_action,
 )
 
-PLUGINS = ("exerciser", "agt-gateway", "pi", "openclaw")
+PLUGINS = ("mock-harness", "agt-gateway", "pi", "openclaw")
 
 
 # --- manifest loading + validation ----------------------------------------------
@@ -56,8 +56,8 @@ def test_harness_manifests_declare_hostable_points():
     assert openclaw["hostable_enforcement_points"] == ["dispatch_plugins"]
 
 
-def test_exerciser_declares_reduced_contract_and_all_designs():
-    manifest = load_capabilities("exerciser")
+def test_mock_harness_declares_reduced_contract_and_all_designs():
+    manifest = load_capabilities("mock-harness")
     assert manifest["kind"] == "harness-adapter"
     assert manifest["supported_designs"] == [f"t{i}" for i in range(8)]
     assert "hostable_enforcement_points" not in manifest
