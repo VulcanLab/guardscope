@@ -3,9 +3,10 @@
 # first enforcement point; T1's MCP Security Gateway is the second. The
 # http-stdio MCP server forwards its tool calls THROUGH the gateway
 # (MCP_GATEWAY_URL), so the http tool calls cross BOTH points; the fs tools
-# stay harness-native only. The finding under measurement: the seam — the two
-# points' records share no correlation key, so a checked http tool call
-# cannot be attributed to a concrete decision across the seam.
+# stay harness-native only. The finding under measurement: the
+# attribution gap between the two points' record streams — they share
+# no correlation key, so a checked http tool call cannot be
+# attributed to a concrete decision across the two points.
 #
 # Outcomes per action class (main.tex §5.2, ✓/× resolved for the v1
 # permissions-only configuration — no sandbox, no egress):
@@ -18,7 +19,7 @@
 #
 # Both enforcement-point records are captured per run: the harness decisions
 # (the coverage input, inspected set = both tool classes) and the gateway's
-# decisions + deployed policy (the seam record, manifest-retained).
+# decisions + deployed policy (the gateway-side record, manifest-retained).
 #
 # The canonical trace spec is unchanged from T0–T4 — only the topology
 # differs, keeping T5 coverage comparable to T0–T4.

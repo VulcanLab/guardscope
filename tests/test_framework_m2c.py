@@ -271,7 +271,7 @@ def test_l1_run_dir_path_form():
 
 def wired_control(cls=InProcessControl, plugin_id="test-control",
                   plugin_version="1"):
-    """A control (InProcessControl by default) plus the fidelity seams
+    """A control (InProcessControl by default) plus the fidelity-check interfaces
     wired through THAT instance."""
     control = cls(plugin_id=plugin_id, plugin_version=plugin_version)
 

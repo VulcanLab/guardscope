@@ -688,7 +688,7 @@ def test_t4_t0_equivalence():
 
 def test_t5_run_passes():
     """T5: same kernel evidence and outcomes as T4 (the gateway evaluation is
-    recorded in the seam record, not the kernel stream)."""
+    recorded in the gateway-side record, not the kernel stream)."""
     report = reconcile(t4_stream(), harness="pi",
                        target_logs=target_logs(), design="t5")
     assert report["status"] == "pass", report["checks"]

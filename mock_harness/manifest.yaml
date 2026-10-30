@@ -289,7 +289,7 @@ paths:
       t2: {disposition: checked, via: "gateway route", note: "same as T1; egress allows gateway:8090"}
       t3: {disposition: checked, via: "gateway route", note: "same as T1"}
       t4: {disposition: bypassed, note: "the design's point is IN the harness process; the mock harness cannot cross it. The raw route is also uninspected (no gateway in T4)"}
-      t5: {disposition: checked, via: "gateway route", note: "the gateway is the second, process-external point (the harness chain is not crossed — the seam limitation, from the mock-harness side)"}
+      t5: {disposition: checked, via: "gateway route", note: "the gateway is the second, process-external point (the harness chain is not crossed — the attribution-gap limitation, from the mock-harness side)"}
       t6: {disposition: bypassed, note: "same placement limitation as t4"}
     variants: [default]
     escape_categories: []
@@ -326,7 +326,7 @@ paths:
       t2: {disposition: checked, via: "gateway route", note: "egress allows gateway:8090"}
       t3: {disposition: checked, via: "gateway route", note: "same as T1"}
       t4: {disposition: bypassed, note: "in-process point not crossed (see a011 notes)"}
-      t5: {disposition: checked, via: "gateway route", note: "gateway point crossed; harness chain not (seam)"}
+      t5: {disposition: checked, via: "gateway route", note: "gateway point crossed; harness chain not (attribution gap)"}
       t6: {disposition: bypassed, note: "same placement limitation as t4"}
     variants: [default]
     escape_categories: []
@@ -353,7 +353,7 @@ paths:
       t2: {disposition: checked, via: "gateway route", note: "egress allows gateway:8090"}
       t3: {disposition: checked, via: "gateway route", note: "same as T1"}
       t4: {disposition: bypassed, note: "in-process point not crossed (see a011 notes)"}
-      t5: {disposition: checked, via: "gateway route", note: "gateway point crossed; harness chain not (seam)"}
+      t5: {disposition: checked, via: "gateway route", note: "gateway point crossed; harness chain not (attribution gap)"}
       t6: {disposition: bypassed, note: "same placement limitation as t4"}
     variants: [default]
     escape_categories: []
@@ -382,7 +382,7 @@ paths:
       t2: {disposition: checked, via: "gateway route", note: "egress allows gateway:8090"}
       t3: {disposition: checked, via: "gateway route", note: "same as T1"}
       t4: {disposition: bypassed, note: "in-process point not crossed (see a011 notes)"}
-      t5: {disposition: checked, via: "gateway route", note: "gateway point crossed; harness chain not (seam)"}
+      t5: {disposition: checked, via: "gateway route", note: "gateway point crossed; harness chain not (attribution gap)"}
       t6: {disposition: bypassed, note: "same placement limitation as t4 — the twin is denied nowhere; only the harness's own T6 policy denies its instances"}
     variants: [default]
     escape_categories: []

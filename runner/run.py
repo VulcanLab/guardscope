@@ -137,9 +137,10 @@ DESIGNS = {
     # t5: harness-native enforcement + gateway (the http tool calls cross
     # BOTH points via the http-stdio server's MCP_GATEWAY_URL forwarding).
     # Coverage input = the harness record (the union: both tool classes);
-    # the gateway's record + policy are captured as the seam artifact.
+    # the gateway's record + policy are captured as the gateway-side
+    # artifact (the selected control's side of the two-point design).
     "t5": {"prefix": "t5", "compose": "t5.yaml", "gateway": True,
-           "enforcement_record": "harness", "seam_gateway": True},
+           "enforcement_record": "harness", "gateway_side": True},
     # t6: in-process policy engine (T6_MODE + declarative policy mounted into
     # the harness). Same placement as t4; the policy file is captured per run
     # as the auditable policy artifact.
@@ -499,7 +500,7 @@ def enforcement_artifacts(design: str, gateway_dir: Path | None,
     """Design-aware enforcement-point artifacts (manifest-hashed).
     t1-t3: the gateway's decisions + deployed policy.yaml. t4: the harness
     record only (allow-all permissions v1 — no policy file). t5: the harness
-    record + the seam artifacts (the second point's decisions + deployed
+    record + the gateway-side artifacts (the second point's decisions + deployed
     policy). t6: the harness record + the in-process policy.json."""
     arts: dict[str, Path] = {}
     if gateway_dir is not None:
@@ -509,10 +510,10 @@ def enforcement_artifacts(design: str, gateway_dir: Path | None,
             pol = gateway_dir / "policy.json"
         if pol.is_file():
             arts["gateway-policy"] = pol
-    if DESIGNS[design].get("seam_gateway"):
-        seam = out_dir / "seam-gateway"
-        arts["seam-gateway-decisions"] = seam / "decisions.jsonl"
-        arts["seam-gateway-policy"] = seam / "policy.yaml"
+    if DESIGNS[design].get("gateway_side"):
+        gw_side = out_dir / "gateway-side"
+        arts["gateway-side-decisions"] = gw_side / "decisions.jsonl"
+        arts["gateway-side-policy"] = gw_side / "policy.yaml"
     return arts
 
 
@@ -832,9 +833,9 @@ def run_one(harness: str, run_id: str, runs_dir: Path, timeout_s: float | None =
     if DESIGNS[design].get("enforcement_record") == "harness":
         gateway_dir = pull_harness_log(out_dir, harness,
                                        DESIGNS[design].get("harness_policy"))
-        if DESIGNS[design].get("seam_gateway"):
-            # t5: the second enforcement point's record (seam analysis)
-            pull_gateway_log(out_dir, prefix, subdir="seam-gateway")
+        if DESIGNS[design].get("gateway_side"):
+            # t5: the second enforcement point's record (gateway side)
+            pull_gateway_log(out_dir, prefix, subdir="gateway-side")
     else:
         gateway_dir = (pull_gateway_log(out_dir, prefix)
                        if DESIGNS[design]["gateway"] else None)
@@ -1044,7 +1045,7 @@ def _required_artifacts(design: str) -> list[str]:
     if design in ("t1", "t2", "t3", "t6"):
         required += ["gateway-policy"]
     if design == "t5":
-        required += ["seam-gateway-decisions", "seam-gateway-policy"]
+        required += ["gateway-side-decisions", "gateway-side-policy"]
     return required
 
 
@@ -1058,7 +1059,7 @@ def artifact_statuses(manifest: dict) -> dict[str, str]:
     requirements: the record (decisions) for every t1+ design; the policy
     file only where the design deploys one (gateway/policy.yaml t1-t3,
     in-process policy.json t6); t5 hashes the second point's record +
-    policy as the seam artifacts."""
+    policy as the gateway-side artifacts."""
     design = manifest.get("design") or "t0"
     sensorless = manifest_sensorless(manifest)
     statuses: dict[str, str] = {}

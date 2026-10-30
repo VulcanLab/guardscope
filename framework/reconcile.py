@@ -78,7 +78,7 @@ INSPECTED_CLASSES = {
     "t4": {"http_tool_call", "stdio_tool_call"},
     # t5: union of the two enforcement points — the harness record (the
     # coverage input) inspects both tool classes; the gateway adds a second
-    # evaluation for the http class (captured in the seam record)
+    # evaluation for the http class (captured in the gateway-side record)
     "t5": {"http_tool_call", "stdio_tool_call"},
     # t6: in-process policy engine — same placement as t4, so the same
     # inspected set; the decisions carry argument-level rule matches

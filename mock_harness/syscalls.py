@@ -68,7 +68,7 @@ def http_request(method: str, url: str, body: str | None = None,
 
     The raw-route twin's kernel signature is one connect per request (no
     pooling; see manifest notes on the client fidelity limitation).
-    `headers` is the correlation-carrier seam for the raw route (the
+    `headers` is the correlation-carrier interface for the raw route (the
     x-inspection-* headers travel on the request exactly like the real
     harness adapter's raw fetch). Non-2xx raises (urllib HTTPError) — the
     originator records it.

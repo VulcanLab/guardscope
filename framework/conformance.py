@@ -569,7 +569,7 @@ def run_l2(control, *, issuer, collector, golden_log_set, expected_outcomes,
     golden_log_set: dict or JSONL-path form only (the run-dir form needs
         plugin_id, which run_l2 does not receive; use run_l1 for that form).
     control: a ControlContract implementer (InProcessControl works for
-    tests). issuer/collector: the fidelity-check seams (framework/fidelity;
+    tests). issuer/collector: the fidelity-check interfaces (framework/fidelity;
     issuer(transport, action_id, attempt), collector() -> records emitted
     since). golden_log_set: the golden fixture providing the design (the
     topology that decides which classes cross) and the verdict's

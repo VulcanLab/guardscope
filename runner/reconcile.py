@@ -91,7 +91,7 @@ PREVENTED_CLASSES = {
     # prevented — no sandbox and no egress in the v1 configuration
     "t4": set(),
     # t5: same v1 configuration as t4; the gateway adds an evaluation for the
-    # http tool class (recorded in the seam record), still nothing prevented
+    # http tool class (recorded in the gateway-side record), still nothing prevented
     "t5": set(),
     # t6 v1 (workspace-scoped policy): all canonical trace actions pass the
     # in-process policy; the process-level actions bypass (invisible by

@@ -456,7 +456,7 @@ def test_t4_unknown_namespaced_tool_fails_c2():
 
 def test_t5_full_coverage_pass():
     """T5 coverage input = the harness record (the union): both tool classes
-    fully evaluated; the gateway's second evaluation lives in the seam record."""
+    fully evaluated; the gateway's second evaluation lives in the gateway-side record."""
     report = compute(t4_decisions(), design="t5")
     assert report["status"] == "pass", report["checks"]
     assert report["inspected_classes"] == ["http_tool_call", "stdio_tool_call"]

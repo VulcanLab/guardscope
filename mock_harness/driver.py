@@ -84,7 +84,7 @@ DIGEST_EXCLUDES = ["started_epoch_ns", "ended_epoch_ns", "pid", "*_pid"]
 #                                          -> carrier_used "mcp_meta"
 #   raw http twin                          x-inspection-action-id /
 #                                          x-inspection-attempt headers via
-#                                          the http_request seam
+#                                          the http_request interface
 #                                          -> carrier_used "http_header"
 # Process-level actions (direct_network, process_spawn, file_write,
 # credential_access) get NO dispatch record: no tool-dispatch boundary
