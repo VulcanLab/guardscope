@@ -54,6 +54,7 @@ from framework.records import (
     audit_entry_to_decision_record, new_ulid, validate_decision_record,
 )
 from framework import reconcile as reconcile_lib
+from framework.version import FRAMEWORK_LINE
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -67,10 +68,9 @@ KIT_VERSION = "1"
 SUITE_VERSION = "1"
 
 # The framework line the verdict was recorded under (DESIGN.md 11 verdict
-# key). There is no public release yet; this is the development line that
-# shipped the kit, and a public release line replaces the value at the first
-# release.
-FRAMEWORK_LINE = "m2"
+# key): the "<major>.<minor>" of the package version, imported from
+# framework/version.py (the single source of truth; a line change expires
+# every recorded verdict keyed to the previous line, DESIGN.md 11).
 
 # The pinned baseline spec (baseline-15, the only registered workload pack
 # this pass, DESIGN.md 8): the canonical action surface every golden set is

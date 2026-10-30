@@ -48,9 +48,13 @@ import shutil
 from urllib.parse import urlsplit
 
 from mock_harness import MOCK_HARNESS_VERSION, syscalls
+from framework.version import __version__
 
 MCP_PROTOCOL_VERSION = "2025-06-18"
-MCP_CLIENT_INFO = {"name": "inspection-mock-harness", "version": "0.1.0"}
+# the client is the mock harness, shipped with the framework, so its
+# client version is the framework package version (framework/version.py,
+# the single source of truth)
+MCP_CLIENT_INFO = {"name": "inspection-mock-harness", "version": __version__}
 
 # Correlation carriers (DESIGN.md 5; mirrors harnesses/pi/adapter/replay.ts):
 # the driver is the id authority on the workload side and stamps the canonical

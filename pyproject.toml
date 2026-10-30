@@ -1,0 +1,48 @@
+# guardscope packaging (M3 pass 1).
+#
+# v1 packaging model: EDITABLE INSTALL FROM THE CHECKOUT. The `guardscope`
+# command and the framework package install, but the framework resolves the
+# fixtures repository as the directory NEXT TO the installed package
+# (framework/../, see REPO_ROOT in framework/*.py): compose/, runner/
+# profiles, trace/, plugins/, registry/ and mock_harness/ are repo data
+# next to the package, not bundled package data. `pip install -e .` from a
+# checkout therefore works from any cwd; a non-editable install does NOT
+# carry the fixtures repo and cannot run experiments (only the schema
+# loading and pure-code paths work). A distribution-quality package that
+# bundles the fixtures is later work (DESIGN.md 12 release gates).
+#
+# Only the framework package + its JSON Schema files ship; everything else
+# in the repository stays source-shaped (scripts, compose files, tests).
+
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "guardscope"
+description = "A measurement framework for runtime controls in LLM-agent systems"
+readme = "README.md"
+# single source of truth: framework/version.py (no duplicated literal here)
+dynamic = ["version"]
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+requires-python = ">=3.12"
+dependencies = [
+    "pyyaml>=6.0",
+    "jsonschema>=4.20",
+]
+
+[project.scripts]
+guardscope = "framework.cli:main"
+
+[tool.setuptools]
+# only the framework package installs; the fixtures repo stays external
+packages = ["framework", "framework.schemas"]
+
+[tool.setuptools.dynamic]
+version = { attr = "framework.version.__version__" }
+
+[tool.setuptools.package-data]
+# framework/schemas/**/*.json must ship with the package: load_schema()
+# reads them relative to the installed module (framework/schemas/__init__.py)
+"framework.schemas" = ["**/*.json"]

@@ -2,6 +2,10 @@ __pycache__/
 *.pyc
 .venv/
 .pytest_cache/
+# pip install -e . writes the egg-info into the checkout (pyproject.toml)
+*.egg-info/
+# a non-editable `pip install .` from the checkout can leave a build dir
+build/
 runs/
 # compiled-trace cache when the repo root is the experiments workdir
 # (framework/workdir.py; the compile entry points stay in trace/compile/)

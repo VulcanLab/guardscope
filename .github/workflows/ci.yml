@@ -1,0 +1,110 @@
+# CI (DESIGN.md 12 "CI scope (v1)": one platform, no multi-kernel promises).
+#
+# Two jobs:
+#   tests      - the full pytest suite + the installed-command smoke
+#   degraded-e2e - compose config check on all 11 fixture files, then the
+#                  degraded no-eBPF end-to-end smoke
+#
+# The kernel-privileged eBPF sensor stays OUT of hosted CI on purpose: the
+# Tracee sensor needs a privileged container on a supported kernel family
+# (DESIGN.md 12 privilege tiers), which hosted runners do not promise. The
+# e2e smoke therefore runs the DEGRADED no-sensor mode (compose up WITHOUT
+# --profile sensor; every output labeled self-reported, DESIGN.md 9) and
+# full sensor runs stay on the pinned testbed host.
+
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install (editable, from the checkout)
+        # v1 packaging model: editable install; the fixtures repo is the
+        # checkout next to the package (pyproject.toml)
+        run: |
+          pip install -e .
+          pip install pytest
+      - name: Run the test suite
+        run: pytest
+      - name: Installed-command smoke from a foreign cwd
+        # no PYTHONPATH, no cwd dependence: the guardscope entry point must
+        # resolve the package and the fixtures repo on its own
+        working-directory: /tmp
+        run: guardscope --help
+
+  degraded-e2e:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install (editable, from the checkout)
+        run: |
+          pip install -e .
+          pip install pytest
+      - name: Compose config check (all 11 fixture files)
+        run: |
+          set -e
+          for f in compose/*.yaml; do
+            docker compose -f "$f" config --quiet
+          done
+          ls compose/*.yaml | wc -l   # 11 fixture files
+
+      # The degraded no-eBPF end-to-end smoke: bring up the T0 topology
+      # WITHOUT the sensor profile (builds the images, ~10 min budget),
+      # then run the example T0 experiment through the installed command
+      # from a foreign directory and assert the degraded contract: the run
+      # passes, the evidence class is self-reported, the outcome counts
+      # are verified: false, and the repo tree stays clean.
+      - name: Bring up the T0 topology (no sensor profile)
+        env:
+          GUARDSCOPE_STAGING_DIR: ${{ runner.temp }}/staging/runs
+        run: docker compose -f compose/t0.yaml up -d --wait
+      - name: Degraded-mode end-to-end run
+        working-directory: ${{ runner.temp }}
+        env:
+          GUARDSCOPE_STAGING_DIR: ${{ runner.temp }}/staging/runs
+        run: |
+          repo="$GITHUB_WORKSPACE"
+          workdir="$RUNNER_TEMP/workdir"
+          guardscope run "$repo/examples/t0-pi.yaml" --no-sensor --workdir "$workdir" > run-summary.json
+          python3 - "$workdir" "$repo/examples/t0-pi.yaml" <<'EOF'
+          import json, sys
+          workdir = sys.argv[1]
+          experiment = sys.argv[2].rsplit("/", 1)[-1].removesuffix(".yaml")
+          summaries = json.load(open("run-summary.json"))
+          assert len(summaries) == 1, summaries
+          s = summaries[0]
+          assert s["status"] == "pass", s
+          # degraded contract (DESIGN.md 9): no kernel sensor ran, so the
+          # run is self-reported and its outcome counts are unverified
+          assert s["evidence_class"] == "self-reported", s
+          assert s["degraded"], s
+          assert s["outcome_counts_verified"] is False, s
+          # the execution manifest records the same degraded facts
+          manifest = json.load(open(f"{workdir}/runs/{experiment}/execution.json"))
+          run = next(r for r in manifest["runs"]
+                     if r["run_id"] == s["run_id"])
+          assert run["evidence_class"] == "self-reported", run
+          assert run["outcome_counts"]["verified"] is False, run
+          EOF
+      - name: Repo tree stays clean
+        run: |
+          # every writable artifact must have landed in the workdir, never
+          # in the read-only source tree
+          git status --porcelain
+          [ -z "$(git status --porcelain)" ]
+      - name: Tear down the topology
+        if: always()
+        run: docker compose -f compose/t0.yaml down -v --remove-orphans
