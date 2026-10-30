@@ -66,10 +66,41 @@ def l1_over_live_t1(**overrides):
 
 
 def write_registry_copy(tmp_path) -> Path:
-    """A copy of the seeded registry (so tests never mutate the repo data)."""
-    root = tmp_path / "registry"
-    shutil.copytree(ROOT / "registry", root)
-    return root
+    """A synthetic open-tier registry root (self-sufficient: no dependence
+    on the untracked seeded record; tests never mutate repo data)."""
+    root = tmp_path / "registry" / "open"
+    root.mkdir(parents=True, exist_ok=True)
+    keys = current_keys(AGT_PLUGIN_ID, plugin_version=AGT_PLUGIN_VERSION)
+    verdict = synthetic_current_verdict(keys)
+    verdict.setdefault("kit_version", "test")
+    verdict.setdefault("contract_version", keys.get("contract_version"))
+    verdict.setdefault("framework_line", keys.get("framework_line"))
+    verdict.setdefault("golden_fixture_hash", keys.get("golden_fixture_hash"))
+    verdict.setdefault("checks", [])
+    verdict.setdefault("findings", [])
+    entry = {"verdict": verdict, "attestation": "self-attested",
+             "recorded_by": "synthetic test registry",
+             "recorded_at": "2026-10-29T00:00:00.000Z",
+             "verified_by": "in-test synthesis",
+             "as_of": {c: verdict[c] for c in registry_mod.VERDICT_KEY},
+             "limitations": ["no framework CI exists"]}
+    doc = {"schema": 1, "plugin": AGT_PLUGIN_ID, "tier": "open",
+           "notes": "synthetic open-tier test registry", "entries": [entry]}
+    (root / "agt-gateway.json").write_text(json.dumps(doc, indent=1))
+    facts_root = tmp_path / "registry" / "facts"
+    facts_root.mkdir(parents=True, exist_ok=True)
+    facts = {"schema": 1, "plugin": AGT_PLUGIN_ID,
+             "maintainer": "synthetic test registry",
+             "last_verified": "2026-10-29",
+             "as_of": {c: keys.get(c) for c in registry_mod.VERDICT_KEY},
+             "provenance": {"source": "synthetic",
+                            "recorded_at": "2026-10-29T00:00:00.000Z"},
+             "expires_with": ["plugin_version"],
+             "capability_facts": [{"fact": "observable classes: "
+                                   "http_tool_call, stdio_tool_call",
+                                   "source": "synthetic"}]}
+    (facts_root / "agt-gateway.json").write_text(json.dumps(facts, indent=1))
+    return tmp_path / "registry"
 
 
 # ================================================================ L1 (DESIGN.md 3)
@@ -459,6 +490,15 @@ def seeded_verdict() -> dict:
     return json.loads(SEED_VERDICT.read_text())["entries"][0]["verdict"]
 
 
+def synthetic_current_verdict(keys: dict) -> dict:
+    """A verdict matching every current key component: self-sufficient for
+    the expiry/eligibility logic tests (no dependence on the untracked
+    seed record)."""
+    verdict = {"status": "pass", "level": "L1", "plugin_id": AGT_PLUGIN_ID}
+    verdict.update({c: keys.get(c) for c in registry_mod.VERDICT_KEY})
+    return verdict
+
+
 @seed_present
 def test_seed_verdict_file_is_valid_and_honest():
     docs = load_verdict_docs()
@@ -505,8 +545,8 @@ def test_facts_file_validates_and_carries_provenance():
 def test_is_verdict_current_expires_on_every_key_component(tmp_path):
     # DESIGN.md 11: any key-component change makes the verdict stale —
     # one flip per component, each staleness names the component
-    verdict = seeded_verdict()
     keys = current_keys(AGT_PLUGIN_ID)
+    verdict = synthetic_current_verdict(keys)
     ok, reasons = is_verdict_current(verdict, current_keys=keys)
     assert ok and reasons == []
     for component in registry_mod.VERDICT_KEY:
@@ -523,10 +563,12 @@ def test_is_verdict_current_expires_on_every_key_component(tmp_path):
     assert any("suite_version" in r for r in reasons)
 
 
-def test_eligible_open_tier_is_labeled_not_eligible():
-    # the seeded open-tier verdict is current but open: not main-grid
+def test_eligible_open_tier_is_labeled_not_eligible(tmp_path):
+    # an open-tier verdict that is current but open: not main-grid
     # eligible, returned labeled (never hidden; DESIGN.md 11)
-    result = eligible_for_main_grid(AGT_PLUGIN_ID, AGT_PLUGIN_VERSION)
+    root = write_registry_copy(tmp_path)
+    result = eligible_for_main_grid(AGT_PLUGIN_ID, AGT_PLUGIN_VERSION,
+                                     registry_root=root)
     assert result["eligible"] is False
     assert result["tier"] == "open"
     assert result["current"] is True
@@ -629,8 +671,10 @@ def test_fact_docs_schema_validated(tmp_path):
 # --- the registry CLI -------------------------------------------------------------
 
 
-def test_cli_registry_ls(capsys):
-    assert cli_main(["registry", "ls"]) == 0
+def test_cli_registry_ls(capsys, tmp_path):
+    write_registry_copy(tmp_path)
+    assert cli_main(["registry", "ls",
+                      "--registry-root", str(tmp_path / "registry")]) == 0
     out = capsys.readouterr().out
     assert "agt-gateway  tier=open" in out
     assert "status=pass" in out
@@ -638,8 +682,10 @@ def test_cli_registry_ls(capsys):
     assert "facts  last_verified=" in out
 
 
-def test_cli_registry_show(capsys):
-    assert cli_main(["registry", "show", "agt-gateway"]) == 0
+def test_cli_registry_show(capsys, tmp_path):
+    write_registry_copy(tmp_path)
+    assert cli_main(["registry", "show", "agt-gateway",
+                      "--registry-root", str(tmp_path / "registry")]) == 0
     doc = json.loads(capsys.readouterr().out)
     assert doc["plugin"] == "agt-gateway"
     assert doc["verdicts"]["open"]["tier"] == "open"

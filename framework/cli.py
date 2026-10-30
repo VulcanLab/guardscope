@@ -87,18 +87,26 @@ def main(argv=None) -> int:
         help="the plugin registry (DESIGN.md 11: two tiers, expiring "
              "verdicts, selection-rule facts)")
     rsub = reg.add_subparsers(dest="registry_command", required=True)
-    rsub.add_parser("ls", help="list entries with tier + current/stale "
-                                "status")
+    ls = rsub.add_parser("ls", help="list entries with tier + current/stale "
+                                    "status")
+    ls.add_argument("--registry-root", default=None,
+                   help="use a different registry directory (default: "
+                        "the repo's registry/)")
     show = rsub.add_parser("show", help="print a plugin's registry entries "
                                         "and facts as JSON")
     show.add_argument("plugin_id")
+    show.add_argument("--registry-root", default=None,
+                      help="use a different registry directory (default: "
+                           "the repo's registry/")
     args = ap.parse_args(argv)
 
     if args.command == "registry":
         from framework import registry as reg_mod
         try:
-            docs = reg_mod.load_verdict_docs()
-            facts = reg_mod.load_fact_docs()
+            docs = reg_mod.load_verdict_docs(
+                registry_root=args.registry_root)
+            facts = reg_mod.load_fact_docs(
+                registry_root=args.registry_root)
         except reg_mod.RegistryError as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 1
