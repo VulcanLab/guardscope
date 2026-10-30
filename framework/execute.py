@@ -273,10 +273,15 @@ def fixture_fingerprint(descriptor: RunDescriptor) -> dict:
         if descriptor.harness == MOCK_HARNESS_ID else \
         f"{descriptor.design}.yaml"
     compose = COMPOSE_DIR / compose_name
-    # only the composed reference id pins the base (a custom fixture block
-    # must not be silently pinned to a base by naming)
-    composed_id = f"reference-rig/{descriptor.design}+{descriptor.control}"
-    if descriptor.fixture == composed_id and compose.is_file():
+    # only the reference ids pin the base: the composed id when a control
+    # fills the slot, the bare id when control is null (a custom fixture
+    # block must not be silently pinned to a base by naming)
+    base_id = f"reference-rig/{descriptor.design}"
+    composed_id = f"{base_id}+{descriptor.control}"
+    pins_base = (descriptor.fixture == composed_id
+                 or (descriptor.control is None
+                     and descriptor.fixture == base_id))
+    if pins_base and compose.is_file():
         doc = yaml.safe_load(compose.read_text(encoding="utf-8")) or {}
         fingerprint["compose"] = {
             "path": f"compose/{compose_name}",
