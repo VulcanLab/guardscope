@@ -54,6 +54,7 @@ from framework.records import (  # noqa: E402
     now_rfc3339_ms,
 )
 from framework import reconcile as reconcile_lib  # noqa: E402
+from framework.workdir import resolve_workdir  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 COMPOSE_DIR = REPO_ROOT / "compose"
@@ -292,14 +293,18 @@ def fixture_fingerprint(descriptor: RunDescriptor) -> dict:
 
 
 def default_run_executor(descriptor: RunDescriptor, run_id: str,
-                         out_root: Path, sensor: bool = True) -> dict:
+                         out_root: Path, sensor: bool = True,
+                         workdir: Path | None = None) -> dict:
     """Drive one run through the existing runner machinery (runner/run.py
     run_design: compile -> replay -> capture -> map -> reconcile -> record)
     and return the run outcome the manifest assembly needs.
 
     sensor=False drives the runner's degraded no-eBPF path (run_design
     sensor=False: no sensor container is expected, no kernel evidence is
-    captured; DESIGN.md 9) for hosts without kernel privileges.
+    captured; DESIGN.md 9) for hosts without kernel privileges. workdir is
+    the writable root the run's artifacts derive from (framework/
+    workdir.py: replay staging + compile cache; None resolves it --workdir /
+    GUARDSCOPE_WORKDIR > cwd).
 
     Runs on the Linux testbed host only (Docker, compose, arm64). The
     outcome dict is the documented contract between the runner side and the
@@ -344,7 +349,7 @@ def default_run_executor(descriptor: RunDescriptor, run_id: str,
 
     summary = run_mod.run_design(descriptor.harness, descriptor.design,
                                  run_id, runs_dir=Path(out_root),
-                                 sensor=sensor)
+                                 sensor=sensor, workdir=workdir)
     out_dir = Path(summary["out_dir"])
     run_record_path = out_dir / "run-record.json"
     run_record = (json.loads(run_record_path.read_text(encoding="utf-8"))
@@ -755,21 +760,26 @@ def _fresh_run_id(out_root: Path, base: str) -> str:
     return run_id
 
 
-def _sensor_aware_default_executor(sensor: bool):
+def _sensor_aware_default_executor(sensor: bool, workdir: Path | None = None):
     """The default executor bound to the requested sensor mode (sensor=False
-    is the degraded no-eBPF mode, DESIGN.md 9). The flag is passed as a
-    keyword only when the executor accepts one: the runner-side
-    default_run_executor does; an injected executor keeping the plain
-    (descriptor, run_id, out_root) contract (the test fakes) is called
-    unchanged — fakes report sensor presence through their outcome dict
-    (`sensor_present`), which is what the assembly actually consumes."""
+    is the degraded no-eBPF mode, DESIGN.md 9) and the experiments workdir
+    (framework/workdir.py). The flags are passed as keywords only when the
+    executor accepts them: the runner-side default_run_executor does; an
+    injected executor keeping the plain (descriptor, run_id, out_root)
+    contract (the test fakes) is called unchanged — fakes report sensor
+    presence through their outcome dict (`sensor_present`), which is what
+    the assembly actually consumes."""
     import inspect
 
     def executor(descriptor: RunDescriptor, run_id: str, out_root: Path) -> dict:
         fn = default_run_executor   # module attribute: tests monkeypatch it
-        if "sensor" in inspect.signature(fn).parameters:
-            return fn(descriptor, run_id, out_root, sensor=sensor)
-        return fn(descriptor, run_id, out_root)
+        params = inspect.signature(fn).parameters
+        kw = {}
+        if "sensor" in params:
+            kw["sensor"] = sensor
+        if "workdir" in params:
+            kw["workdir"] = workdir
+        return fn(descriptor, run_id, out_root, **kw)
 
     return executor
 
@@ -839,7 +849,8 @@ def _execution_entries(previous: dict | None,
 
 
 def execute_experiment(experiment_path, *, run_executor=None,
-                        out_root="runs", sensor: bool = True) -> ExecutionResult:
+                        out_root=None, sensor: bool = True,
+                        workdir=None) -> ExecutionResult:
     """Load, validate, and execute an experiment file (DESIGN.md 6, 9).
 
     One run per requested design, driven through `run_executor(descriptor,
@@ -851,6 +862,14 @@ def execute_experiment(experiment_path, *, run_executor=None,
     AuditEntry log mapped to decision-record/1) under <out_root>/<run-id>/
     and appends the run summary to the execution manifest written to
     <out_root>/<experiment-id>/execution.json.
+
+    All writable artifacts land under the experiments workdir
+    (framework/workdir.py): out_root defaults to <workdir>/runs and the
+    runner's replay staging + compile cache derive from the same workdir
+    (an explicit out_root wins for the run outputs; GUARDSCOPE_STAGING_DIR
+    overrides the staging root on the runner side). With no --workdir flag
+    and no GUARDSCOPE_WORKDIR env, the process cwd is the workdir, so
+    running from the repo root behaves exactly as before.
 
     The manifest is append-oriented (DESIGN.md 10: collisions keep both
     rows): every execution of the same experiment file APPENDS its run
@@ -869,9 +888,15 @@ def execute_experiment(experiment_path, *, run_executor=None,
     experiment_path = Path(experiment_path)
     experiment = load_experiment(experiment_path)
     plan = resolve(experiment)
-    # the default executor is bound to the sensor mode here (a fake
-    # run_executor keeps its (descriptor, run_id, out_root) contract)
-    executor = run_executor or _sensor_aware_default_executor(sensor)
+    # the writable root: --workdir > GUARDSCOPE_WORKDIR > cwd
+    # (framework/workdir.py); out_root defaults to its runs/ subdir
+    resolved_workdir = resolve_workdir(workdir)
+    if out_root is None:
+        out_root = resolved_workdir / "runs"
+    # the default executor is bound to the sensor mode and the workdir here
+    # (a fake run_executor keeps its (descriptor, run_id, out_root) contract)
+    executor = run_executor or _sensor_aware_default_executor(sensor,
+                                                             resolved_workdir)
     out_root = Path(out_root)
     experiment_id = experiment_path.stem
 

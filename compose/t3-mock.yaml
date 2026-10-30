@@ -1,4 +1,10 @@
 # compose/t3-mock.yaml — deployment design T3 (gateway as sole enforcement
+# Replay staging mount: ${GUARDSCOPE_STAGING_DIR:-../runs}/<harness> is
+# mounted at /workspace/replay (default ../runs: the repo's runs/, resolved
+# against this compose file's directory). Export GUARDSCOPE_STAGING_DIR
+# (an ABSOLUTE path) to stage replay artifacts in an experiments workdir
+# instead; the runner honors the same env when it stages (framework/
+# workdir.py). The repo mount stays read-only source.
 # point, all tools behind it; DESIGN.md 7) with the harness slot filled by the
 # mock harness. The topology is compose/t3.yaml verbatim minus the
 # pi/openclaw harness services (container names re-prefixed, project
@@ -136,7 +142,7 @@ services:
       GATEWAY_URL: http://gateway:8090      # T3: both twins' gateway route
     volumes:
       - target-logs:/var/log/targets
-      - ../runs/mock:/workspace/replay   # driver artifacts retained per-run
+      - ${GUARDSCOPE_STAGING_DIR:-../runs}/mock:/workspace/replay   # driver artifacts retained per-run
       - ..:/repo:ro                     # the repo, read-only (no repo baked in)
     working_dir: /workspace
     command:

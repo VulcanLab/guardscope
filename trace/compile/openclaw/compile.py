@@ -7,9 +7,11 @@ compiled JSON trace consumed by the OpenClaw replay adapter plugin
 1:1 diffing against the spec (C2 acceptance), plus a per-class execution plan
 (kind + arguments) for the adapter.
 
-Usage:
+Usage (the runner writes compiled traces under the experiments workdir
+-- <workdir>/cache/compile/openclaw/, framework/workdir.py -- never into
+this source tree):
   python3 trace/compile/openclaw/compile.py trace/traces/baseline.yaml \
-      --out trace/compile/openclaw/out/baseline.compiled.json
+      --out <workdir>/cache/compile/openclaw/baseline.compiled.json
   python3 trace/compile/openclaw/compile.py trace/traces/baseline.yaml --check   # diff only
 """
 

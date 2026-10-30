@@ -27,13 +27,22 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent.parent
 COMPILE_PY = HERE / "trace" / "compile" / "pi" / "compile.py"
 BASELINE = HERE / "trace" / "traces" / "baseline.yaml"
-DEFAULT_OUT_DIR = HERE / "runs" / "pi"
 CONTAINER_REPLAY_DIR = "/workspace/replay"
 EXTENSION_PATH = "/opt/inspection/adapter/replay.ts"
 
 
+def _default_out_dir() -> Path:
+    # workdir-relative staging (framework/workdir): the standalone entry
+    # point writes the same places the runner does, never into the repo
+    from framework.workdir import staging_dir, resolve_workdir
+    return staging_dir(resolve_workdir()) / "pi"
+
+
 def compile_trace() -> Path:
-    compiled = HERE / "trace" / "compile" / "pi" / "out" / "baseline.compiled.json"
+    from framework.workdir import compile_cache, resolve_workdir
+    compiled = (compile_cache(resolve_workdir()) / "pi" /
+                "baseline.compiled.json")
+    compiled.parent.mkdir(parents=True, exist_ok=True)
     subprocess.run([sys.executable, str(COMPILE_PY), str(BASELINE), "--out", str(compiled)],
                    check=True)
     return compiled
@@ -173,7 +182,7 @@ def main() -> None:
     ap.add_argument("--out", type=Path, default=None, help="result JSON path (default runs/pi/replay-result.json)")
     args = ap.parse_args()
 
-    out_dir = args.out.parent if args.out else DEFAULT_OUT_DIR
+    out_dir = args.out.parent if args.out else _default_out_dir()
     out_dir.mkdir(parents=True, exist_ok=True)
 
     if args.compile:

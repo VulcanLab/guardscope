@@ -4,8 +4,12 @@
 Orchestrates the full pipeline per run:  canonical trace -> compile (+ diff
 check against the spec) -> replay in the harness under Tracee -> map raw
 Tracee events -> reconcile expected-vs-observed -> run record + retained raw
-traces. All raw artifacts land under runs/<run-id>/ (first-class artifacts,
-T0 done-criterion 4).
+traces. All raw artifacts land under <workdir>/runs/<run-id>/ (first-class
+artifacts, T0 done-criterion 4). The writable root — replay staging, run
+outputs, the compiled-trace cache — is the experiments workdir
+(framework/workdir.py): --workdir > GUARDSCOPE_WORKDIR > the process cwd,
+so running from the repo root keeps today's layout and running from an
+experiments directory keeps the repo tree pure source.
 
 Designs (--design): t0 = bare harness (T0 topology, no enforcement point);
 t1 = gateway for HTTP tools (compose/t1.yaml): the harness container is the
@@ -24,9 +28,9 @@ Subcommands:
              checklist over the run records of one design
 
 Usage:
-  python3 runner/run.py compile [--harness pi|openclaw|all]
-  python3 runner/run.py run --harness pi --run-id pi-m7-1 [--design t0|t1]
-  python3 runner/run.py rerun --harness pi --runs 2 --label t1 [--design t1]
+  python3 runner/run.py compile [--harness pi|openclaw|all] [--workdir DIR]
+  python3 runner/run.py run --harness pi --run-id pi-m7-1 [--design t0|t1] [--workdir DIR]
+  python3 runner/run.py rerun --harness pi --runs 2 --label t1 [--design t1] [--workdir DIR]
   python3 runner/run.py reconcile --harness pi --run-dir runs/pi-m7-1 [--design t1]
   python3 runner/run.py report [--design t0|t1] [--runs-dir runs] [--out runs/report.json]
 
@@ -47,11 +51,15 @@ import yaml
 
 HERE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(HERE / "runner"))
+sys.path.insert(0, str(HERE))
 
 import reconcile as rec_mod  # noqa: E402
 import runrecord as rr_mod  # noqa: E402
 import coverage as cov_mod  # noqa: E402
 import outcomes as out_mod  # noqa: E402
+from framework.workdir import (  # noqa: E402
+    resolve_workdir, staging_dir, compile_cache,
+)
 
 SIX_CLASSES = rec_mod.SIX_CLASSES
 BASELINE = HERE / "trace" / "traces" / "baseline.yaml"
@@ -59,18 +67,29 @@ HASH_SIDECAR = HERE / "trace" / "traces" / "baseline.yaml.sha256"
 RULES = HERE / "sensor" / "mapping" / "rules.yaml"
 MAP_EVENTS = HERE / "sensor" / "mapping" / "map_events.py"
 VERSIONS = HERE / "env" / "versions.env"
-DEFAULT_RUNS_DIR = HERE / "runs"
 
 MOCK_HARNESS_REPO_MOUNT = "/repo"          # compose mounts the repo read-only here
 MOCK_DRIVER_TRACE = "trace/traces/baseline.yaml"   # resolved against /repo
+
+# Writable run artifacts live under the experiments workdir (the CLI
+# --workdir flag > GUARDSCOPE_WORKDIR > cwd; framework/workdir.py):
+#   <workdir>/runs/<subdir>          replay staging, mounted by compose at
+#                                   /workspace/replay (GUARDSCOPE_STAGING_DIR
+#                                   overrides the staging root: compose
+#                                   already mounted it)
+#   <workdir>/cache/compile/<harness>  compiled-trace outputs
+# Running from the repo root (no flag, no env) keeps today's layout: the
+# repo root is the workdir, so runs/ stays the repo's runs/ and the
+# compile cache moves out of the source tree (trace/compile/<h>/out/ is
+# no longer written).
+STAGING_SUBDIRS = {"pi": "pi", "openclaw": "openclaw",
+                   "mock-harness": "mock"}
+COMPILED_TRACE_NAME = "baseline.compiled.json"
 
 HARNESSES = {
     "pi": {
         "container": "t0-pi",
         "compile_py": HERE / "trace" / "compile" / "pi" / "compile.py",
-        "compiled": HERE / "trace" / "compile" / "pi" / "out" / "baseline.compiled.json",
-        "replay_dir": DEFAULT_RUNS_DIR / "pi",
-        "trigger": "pi",
         "replay_mount": "/workspace/replay",
         # T4/T5 runs are two-phase (command phase + agent run driven by the
         # scripted provider, including pi's first-prompt MCP tool wait); the
@@ -80,8 +99,6 @@ HARNESSES = {
     "openclaw": {
         "container": "t0-openclaw",
         "compile_py": HERE / "trace" / "compile" / "openclaw" / "compile.py",
-        "compiled": HERE / "trace" / "compile" / "openclaw" / "out" / "baseline.compiled.json",
-        "replay_dir": DEFAULT_RUNS_DIR / "openclaw",
         "trigger": "openclaw",
         "replay_mount": "/workspace/replay",
         "url": "http://127.0.0.1:28789",
@@ -101,7 +118,6 @@ HARNESSES = {
     # topology where the stdio transport is eliminated).
     "mock-harness": {
         "container": "t0-mock",
-        "replay_dir": DEFAULT_RUNS_DIR / "mock",
         "trigger": "mock",
         "replay_mount": "/workspace/replay",
         "timeout_s": 120,
@@ -149,9 +165,14 @@ DESIGNS = {
 }
 
 
-def harness_cfg(harness: str, design: str = "t0") -> dict:
+def harness_cfg(harness: str, design: str = "t0",
+                workdir: Path | None = None) -> dict:
     """Per-harness run config for a deployment design (containers are
-    name-prefixed per compose project; t0 and t1 cannot run simultaneously)."""
+    name-prefixed per compose project; t0 and t1 cannot run simultaneously).
+    The writable paths (replay staging, the compiled trace) derive from the
+    workdir (framework/workdir.py: --workdir > GUARDSCOPE_WORKDIR > cwd;
+    GUARDSCOPE_STAGING_DIR overrides the staging root because compose
+    already mounted it into the topology)."""
     if design not in DESIGNS:
         raise ValueError(f"unknown design {design!r} (known: {sorted(DESIGNS)})")
     # t4: validated on the pi and openclaw harnesses (openclaw's
@@ -171,6 +192,14 @@ def harness_cfg(harness: str, design: str = "t0") -> dict:
     cfg["container"] = f"{prefix}-{harness}"
     cfg["design"] = design
     cfg["prefix"] = prefix
+    # writable paths under the workdir: replay staging (per-harness subdir
+    # of the staging root, exactly what compose mounts at
+    # /workspace/replay) and the compiled-trace cache
+    wd = resolve_workdir(workdir)
+    cfg["replay_dir"] = staging_dir(wd) / STAGING_SUBDIRS[harness]
+    if "compile_py" in HARNESSES[harness]:
+        cfg["compiled"] = (compile_cache(wd) / harness /
+                            COMPILED_TRACE_NAME)
     if harness == "mock-harness":
         # the mock fixtures are their own compose projects: every container
         # name carries the t{N}-mock- prefix and the harness service itself
@@ -264,15 +293,20 @@ def check_spec_hash() -> None:
                            "and review the change")
 
 
-def compile_harness(harness: str) -> Path:
-    """Compile the canonical spec; --check must diff clean against it."""
+def compile_harness(harness: str, workdir: Path | None = None) -> Path:
+    """Compile the canonical spec; --check must diff clean against it. The
+    compiled trace is a cache artifact under the workdir
+    (<workdir>/cache/compile/<harness>/; framework/workdir.py), never under
+    the source tree."""
     cfg = HARNESSES[harness]
+    compiled = compile_cache(resolve_workdir(workdir)) / harness / \
+        COMPILED_TRACE_NAME
     sh([sys.executable, str(cfg["compile_py"]), str(BASELINE),
-        "--out", str(cfg["compiled"])], check=True)
+        "--out", str(compiled)], check=True)
     proc = sh([sys.executable, str(cfg["compile_py"]), str(BASELINE), "--check"])
     if proc.returncode != 0:
         raise RuntimeError(f"{harness}: compiled trace does not match the canonical spec")
-    return cfg["compiled"]
+    return compiled
 
 
 def chown_target_logs(prefix: str = "t0") -> None:
@@ -380,7 +414,7 @@ def trigger_replay(harness: str, run_id: str, timeout_s: float,
                    cfg: dict | None = None) -> tuple[dict, Path]:
     """Execute the compiled trace in the harness (no LLM); returns
     (replay result dict, replay-log path in the host replay dir)."""
-    cfg = cfg or HARNESSES[harness]
+    cfg = cfg or harness_cfg(harness)
     replay_dir = cfg["replay_dir"]
 
     if cfg["trigger"] == "mock":
@@ -476,16 +510,20 @@ def pull_gateway_log(out_dir: Path, prefix: str, subdir: str = "gateway") -> Pat
 
 
 def pull_harness_log(out_dir: Path, harness: str,
-                     policy_container_path: str | None = None) -> Path:
+                     policy_container_path: str | None = None,
+                     replay_dir: Path | None = None) -> Path:
     """T4/T6: the enforcement-point record is the harness log — the adapter's
-    decisions.jsonl on the replay volume (runs/<harness>/ on the host). Same
+    decisions.jsonl on the mounted replay volume (the staging dir's
+    per-harness subdir on the host). Same
     AuditEntry loader as the gateway's. For T6 the in-process policy file is
     additionally captured (manifest-hashed, like the gateway's policy.yaml).
     Returns the run's gateway/ dir so the runrecord/coverage plumbing is
     shared."""
     d = out_dir / "gateway"
     d.mkdir(parents=True, exist_ok=True)
-    src = DEFAULT_RUNS_DIR / harness / "decisions.jsonl"
+    src_dir = (Path(replay_dir) if replay_dir is not None
+               else staging_dir() / STAGING_SUBDIRS[harness])
+    src = src_dir / "decisions.jsonl"
     text = src.read_text() if src.is_file() else ""
     (d / "decisions.jsonl").write_text(text)
     if policy_container_path:
@@ -674,8 +712,9 @@ def assemble_sensorless(spec_path: Path, profile: dict, replay: dict,
 
 
 def run_one(harness: str, run_id: str, runs_dir: Path, timeout_s: float | None = None,
-            design: str = "t0", sensor: bool = True) -> dict:
-    cfg = harness_cfg(harness, design)
+            design: str = "t0", sensor: bool = True,
+            workdir: Path | None = None) -> dict:
+    cfg = harness_cfg(harness, design, workdir=workdir)
     prefix = cfg["prefix"]
     tracee = f"{prefix}-tracee"
     out_dir = Path(runs_dir) / run_id
@@ -691,7 +730,7 @@ def run_one(harness: str, run_id: str, runs_dir: Path, timeout_s: float | None =
     if harness == "mock-harness":
         compiled = None
     else:
-        compiled = compile_harness(harness)
+        compiled = compile_harness(harness, workdir)
         chown_target_logs(cfg["prefix"])
 
     # T2+: gate the replay on the egress jails having applied their netns
@@ -808,7 +847,7 @@ def run_one(harness: str, run_id: str, runs_dir: Path, timeout_s: float | None =
                 and win["start"] <= r["ts"] <= win["end"]
                 and (cid is None or r.get("container") == cid))
             stdio_calls_made = 0
-            dec_f = DEFAULT_RUNS_DIR / harness / "decisions.jsonl"
+            dec_f = cfg["replay_dir"] / "decisions.jsonl"
             if dec_f.is_file():
                 for l in open(dec_f):
                     try: d = json.loads(l)
@@ -832,7 +871,8 @@ def run_one(harness: str, run_id: str, runs_dir: Path, timeout_s: float | None =
     # enforcement-point record + coverage (t1+; T1-4 computation in runrecord)
     if DESIGNS[design].get("enforcement_record") == "harness":
         gateway_dir = pull_harness_log(out_dir, harness,
-                                       DESIGNS[design].get("harness_policy"))
+                                       DESIGNS[design].get("harness_policy"),
+                                       replay_dir=cfg["replay_dir"])
         if DESIGNS[design].get("gateway_side"):
             # t5: the second enforcement point's record (gateway side)
             pull_gateway_log(out_dir, prefix, subdir="gateway-side")
@@ -925,7 +965,8 @@ def run_one(harness: str, run_id: str, runs_dir: Path, timeout_s: float | None =
 def run_design(harness: str, design: str, run_id: str,
                runs_dir: Path | None = None,
                timeout_s: float | None = None,
-               sensor: bool = True) -> dict:
+               sensor: bool = True,
+               workdir: Path | None = None) -> dict:
     """Minimal programmatic entry for one full run: validate the harness +
     design pairing, then delegate to run_one with the prepared defaults.
     The CLI keeps its own argument handling and calls run_one exactly as
@@ -933,13 +974,18 @@ def run_design(harness: str, design: str, run_id: str,
     (framework/execute.py) drives the runner through one named function
     instead of CLI-only plumbing. sensor=False drives the degraded no-eBPF
     path (DESIGN.md 9): no sensor container, no kernel evidence, every
-    output self-reported."""
+    output self-reported. The writable artifacts (staging, compile cache,
+    and the run outputs when runs_dir is omitted) derive from the workdir
+    (framework/workdir.py: --workdir/GUARDSCOPE_WORKDIR > cwd)."""
     if harness not in HARNESSES:
         raise ValueError(f"unknown harness {harness!r} "
                          f"(known: {sorted(HARNESSES)})")
-    harness_cfg(harness, design)   # validates the design + pairing
-    return run_one(harness, run_id, Path(runs_dir) if runs_dir is not None
-                   else DEFAULT_RUNS_DIR, timeout_s, design, sensor=sensor)
+    wd = resolve_workdir(workdir)
+    harness_cfg(harness, design, workdir=wd)   # validates the design + pairing
+    return run_one(harness, run_id,
+                   Path(runs_dir) if runs_dir is not None
+                   else wd / "runs", timeout_s, design, sensor=sensor,
+                   workdir=wd)
 
 
 # --- reproducibility (rerun) ------------------------------------------------------
@@ -978,13 +1024,15 @@ def reproducibility_verdict(summaries: list[dict]) -> dict:
 
 
 def run_rerun(harness: str, label: str, n: int, runs_dir: Path,
-              timeout_s: float | None = None, design: str = "t0") -> dict:
+              timeout_s: float | None = None, design: str = "t0",
+              workdir: Path | None = None) -> dict:
     if n < 2:
         raise ValueError("rerun needs >= 2 consecutive runs")
     summaries = []
     for i in range(1, n + 1):
         run_id = f"{harness}-{label}-r{i}"
-        summaries.append(run_one(harness, run_id, runs_dir, timeout_s, design))
+        summaries.append(run_one(harness, run_id, runs_dir, timeout_s, design,
+                                 workdir=workdir))
     verdict = reproducibility_verdict(summaries)
     verdict["spec_sha256"] = summaries[0]["spec_sha256"]
     out = Path(runs_dir) / f"{harness}-{label}" / "reproducibility.json"
@@ -1312,12 +1360,20 @@ def main() -> int:
 
     p = sub.add_parser("compile", help="compile the canonical spec + diff check")
     p.add_argument("--harness", default="all", choices=["pi", "openclaw", "all"])
+    p.add_argument("--workdir", type=Path, default=None,
+                   help="writable root for run artifacts (staging, run "
+                        "outputs, compile cache; default: GUARDSCOPE_WORKDIR "
+                        "or the cwd; framework/workdir.py)")
 
     p = sub.add_parser("run", help="one full run (compile -> replay -> reconcile -> record)")
     p.add_argument("--harness", required=True, choices=sorted(HARNESSES))
     p.add_argument("--design", default="t0", choices=sorted(DESIGNS))
     p.add_argument("--run-id", required=True)
-    p.add_argument("--runs-dir", type=Path, default=DEFAULT_RUNS_DIR)
+    p.add_argument("--runs-dir", type=Path, default=None,
+                   help="run output root (default: <workdir>/runs)")
+    p.add_argument("--workdir", type=Path, default=None,
+                   help="writable root for run artifacts (default: "
+                        "GUARDSCOPE_WORKDIR or the cwd; framework/workdir.py)")
     p.add_argument("--timeout", type=float, default=None)
     p.add_argument("--no-sensor", action="store_true",
                    help="degraded no-eBPF mode (DESIGN.md 9): run without "
@@ -1330,7 +1386,11 @@ def main() -> int:
     p.add_argument("--design", default="t0", choices=sorted(DESIGNS))
     p.add_argument("--runs", type=int, default=2)
     p.add_argument("--label", default="rerun")
-    p.add_argument("--runs-dir", type=Path, default=DEFAULT_RUNS_DIR)
+    p.add_argument("--runs-dir", type=Path, default=None,
+                   help="run output root (default: <workdir>/runs)")
+    p.add_argument("--workdir", type=Path, default=None,
+                   help="writable root for run artifacts (default: "
+                        "GUARDSCOPE_WORKDIR or the cwd; framework/workdir.py)")
     p.add_argument("--timeout", type=float, default=None)
 
     p = sub.add_parser("reconcile", help="re-reconcile + re-assemble from retained artifacts")
@@ -1340,7 +1400,8 @@ def main() -> int:
 
     p = sub.add_parser("report", help="summary table + done-criteria checklist")
     p.add_argument("--design", default="t0", choices=sorted(DESIGNS))
-    p.add_argument("--runs-dir", type=Path, default=DEFAULT_RUNS_DIR)
+    p.add_argument("--runs-dir", type=Path, default=None,
+                   help="run records root (default: <workdir>/runs)")
     p.add_argument("--out", type=Path, default=None, help="write JSON report here")
     p.add_argument("--markdown", action="store_true", help="print the markdown table")
 
@@ -1357,20 +1418,24 @@ def main() -> int:
                 print(f"{h}: no compiled trace (reads the canonical spec "
                       f"directly)")
                 continue
-            compiled = compile_harness(h)
+            compiled = compile_harness(h, args.workdir)
             print(f"{h}: compiled + diff-clean -> {compiled}")
         return 0
 
     if args.cmd == "run":
-        summary = run_one(args.harness, args.run_id, args.runs_dir, args.timeout,
-                          args.design, sensor=not args.no_sensor)
+        wd = resolve_workdir(args.workdir)
+        runs_dir = args.runs_dir if args.runs_dir is not None else wd / "runs"
+        summary = run_one(args.harness, args.run_id, runs_dir, args.timeout,
+                          args.design, sensor=not args.no_sensor, workdir=wd)
         print(json.dumps(summary, indent=1))
         cov_ok = summary["coverage"] == "pass"
         return 0 if summary["status"] == "pass" and cov_ok else 1
 
     if args.cmd == "rerun":
-        verdict = run_rerun(args.harness, args.label, args.runs, args.runs_dir,
-                            args.timeout, args.design)
+        wd = resolve_workdir(args.workdir)
+        runs_dir = args.runs_dir if args.runs_dir is not None else wd / "runs"
+        verdict = run_rerun(args.harness, args.label, args.runs, runs_dir,
+                            args.timeout, args.design, workdir=wd)
         return 0 if verdict["status"] == "pass" else 1
 
     if args.cmd == "reconcile":
@@ -1414,7 +1479,9 @@ def main() -> int:
         return 0 if report["status"] == "pass" else 1
 
     if args.cmd == "report":
-        report = build_report(args.runs_dir, args.design)
+        runs_dir = args.runs_dir if args.runs_dir is not None \
+            else resolve_workdir() / "runs"
+        report = build_report(runs_dir, args.design)
         if args.out:
             args.out.parent.mkdir(parents=True, exist_ok=True)
             args.out.write_text(json.dumps(report, indent=1, sort_keys=True) + "\n")

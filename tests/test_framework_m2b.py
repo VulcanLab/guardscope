@@ -541,7 +541,8 @@ def test_sensor_aware_default_executor_passes_the_flag(tmp_path, monkeypatch):
 def test_cli_run_no_sensor_switch(tmp_path, monkeypatch):
     seen = {}
 
-    def fake_execute(experiment_path, *, out_root="runs", sensor=True):
+    def fake_execute(experiment_path, *, out_root=None, sensor=True,
+                     workdir=None):
         seen["sensor"] = sensor
         from framework.experiment import load_experiment, resolve
         plan = resolve(load_experiment(experiment_path))

@@ -1,4 +1,10 @@
 # compose/t0-mock.yaml — the T0 topology with the harness slot filled by the
+# Replay staging mount: ${GUARDSCOPE_STAGING_DIR:-../runs}/<harness> is
+# mounted at /workspace/replay (default ../runs: the repo's runs/, resolved
+# against this compose file's directory). Export GUARDSCOPE_STAGING_DIR
+# (an ABSOLUTE path) to stage replay artifacts in an experiments workdir
+# instead; the runner honors the same env when it stages (framework/
+# workdir.py). The repo mount stays read-only source.
 # mock harness (the path-originator fixture; DESIGN.md 7, 8). The targets,
 # the shared volumes, and the sensor profile are compose/t0.yaml verbatim
 # minus the pi/openclaw harness services; every container name carries the
@@ -73,7 +79,7 @@ services:
       REPLAY_LOG_DIR: /workspace/replay
     volumes:
       - target-logs:/var/log/targets
-      - ../runs/mock:/workspace/replay   # driver artifacts retained per-run
+      - ${GUARDSCOPE_STAGING_DIR:-../runs}/mock:/workspace/replay   # driver artifacts retained per-run
       - ..:/repo:ro                     # the repo, read-only (no repo baked in)
     working_dir: /workspace
     command:

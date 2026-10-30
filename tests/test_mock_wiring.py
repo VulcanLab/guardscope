@@ -579,7 +579,9 @@ def test_compose_fixture_shape(design):
     assert "sleep infinity" in " ".join(svc["command"])
     # volumes: target logs, the per-run replay dir, the repo read-only
     vols = svc["volumes"]
-    assert "../runs/mock:/workspace/replay" in vols
+    # the staging mount is env-driven (GUARDSCOPE_STAGING_DIR; unset
+    # keeps the repo-relative ../runs default; framework/workdir.py)
+    assert "${GUARDSCOPE_STAGING_DIR:-../runs}/mock:/workspace/replay" in vols
     assert "..:/repo:ro" in vols
     assert any(v.startswith("target-logs:") for v in vols)
     env = svc["environment"]

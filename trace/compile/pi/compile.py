@@ -7,9 +7,11 @@ compiled JSON trace consumed by the Pi inspection-replay extension
 shape to the OpenClaw one — the adapters share the replay contract — so both
 harnesses execute the same action surface from the same canonical spec.
 
-Usage:
+Usage (the runner writes compiled traces under the experiments workdir
+-- <workdir>/cache/compile/pi/, framework/workdir.py -- never into this
+source tree):
   python3 trace/compile/pi/compile.py trace/traces/baseline.yaml \
-      --out trace/compile/pi/out/baseline.compiled.json
+      --out <workdir>/cache/compile/pi/baseline.compiled.json
   python3 trace/compile/pi/compile.py trace/traces/baseline.yaml --check   # diff only
 """
 

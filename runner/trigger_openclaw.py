@@ -5,7 +5,7 @@ Posts the compiled trace to the harness gateway's POST /tools/invoke ->
 replay_trace tool (no LLM involved), and saves the result JSON.
 
 Usage:
-  python3 runner/trigger_openclaw.py --trace trace/compile/openclaw/out/baseline.json \
+  python3 runner/trigger_openclaw.py --trace <workdir>/cache/compile/openclaw/baseline.compiled.json \
       [--url http://127.0.0.1:18789] [--token inspection-t0-token] [--out runs/x/replay-result.json]
 """
 
@@ -149,8 +149,10 @@ def run_replay_t4(compiled_path: Path, replay_dir: Path, container: str,
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     here = Path(__file__).resolve().parent.parent
-    ap.add_argument("--trace", type=Path,
-                    default=here / "trace" / "compile" / "openclaw" / "out" / "baseline.compiled.json")
+    from framework.workdir import compile_cache, resolve_workdir
+    default_trace = (compile_cache(resolve_workdir()) / "openclaw" /
+                     "baseline.compiled.json")
+    ap.add_argument("--trace", type=Path, default=default_trace)
     ap.add_argument("--url", default="http://127.0.0.1:28789")
     ap.add_argument("--token", default="inspection-t0-token")
     ap.add_argument("--out", type=Path, default=None, help="result JSON path")

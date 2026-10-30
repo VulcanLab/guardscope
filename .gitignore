@@ -3,6 +3,9 @@ __pycache__/
 .venv/
 .pytest_cache/
 runs/
+# compiled-trace cache when the repo root is the experiments workdir
+# (framework/workdir.py; the compile entry points stay in trace/compile/)
+cache/
 # framework-generated outputs (not part of the open-source tree; the
 # registry seeds and run evidence are local records)
 results/

@@ -4,10 +4,12 @@ Usage:
   python -m framework.cli validate <experiment-file>
       Load and validate the experiment file (DESIGN.md 6); print the
       resolved plan (defaults recorded as facts) or the load-time error.
-  python -m framework.cli plan <experiment-file>
-      Print the expanded run descriptors (one per requested design) as JSON.
+  python -m framework.cli plan <experiment-file> [--workdir DIR]
+      Print the expanded run descriptors (one per requested design) as
+      JSON; the resolved artifact paths (workdir, out root, replay
+      staging) go to stderr.
   python -m framework.cli run <experiment-file> [--out-root runs]
-      [--no-sensor]
+      [--workdir DIR] [--no-sensor]
       Execute the experiment (DESIGN.md 9): one live run per requested
       design, then the framework run manifest (decision records mapped to
       decision-record/1, recomputed C1-C4 coverage with the consistency
@@ -48,6 +50,7 @@ import sys
 from pathlib import Path
 
 from framework.experiment import ExperimentError, load_experiment, resolve
+from framework.workdir import resolve_workdir, staging_dir
 
 
 def main(argv=None) -> int:
@@ -58,13 +61,25 @@ def main(argv=None) -> int:
         p = sub.add_parser(name)
         p.add_argument("file", help="experiment file (YAML or JSON)")
         if name == "run":
-            p.add_argument("--out-root", default="runs",
-                           help="root for run artifacts and execution.json")
+            p.add_argument("--out-root", default=None,
+                           help="root for run artifacts and execution.json "
+                                "(default: <workdir>/runs)")
+            p.add_argument("--workdir", default=None,
+                           help="writable root for run artifacts: replay "
+                                "staging, run outputs, compile cache "
+                                "(default: GUARDSCOPE_WORKDIR or the cwd; "
+                                "framework/workdir.py)")
             p.add_argument("--no-sensor", action="store_true",
                            help="degraded no-eBPF mode (DESIGN.md 9): run "
                                 "without the sensor (compose up WITHOUT "
                                 "--profile sensor); outputs are labeled "
                                 "self-reported")
+        if name == "plan":
+            p.add_argument("--workdir", default=None,
+                           help="resolve the artifact paths against this "
+                                "writable root (default: GUARDSCOPE_WORKDIR "
+                                "or the cwd); the resolved paths are "
+                                "printed to stderr")
     p = sub.add_parser(
         "report",
         help="merge execution manifests into report-level grids "
@@ -213,7 +228,8 @@ def main(argv=None) -> int:
         from framework.execute import execute_experiment
         try:
             result = execute_experiment(args.file, out_root=args.out_root,
-                                        sensor=not args.no_sensor)
+                                        sensor=not args.no_sensor,
+                                        workdir=args.workdir)
         except (ExperimentError, OSError, RuntimeError, ValueError) as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 1
@@ -249,6 +265,13 @@ def main(argv=None) -> int:
     if args.command == "validate":
         print(json.dumps(plan.to_dict(), indent=1, sort_keys=True))
     else:
+        # plan: print the expanded run descriptors (stdout, the contract)
+        # and the resolved artifact paths (stderr, so piping stdout stays
+        # machine-readable)
+        wd = resolve_workdir(getattr(args, "workdir", None))
+        print(f"workdir: {wd}", file=sys.stderr)
+        print(f"out root: {wd / 'runs'}", file=sys.stderr)
+        print(f"replay staging: {staging_dir(wd)}", file=sys.stderr)
         print(json.dumps([r.to_dict() for r in plan.runs],
                          indent=1, sort_keys=True))
     return 0

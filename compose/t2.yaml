@@ -1,4 +1,10 @@
 # compose/t2.yaml — deployment design T2: Gateway + forced network egress
+# Replay staging mount: ${GUARDSCOPE_STAGING_DIR:-../runs}/<harness> is
+# mounted at /workspace/replay (default ../runs: the repo's runs/, resolved
+# against this compose file's directory). Export GUARDSCOPE_STAGING_DIR
+# (an ABSOLUTE path) to stage replay artifacts in an experiments workdir
+# instead; the runner honors the same env when it stages (framework/
+# workdir.py). The repo mount stays read-only source.
 # (main.tex Table 1). T1's topology (AGT MCP Security Gateway on every
 # harness http_tool_call) plus a NETWORK-FORCED default-deny egress policy on
 # the harness containers (main.tex: enforced at the container network layer,
@@ -133,7 +139,7 @@ services:
       GATEWAY_URL: http://gateway:8090      # T2: http_tool_call via the gateway
     volumes:
       - target-logs:/var/log/targets
-      - ../runs/openclaw:/workspace/replay
+      - ${GUARDSCOPE_STAGING_DIR:-../runs}/openclaw:/workspace/replay
     depends_on: [gateway]
     restart: unless-stopped
 
@@ -150,7 +156,7 @@ services:
       GATEWAY_URL: http://gateway:8090      # T2: http_tool_call via the gateway
     volumes:
       - target-logs:/var/log/targets
-      - ../runs/pi:/workspace/replay
+      - ${GUARDSCOPE_STAGING_DIR:-../runs}/pi:/workspace/replay
     depends_on: [gateway]
     restart: unless-stopped
 
