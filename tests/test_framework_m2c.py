@@ -716,7 +716,12 @@ def synthetic_execution(out_root: Path, exp_id: str, runs):
             "observation_only": False, "run_dir": str(run_dir),
             "run_record": str(run_dir / "run-record.json"),
             "decision_records": {"path": "x", "count": 1},
-            "fixture_fingerprint": {"id": "reference-rig/t1"},
+            # composed fixture id (DESIGN.md 7 base+overlay)
+            "fixture_fingerprint": {"id": "reference-rig/t1+agt-gateway",
+                                     "compose": {"path": "compose/t1.yaml"},
+                                     "overlay": {
+                                         "path": "plugins/agt-gateway/"
+                                                 "overlay/t1.yaml"}},
             "evidence_class": "harness-run", "degraded": [], "status": "pass",
             "coverage": {"status": "pass"}, "coverage_consistent": True,
             "findings": [], "spec_sha256": "a" * 64,

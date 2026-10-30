@@ -263,17 +263,25 @@ def main(argv=None) -> int:
         return 0 if ok else 1
 
     if args.command == "validate":
+        # the plan carries the base+overlay composition per run: the merged
+        # fixture id, the overlay bundle path, and the on-matrix overlay
+        # validation (framework/overlay.py validate_overlay; violations
+        # show as overlay_problems and flag the run off_matrix, DESIGN.md 7)
         print(json.dumps(plan.to_dict(), indent=1, sort_keys=True))
     else:
         # plan: print the expanded run descriptors (stdout, the contract)
         # and the resolved artifact paths (stderr, so piping stdout stays
-        # machine-readable)
+        # machine-readable). Each run carries the merged fixture id and the
+        # fixture fingerprint's two hashes (base compose + control-binding
+        # overlay; DESIGN.md 7 base+overlay, DESIGN.md 10 comparability key).
+        from framework.execute import fixture_fingerprint
         wd = resolve_workdir(getattr(args, "workdir", None))
         print(f"workdir: {wd}", file=sys.stderr)
         print(f"out root: {wd / 'runs'}", file=sys.stderr)
         print(f"replay staging: {staging_dir(wd)}", file=sys.stderr)
-        print(json.dumps([r.to_dict() for r in plan.runs],
-                         indent=1, sort_keys=True))
+        runs = [{**r.to_dict(), "fixture_fingerprint": fixture_fingerprint(r)}
+                for r in plan.runs]
+        print(json.dumps(runs, indent=1, sort_keys=True))
     return 0
 
 

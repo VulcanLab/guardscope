@@ -34,8 +34,17 @@
 # bring up the topology FIRST, wait for the harness containers to be healthy,
 # then start the sensor (Tracee container-cache startup race —
 # sensor/README.md):
-#   docker compose -f compose/t5.yaml up -d --build
-#   docker compose -f compose/t5.yaml --profile sensor up -d tracee
+#   docker compose -f compose/t5.yaml -f plugins/agt-gateway/overlay/t5.yaml up -d --build
+#   docker compose -f compose/t5.yaml -f plugins/agt-gateway/overlay/t5.yaml --profile sensor up -d tracee
+#
+# This file is the BASE of the t5 fixture (DESIGN.md 7): the full design
+# structure (the harness-intrinsic permission chain included) with the
+# gateway SLOT declared but the control service ABSENT; the control arrives
+# as a binding overlay merged on top (the shipped binding:
+# plugins/agt-gateway/overlay/t5.yaml, expressed exactly like a third
+# party's). The base alone is NOT a validatable unit (the harness services
+# depend on the slot's gateway service; docker compose config fails loudly
+# without the overlay). Slot declaration: compose/slots/t5.yaml.
 
 name: inspection-t5
 
@@ -67,21 +76,11 @@ services:
       - target-logs:/var/log/targets
     restart: unless-stopped
 
-  gateway:
-    build:
-      context: ..
-      dockerfile: gateway/Dockerfile
-    image: inspection/gateway
-    container_name: t5-gateway
-    networks: [t5net]
-    environment:
-      UPSTREAM_URL: http://mcp-http:8091/mcp
-      GATEWAY_LOG_DIR: /var/log/gateway
-      GATEWAY_AGENT_ID: t5-replay
-    volumes:
-      - gateway-logs:/var/log/gateway
-    depends_on: [mcp-http]
-    restart: unless-stopped
+  # T5's SECOND enforcement point: the gateway SLOT (compose/slots/t5.yaml),
+  # ABSENT from this base — it arrives as a binding overlay (the shipped
+  # binding: plugins/agt-gateway/overlay/t5.yaml, moved out of this file
+  # verbatim). The first point (the harness permission chain) is
+  # harness-intrinsic and stays in the base.
 
   net-peer:
     build:
@@ -131,6 +130,7 @@ services:
       - target-logs:/var/log/targets
       - ${GUARDSCOPE_STAGING_DIR:-../runs}/openclaw:/workspace/replay
       - ../harnesses/openclaw/config/openclaw-t4.json:/opt/inspection-replay/openclaw-t4.json:ro
+    depends_on: [gateway]   # the slot service (base+overlay is the unit)
     restart: unless-stopped
 
   pi:
@@ -149,6 +149,7 @@ services:
       - target-logs:/var/log/targets
       - ${GUARDSCOPE_STAGING_DIR:-../runs}/pi:/workspace/replay
       - ../harnesses/pi/config/mcp.json:/root/.pi/agent/mcp.json:ro
+    depends_on: [gateway]   # the slot service (base+overlay is the unit)
     restart: unless-stopped
 
 networks:

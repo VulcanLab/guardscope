@@ -1,0 +1,18 @@
+# compose/slots/t2.yaml — framework-side slot descriptor for design T2
+# (DESIGN.md 7). Sidecar data, NOT a compose file (see compose/slots/t1.yaml
+# for the mechanism). T2's forced-egress jail is base-owned environment
+# topology and stays out of this descriptor: the slot is the gateway, the
+# jail is silent and non-emitting.
+#
+# The mock-harness fixture (compose/t2-mock.yaml) realizes the same slot;
+# its binding overlay is plugins/<control>/overlay/t2-mock.yaml.
+schema: 1
+design: t2
+slot: gateway
+kind: container
+service: gateway
+network: t2net
+harness_env:
+  GATEWAY_URL: http://gateway:8090
+log_volume: gateway-logs
+policy: gateway/policy.yaml

@@ -76,11 +76,18 @@ started produced zero events, while the one created ~0.3 s before it was
 captured normally. Restarting the sensor after the topology is up fixes it
 (all events captured immediately).
 
-Bring-up order for every compose design (t0/t1/…):
+Bring-up order for every compose design (t0/t1/…). Designs with a
+gateway slot (t1/t2/t3/t5) are placeholder bases + control-binding
+overlays (DESIGN.md 7): merge the overlay AFTER the base (base first —
+the overlay's relative build context resolves against the first compose
+file's directory); t0/t4/t6 are single-file fixtures:
 
+    # t0/t4/t6:
     docker compose -f compose/<design>.yaml up -d --build   # topology only
-    # wait for harness containers to be healthy
-    docker compose -f compose/<design>.yaml --profile sensor up -d tracee
+    # t1/t2/t3/t5 (base + the control's overlay):
+    docker compose -f compose/<design>.yaml -f plugins/agt-gateway/overlay/<design>.yaml up -d --build
+    # wait for harness containers to be healthy, then every design:
+    docker compose -f compose/<design>.yaml [-f <overlay>] --profile sensor up -d tracee
     sleep 75                                                # eBPF warm-up
 
 If the sensor ever starts with (or during) the topology, restart it once the

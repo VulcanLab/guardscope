@@ -1,0 +1,34 @@
+# plugins/agt-gateway/overlay/t5.yaml — the agt-gateway control binding for
+# design T5 (DESIGN.md 7): the SECOND enforcement point's service
+# definition, moved verbatim out of compose/t5.yaml (the base). The first
+# point (the harness permission chain) is harness-intrinsic and stays in
+# the base; the http-stdio MCP server forwards its tool calls through this
+# gateway (MCP_GATEWAY_URL), so the http tool calls cross both points.
+# This is T1's allow-all policy (the default gateway policy; t5 pins no
+# separate enforcement_config file).
+#
+# Merged bring-up (the base comes FIRST — the relative build context below
+# resolves against the FIRST compose file's directory, so the base must
+# precede this overlay):
+#   docker compose -f compose/t5.yaml -f plugins/agt-gateway/overlay/t5.yaml up -d
+#   docker compose -f compose/t5.yaml -f plugins/agt-gateway/overlay/t5.yaml --profile sensor up -d tracee
+#
+# The base alone is not a validatable unit (its harness services depend on
+# the slot's gateway service). Slot declaration: compose/slots/t5.yaml.
+
+services:
+  gateway:
+    build:
+      context: ..
+      dockerfile: gateway/Dockerfile
+    image: inspection/gateway
+    container_name: t5-gateway
+    networks: [t5net]
+    environment:
+      UPSTREAM_URL: http://mcp-http:8091/mcp
+      GATEWAY_LOG_DIR: /var/log/gateway
+      GATEWAY_AGENT_ID: t5-replay
+    volumes:
+      - gateway-logs:/var/log/gateway
+    depends_on: [mcp-http]
+    restart: unless-stopped

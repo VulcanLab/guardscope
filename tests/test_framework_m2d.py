@@ -55,12 +55,17 @@ WORKLOAD_SHA = "f" * 64
 def run_entry(run_id: str, design: str = "t1", **overrides) -> dict:
     """One run entry of an execution manifest (the shape
     execute_experiment writes), with per-test overrides."""
+    control = None if design == "t4" else "agt-gateway"
+    # composed fixture id for control-bearing designs (DESIGN.md 7
+    # base+overlay); the plain per-design id for control:null runs
+    fixture = (f"reference-rig/{design}+{control}" if control
+               else f"reference-rig/{design}")
     doc = {
         "run_id": run_id,
         "design": design,
-        "fixture": f"reference-rig/{design}",
-        "control": "agt-gateway" if design != "t4" else None,
-        "control_binding": "selected" if design != "t4" else "none",
+        "fixture": fixture,
+        "control": control,
+        "control_binding": "selected" if control else "none",
         "harness": "pi",
         "workload": "baseline-15",
         "off_matrix": False,
@@ -68,7 +73,7 @@ def run_entry(run_id: str, design: str = "t1", **overrides) -> dict:
         "run_dir": None,
         "run_record": None,
         "decision_records": {"path": None, "count": 4},
-        "fixture_fingerprint": {"id": f"reference-rig/{design}"},
+        "fixture_fingerprint": {"id": fixture},
         "evidence_class": "harness-run",
         "degraded": [],
         "status": "pass",

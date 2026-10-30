@@ -6,9 +6,13 @@
 # instead; the runner honors the same env when it stages (framework/
 # workdir.py). The repo mount stays read-only source.
 # egress restriction; DESIGN.md 7) with the harness slot filled by the mock
-# harness. The gateway, http-endpoint, mcp-http, and net-peer services are
-# compose/t1.yaml verbatim (container names re-prefixed, project distinct);
-# only the harness slot differs.
+# harness. This file is the BASE: the http-endpoint, mcp-http, and net-peer
+# services are compose/t1.yaml verbatim (container names re-prefixed,
+# project distinct) and the gateway SLOT is declared but the control
+# service ABSENT — it arrives as a control-binding overlay (the shipped
+# binding: plugins/agt-gateway/overlay/t1-mock.yaml). The base alone is NOT
+# a validatable unit (the mock-harness service depends on the slot's
+# gateway service); base+overlay is.
 #
 #   mock-harness ──MCP over HTTP:8090──▶ t1-mock-gateway ──:8091──▶ t1-mock-mcp-http
 #        │ (mock_harness/plans/t1.json: routes.http=gateway, the inspected    │ raw HTTP:8080
@@ -25,8 +29,10 @@
 #       --plan mock_harness/plans/t1.json \
 #       --out /workspace/replay/<run-id> --run-id <run-id>
 #
-# The Tracee sensor runs OUTSIDE the deployed topology (no t1net attachment):
-#   docker compose -f compose/t1-mock.yaml --profile sensor up -d
+# Merged bring-up (the base comes FIRST: the overlay's relative build
+# context resolves against the FIRST compose file's directory):
+#   docker compose -f compose/t1-mock.yaml -f plugins/agt-gateway/overlay/t1-mock.yaml up -d
+#   docker compose -f compose/t1-mock.yaml -f plugins/agt-gateway/overlay/t1-mock.yaml --profile sensor up -d tracee
 
 name: inspection-t1-mock
 
@@ -55,21 +61,10 @@ services:
       - target-logs:/var/log/targets
     restart: unless-stopped
 
-  gateway:
-    build:
-      context: ..
-      dockerfile: gateway/Dockerfile
-    image: inspection/gateway
-    container_name: t1-mock-gateway
-    networks: [t1net]
-    environment:
-      UPSTREAM_URL: http://mcp-http:8091/mcp
-      GATEWAY_LOG_DIR: /var/log/gateway
-      GATEWAY_AGENT_ID: t1-mock-replay
-    volumes:
-      - gateway-logs:/var/log/gateway
-    depends_on: [mcp-http]
-    restart: unless-stopped
+  # gateway: the design's control SLOT (compose/slots/t1.yaml), ABSENT from
+  # this base — it arrives as a binding overlay (the shipped binding:
+  # plugins/agt-gateway/overlay/t1-mock.yaml, moved out of this file
+  # verbatim).
 
   net-peer:
     build:

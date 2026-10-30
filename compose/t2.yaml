@@ -34,8 +34,18 @@
 # bring up the topology FIRST, wait for the harness containers to be healthy,
 # then start the sensor (Tracee container-cache startup race —
 # sensor/README.md):
-#   docker compose -f compose/t2.yaml up -d --build
-#   docker compose -f compose/t2.yaml --profile sensor up -d tracee
+#   docker compose -f compose/t2.yaml -f plugins/agt-gateway/overlay/t2.yaml up -d --build
+#   docker compose -f compose/t2.yaml -f plugins/agt-gateway/overlay/t2.yaml --profile sensor up -d tracee
+#
+# This file is the BASE of the t2 fixture (DESIGN.md 7): the full design
+# structure with the gateway SLOT declared but the control service ABSENT;
+# the control arrives as a binding overlay merged on top (the shipped
+# binding: plugins/agt-gateway/overlay/t2.yaml, expressed exactly like a
+# third party's). The base alone is NOT a validatable unit (the harness and
+# egress-jail services depend on the slot's gateway service; docker compose
+# config fails loudly without the overlay). Slot declaration:
+# compose/slots/t2.yaml. The forced-egress jail stays in the base — it is
+# silent environment topology, never part of the control.
 
 # The canonical trace spec is unchanged from T0/T1 — only the topology
 # differs, keeping T2 coverage comparable to T0/T1.
@@ -81,21 +91,9 @@ services:
       - target-logs:/var/log/targets
     restart: unless-stopped
 
-  gateway:
-    build:
-      context: ..
-      dockerfile: gateway/Dockerfile
-    image: inspection/gateway
-    container_name: t2-gateway
-    networks: [t2net]
-    environment:
-      UPSTREAM_URL: http://mcp-http:8091/mcp
-      GATEWAY_LOG_DIR: /var/log/gateway
-      GATEWAY_AGENT_ID: t2-replay
-    volumes:
-      - gateway-logs:/var/log/gateway
-    depends_on: [mcp-http]
-    restart: unless-stopped
+  # gateway: the design's control SLOT (compose/slots/t2.yaml), ABSENT from
+  # this base — it arrives as a binding overlay (the shipped binding:
+  # plugins/agt-gateway/overlay/t2.yaml, moved out of this file verbatim).
 
   net-peer:
     build:

@@ -9,9 +9,10 @@ side artifacts (outcomes.json, the run manifest, the run record), groups
 the runs into grids by the comparability key, and assembles the cells.
 
 Comparability key (DESIGN.md 10, all must match to compose into one grid):
-  workload hash; fixture fingerprint including enforcement_config; harness
-  id + major version; kernel-sensor version; reconciliation profile id +
-  version; classification-semantics version.
+  workload hash; fixture fingerprint (base compose + control-binding
+  overlay + enforcement_config, DESIGN.md 7); harness id + major
+  version; kernel-sensor version; reconciliation profile id + version;
+  classification-semantics version.
 
 Implementation note on the fixture fingerprint: fixture identity is
 per-design (each design column is its own reference rig), so it cannot be

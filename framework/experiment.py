@@ -19,6 +19,9 @@ import yaml
 from framework.contracts import (  # noqa: E402
     ContractError, load_capabilities, manifest_path,
 )
+from framework.overlay import (  # noqa: E402
+    has_slot, overlay_abs_path, overlay_rel_path, validate_overlay,
+)
 from framework.schemas import load_schema
 
 _EXPERIMENT_VALIDATOR = jsonschema.Draft202012Validator(
@@ -51,12 +54,21 @@ NO_CONTROL_DESIGNS = frozenset({"t0", "t7"})
 ALL_DESIGNS = tuple(f"t{i}" for i in range(8))
 
 # Reference-rig fixture ids per design (DESIGN.md 6 recorded defaults:
-# "fixture: the reference rig matching each requested design"; the rigs are
-# the compose/t<n>.yaml topologies). t7 is the kernel-level observation row
-# (DESIGN.md 7) and is flagged observation-only; its reference fixture is
-# not materialized in this pass (env/versions.env: no compatible host yet).
+# "fixture: the reference rig matching each requested design"). A rig is
+# now a placeholder base + a control-binding overlay (DESIGN.md 7): for a
+# control-bearing design the id names the composition (base design + the
+# bound control's id); for control:null designs the plain per-design id.
+# t7 is the kernel-level observation row (DESIGN.md 7) and is flagged
+# observation-only; its reference fixture is not materialized in this pass
+# (env/versions.env: no compatible host yet).
 def reference_rig_id(design: str) -> str:
     return f"reference-rig/{design}"
+
+
+def composed_rig_id(design: str, control: str) -> str:
+    """The merged fixture id of a base+overlay composition (DESIGN.md 7):
+    the design's base with a control bound into its slot."""
+    return f"reference-rig/{design}+{control}"
 
 
 @dataclass
@@ -96,6 +108,14 @@ class RunDescriptor:
     workload: str
     off_matrix: bool
     observation_only: bool  # t7: the kernel-observation row (DESIGN.md 7)
+    # the control-binding overlay of a base+overlay fixture (DESIGN.md 7):
+    # the repo-relative overlay bundle under the plugin dir, None when the
+    # run binds no control overlay (control:null designs, custom fixtures
+    overlay: str | None = None
+    # the on-matrix rule problems (framework/overlay.py validate_overlay);
+    # non-empty => the run is a custom fixture (off_matrix), never a hard
+    # error (DESIGN.md 7: the flag controls grid placement)
+    overlay_problems: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
@@ -107,6 +127,8 @@ class RunDescriptor:
             "workload": self.workload,
             "off_matrix": self.off_matrix,
             "observation_only": self.observation_only,
+            "overlay": self.overlay,
+            "overlay_problems": list(self.overlay_problems),
         }
 
 
@@ -270,6 +292,25 @@ def load_experiment(path) -> ResolvedExperiment:
     if conflicts:
         raise ExperimentError("; ".join(conflicts))
 
+    # --- control-binding overlays (DESIGN.md 7): the pairing above checked
+    # the control's capability manifest; the BINDING for each requested
+    # slot design is the overlay bundle under its plugin dir
+    # (plugins/<control>/overlay/<design>.yaml, the -mock variant on the
+    # mock harness). A supported design with no overlay file is a manifest
+    # claim with nothing behind it: a load-time hard error naming the
+    # missing file, before any topology is provisioned.
+    if control is not None:
+        for design in designs:
+            if not has_slot(design):
+                continue
+            rel = overlay_rel_path(control, design, harness)
+            if not overlay_abs_path(rel).is_file():
+                raise ExperimentError(
+                    f"control {control!r} declares design {design} but "
+                    f"ships no binding overlay at {rel} (DESIGN.md 7: a "
+                    f"control's binding for a design is its overlay "
+                    f"bundle)")
+
     # --- off_matrix (DESIGN.md 6: composition auto-sets it; DESIGN.md 7:
     # custom fixtures run off-matrix with full measurement fidelity) -----
     off_matrix = bool(composition) or fixture is not None
@@ -295,8 +336,21 @@ def resolve(experiment: ResolvedExperiment) -> Plan:
                         "load_experiment()")
     runs = []
     for design in experiment.designs:
+        overlay = None
+        problems: list[str] = []
         if experiment.fixture is not None:
             fixture = experiment.fixture["name"]
+        elif experiment.control is not None and has_slot(design):
+            # the base+overlay composition (DESIGN.md 7): the merged fixture
+            # id names both parts; the overlay is validated against the
+            # design's slot declaration and violations flag the run
+            # off_matrix (a custom fixture), never a hard error
+            fixture = composed_rig_id(design, experiment.control)
+            overlay = overlay_rel_path(experiment.control, design,
+                                       experiment.harness)
+            _ok, problems = validate_overlay(
+                design, overlay_abs_path(overlay),
+                harness=experiment.harness)
         else:
             fixture = reference_rig_id(design)
         if experiment.control is not None:
@@ -312,8 +366,13 @@ def resolve(experiment: ResolvedExperiment) -> Plan:
             control_binding=binding,
             harness=experiment.harness,
             workload=experiment.workload,
-            off_matrix=experiment.off_matrix,
+            # DESIGN.md 7 on-matrix rule: an overlay that violates the slot
+            # structure makes this run a custom fixture (grid placement
+            # only; full measurement fidelity either way)
+            off_matrix=experiment.off_matrix or bool(problems),
             # t7: the kernel-level observation row (DESIGN.md 7)
             observation_only=(design == "t7"),
+            overlay=overlay,
+            overlay_problems=problems,
         ))
     return Plan(experiment=experiment, runs=runs)

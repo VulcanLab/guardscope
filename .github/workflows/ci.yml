@@ -53,13 +53,20 @@ jobs:
         run: |
           pip install -e .
           pip install pytest
-      - name: Compose config check (all 11 fixture files)
+      - name: Compose config check (fixtures, base+overlay pairs merged)
         run: |
           set -e
-          for f in compose/*.yaml; do
+          # single-file fixtures (no control slot)
+          for f in compose/t0.yaml compose/t0-mock.yaml compose/t4.yaml compose/t6.yaml; do
             docker compose -f "$f" config --quiet
           done
-          ls compose/*.yaml | wc -l   # 11 fixture files
+          # gateway-bearing designs: bases declare the slot but ship no
+          # control service; the AGT binding overlay completes the pair
+          # (the base alone fails loudly by design — DESIGN.md 7)
+          for d in t1 t2 t3 t5 t1-mock t2-mock t3-mock; do
+            docker compose -f "compose/$d.yaml" \
+              -f "plugins/agt-gateway/overlay/$d.yaml" config --quiet
+          done
 
       # The degraded no-eBPF end-to-end smoke: bring up the T0 topology
       # WITHOUT the sensor profile (builds the images, ~10 min budget),

@@ -68,6 +68,53 @@ afterwards). The repo stays read-only source.
 Add `--no-sensor` to `run` when the topology came up without the sensor
 profile; the run is then labeled self-reported throughout.
 
+### Gateway designs: base + control overlay
+
+Every fixture with a control slot is a placeholder **base** plus a
+**control-binding overlay** (`docs/DESIGN.md` 7). The base
+(`compose/t1.yaml`, ..., `t5.yaml`, and the `-mock` variants) carries the
+design structure with the slot declared but the control service absent; the
+bound control's service definition arrives as an overlay merged on top —
+the shipped AGT binding (`plugins/agt-gateway/overlay/`) is expressed
+exactly like a third party's. Bring-up merges the base FIRST (the overlay's
+relative build context resolves against the first compose file's
+directory), then the overlay:
+
+```sh
+# design T1 bound to the shipped gateway control:
+docker compose -f $CHECKOUT/compose/t1.yaml -f $CHECKOUT/plugins/agt-gateway/overlay/t1.yaml up -d
+docker compose -f $CHECKOUT/compose/t1.yaml -f $CHECKOUT/plugins/agt-gateway/overlay/t1.yaml --profile sensor up -d tracee
+```
+
+A base alone is not a validatable unit (`docker compose -f compose/t1.yaml
+config` fails loudly: the harness services depend on the slot service that
+only the overlay provides). t0/t4/t6 have no control slot and stay
+single-file fixtures; the slot declarations are framework-side sidecar
+data in `compose/slots/`, and the experiment runner validates the pairing
+(the control's manifest declares the designs it supports; a supported
+design without a binding overlay is a load-time error).
+
+### Bring your own control (stub)
+
+The overlay mechanism is the whole binding surface for a control (the full
+onboarding flow is a later doc; this is the mechanics):
+
+1. Ship a capability manifest declaring your supported designs and slot
+   kinds: `plugins/<your-control>/manifest.json`.
+2. Ship one binding overlay per supported design (and its mock variant
+   when the mock fixture is in scope): `plugins/<your-control>/overlay/t1.yaml`
+   — the gateway slot's compose service definition (image/build, env,
+   policy, log wiring), moved into your plugin directory. The service name
+   must be the one declared in `compose/slots/<design>.yaml`.
+3. The on-matrix rule: the overlay defines exactly the declared slot
+   service, may add auxiliary services only named `control-*` attached to
+   the slot's network, and must not touch any base service. Violations are
+   not errors: the run is flagged off-matrix as a custom fixture
+   (`docs/DESIGN.md` 7).
+
+The fixture fingerprint records the base and overlay hashes separately,
+so your control's version changes move the fingerprint on their own.
+
 ## The three user types
 
 - **Control author** (you wrote a gateway/policy/sandbox plugin): ship a
@@ -92,8 +139,10 @@ milestone roadmap (M1-M4+).
 ## Repository layout
 
 The repo is source-shaped and stays that way in v1. Read-only source:
-`framework/` (the measurement core + schemas), `compose/` (fixture
-topologies), `gateway/`, `harnesses/`, `mock_harness/`, `runner/`,
-`sensor/`, `targets/`, `trace/`, `plugins/`, `registry/`, `examples/`,
-`env/`. Writable artifacts never land in the repo; they go to the
-experiments workdir (`GUARDSCOPE_WORKDIR`), described above.
+`framework/` (the measurement core + schemas), `compose/` (fixture base
+topologies + the `compose/slots/` sidecar slot declarations), `gateway/`,
+`harnesses/`, `mock_harness/`, `runner/`, `sensor/`, `targets/`,
+`trace/`, `plugins/` (manifests + the controls' binding overlay bundles),
+`registry/`, `examples/`, `env/`. Writable artifacts never land in the
+repo; they go to the experiments workdir (`GUARDSCOPE_WORKDIR`),
+described above.

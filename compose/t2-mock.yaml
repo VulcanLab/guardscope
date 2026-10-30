@@ -5,12 +5,15 @@
 # (an ABSOLUTE path) to stage replay artifacts in an experiments workdir
 # instead; the runner honors the same env when it stages (framework/
 # workdir.py). The repo mount stays read-only source.
-# egress; DESIGN.md 7) with the harness slot filled by the mock harness. The
-# topology is compose/t2.yaml verbatim (container names re-prefixed, project
-# distinct): the gateway/http targets plus a NETWORK-FORCED default-deny
-# egress policy on the MOCK service's netns (the jail shares the
-# mock-harness service's network namespace by service name and exits; the
-# egress jail is silent environment topology, hashed into the fixture
+# egress; DESIGN.md 7) with the harness slot filled by the mock harness. This
+# file is the BASE: the topology is compose/t2.yaml verbatim (container names
+# re-prefixed, project distinct) MINUS the gateway control service — the
+# gateway SLOT is declared but the control arrives as a binding overlay (the
+# shipped binding: plugins/agt-gateway/overlay/t2-mock.yaml). The base
+# alone is NOT a validatable unit (the mock-harness and egress-jail services
+# depend on the slot's gateway service); base+overlay is. The NETWORK-FORCED
+# default-deny egress policy on the MOCK service's netns stays in the base
+# (the jail is silent environment topology, hashed into the fixture
 # fingerprint, never part of the control — DESIGN.md 3).
 #
 # Outcomes per action class (main.tex Table 1): the mock harness's gateway-
@@ -22,9 +25,10 @@
 # The runner gates the replay on the jail's clean exit (run.py docker-waits
 # t2-mock-egress-jail), so a run never starts uninspected.
 #
-# The Tracee sensor runs OUTSIDE the deployed topology (no t2net attachment):
-# bring up the topology first, then:
-#   docker compose -f compose/t2-mock.yaml --profile sensor up -d tracee
+# Merged bring-up (the base comes FIRST: the overlay's relative build
+# context resolves against the FIRST compose file's directory):
+#   docker compose -f compose/t2-mock.yaml -f plugins/agt-gateway/overlay/t2-mock.yaml up -d
+#   docker compose -f compose/t2-mock.yaml -f plugins/agt-gateway/overlay/t2-mock.yaml --profile sensor up -d tracee
 
 name: inspection-t2-mock
 
@@ -53,21 +57,10 @@ services:
       - target-logs:/var/log/targets
     restart: unless-stopped
 
-  gateway:
-    build:
-      context: ..
-      dockerfile: gateway/Dockerfile
-    image: inspection/gateway
-    container_name: t2-mock-gateway
-    networks: [t2net]
-    environment:
-      UPSTREAM_URL: http://mcp-http:8091/mcp
-      GATEWAY_LOG_DIR: /var/log/gateway
-      GATEWAY_AGENT_ID: t2-mock-replay
-    volumes:
-      - gateway-logs:/var/log/gateway
-    depends_on: [mcp-http]
-    restart: unless-stopped
+  # gateway: the design's control SLOT (compose/slots/t2.yaml), ABSENT from
+  # this base — it arrives as a binding overlay (the shipped binding:
+  # plugins/agt-gateway/overlay/t2-mock.yaml, moved out of this file
+  # verbatim).
 
   net-peer:
     build:

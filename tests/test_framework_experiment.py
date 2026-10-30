@@ -230,8 +230,16 @@ def test_plan_expands_one_run_per_design(tmp_path):
         assert run.harness == "pi"
         assert run.workload == "baseline-15"
         assert run.off_matrix is False
+    # DESIGN.md 7 base+overlay: a control-bearing design's fixture id names
+    # the composition (base design + bound control)
     assert [r.fixture for r in plan.runs] == \
-        ["reference-rig/t1", "reference-rig/t3"]
+        ["reference-rig/t1+agt-gateway", "reference-rig/t3+agt-gateway"]
+    # the overlay bundle is resolved from the control's plugin dir and
+    # passes the on-matrix validation (no problems => stays on-matrix)
+    assert [r.overlay for r in plan.runs] == [
+        "plugins/agt-gateway/overlay/t1.yaml",
+        "plugins/agt-gateway/overlay/t3.yaml"]
+    assert all(r.overlay_problems == [] for r in plan.runs)
 
 
 def test_plan_binding_for_null_control(tmp_path):
@@ -303,7 +311,15 @@ def test_cli_plan_prints_run_descriptors(tmp_path, capsys):
     runs = json.loads(capsys.readouterr().out)
     assert [r["design"] for r in runs] == ["t1", "t3"]
     assert runs[0]["control_binding"] == "selected"
-    assert runs[1]["fixture"] == "reference-rig/t3"
+    assert runs[1]["fixture"] == "reference-rig/t3+agt-gateway"
+    # plan prints the merged fixture id + both hashes (base compose +
+    # control-binding overlay; DESIGN.md 7, 10)
+    fp = runs[1]["fixture_fingerprint"]
+    assert fp["id"] == "reference-rig/t3+agt-gateway"
+    assert fp["compose"]["path"] == "compose/t3.yaml"
+    assert fp["overlay"]["path"] == "plugins/agt-gateway/overlay/t3.yaml"
+    assert len(fp["compose"]["sha256"]) == 64
+    assert len(fp["overlay"]["sha256"]) == 64
 
 
 def test_cli_accepts_json_experiment_files(tmp_path, capsys):

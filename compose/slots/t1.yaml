@@ -1,0 +1,24 @@
+# compose/slots/t1.yaml — framework-side slot descriptor for design T1
+# (DESIGN.md 7). Sidecar data, NOT a compose file: compose rejects unknown
+# top-level keys, so the slot declaration lives in this sidecar, read by the
+# framework's overlay validator (framework/overlay.py); the compose base
+# stays pure compose and references nothing about it. It declares what any
+# control-binding overlay for t1 must provide: the slot's service name, the
+# network it attaches to, the env convention the base's harness services use
+# to reach the slot, the decision-log volume, and the deployed policy
+# artifact (the enforcement_config component of the fixture fingerprint,
+# DESIGN.md 10).
+#
+# The mock-harness fixture (compose/t1-mock.yaml) realizes the same slot on
+# its own compose project; its binding overlay is
+# plugins/<control>/overlay/t1-mock.yaml.
+schema: 1
+design: t1
+slot: gateway
+kind: container
+service: gateway          # the compose service name the overlay must define
+network: t1net
+harness_env:               # env the base's harness services point at the slot
+  GATEWAY_URL: http://gateway:8090
+log_volume: gateway-logs   # where the control's decision records land
+policy: gateway/policy.yaml

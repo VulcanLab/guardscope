@@ -220,6 +220,15 @@ A plan file (`guardscope batch --plan plan.yaml`) is the only file that names mo
 
 **The split.** Designs (T0-T7) are part of the core: the abstract enforcement-point placement, versioned with the major release. Fixtures are core-owned data realizing a design: a concrete, versioned, hash-pinned realization binding plugins by capability into slots. A custom topology is a documented fixture, not a contract; there is no topology DSL in v1.
 
+**Bases and overlays.** A fixture with a control slot is composed of two parts, and the framework's own reference fixture is expressed the same way a third party's is (no core code depends on which control is bound):
+
+- The **base** (`compose/<design>.yaml`, its mock variant for the mock-harness fixture) carries the full design structure - networks, targets, harness services, the sensor profile, the forced-egress jail where the design has one, log volumes - with the slot *declared* but the control service absent. A base alone is not a validatable unit: its harness services `depends_on` the slot service, so compose validation fails loudly without the overlay; base+overlay is the unit. Slot declarations are framework-side sidecar data (`compose/slots/<design>.yaml`: slot name, the service name the overlay must define, the slot's network, the env convention the harness services use to reach the slot, the decision-log volume, the deployed policy artifact); compose files stay pure compose (compose rejects unknown top-level keys), and the sidecar is read by the validator, not by compose.
+- The **control-binding overlay** is the control's binding bundle under its plugin directory: `plugins/<control>/overlay/<design>.yaml` (the `-mock` variant on the mock fixture) - the slot's service definition (image/build, env, policy, log wiring) plus the binding files it references. Merged bring-up is plain compose file merge, base first. The fixture identity is the composition: merged fixture id `reference-rig/<design>+<control>`, and the fixture fingerprint carries the base hash and the overlay hash separately (plus the enforcement_config hash), so a design restructure and a control version bump are each visible on their own.
+
+**On-matrix rule for overlays.** A binding overlay stays on-matrix when it (a) defines exactly the declared slot service (it may set or override that service's fields), (b) adds auxiliary services only under the name `control-*` and only attached to the slot's network or the slot service's netns, and (c) removes or modifies no base service. A violating overlay is not a load error: the run is flagged off_matrix as a custom fixture (the flag controls grid placement, not measurement fidelity). A control whose manifest declares a supported design but ships no overlay for it is a manifest claim with nothing behind it: a load-time hard error naming the missing file.
+
+Fixtures without a control slot (t0, t4, t6, t7) remain single-file fixtures; t4/t6's permission chain is harness-intrinsic, not a slot.
+
 Reference designs and fixtures:
 
 | Design | Enforcement placement | Reference fixture notes |
@@ -233,7 +242,7 @@ Reference designs and fixtures:
 | T6 | In-process policy engine (declarative rules at the harness tool-call hook) | Harness-embedded control registers with an `embedded` slot |
 | T7 | Kernel-level enforcement | Observation row: kernel observability of all 15 paths |
 
-**Custom fixtures** run off-matrix: full measurement fidelity (all streams, all evidence classes), but only grid placement is provisional. They carry an `off_matrix` flag, a mandatory **nearest-design projection** (which core design the fixture most resembles, plus a divergence note), and registry-tracked recurrence. The flag controls whether results enter the grid, not whether they are published: off-matrix results appear in an extension section with their own evidence class.
+**Custom fixtures** run off-matrix: full measurement fidelity (all streams, all evidence classes), but only grid placement is provisional. They carry an `off_matrix` flag, a mandatory **nearest-design projection** (which core design the fixture most resembles, plus a divergence note), and registry-tracked recurrence. Custom fixtures arrive two ways: an experiment `fixture` block, or an on-matrix rule violation by a control-binding overlay (above; the run is measured at full fidelity with the violations recorded). The flag controls whether results enter the grid, not whether they are published: off-matrix results appear in an extension section with their own evidence class.
 
 **Off-matrix promotion path.** Tracking repeated custom fixtures turns the off-matrix section into a path toward new designs. A design RFC must state:
 
@@ -319,7 +328,7 @@ Grids are report-level merges of single-control run columns. There is no grid sc
 **Comparability key.** All must match for runs to compose into one grid:
 
 - workload hash;
-- fixture fingerprint, **including `enforcement_config`** (this pins the intrinsic chain policy; without it, comparisons between controls are unreliable);
+- fixture fingerprint (base compose + control-binding overlay + `enforcement_config` - this pins the bound control version and the intrinsic chain policy; without it, comparisons between controls are unreliable);
 - harness id + major version;
 - kernel-sensor version;
 - reconciliation profile id + version;

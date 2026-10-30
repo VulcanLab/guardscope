@@ -560,13 +560,14 @@ def test_mock_profile_t3_pooled_range():
 
 @pytest.mark.parametrize("design", ["t0", "t1", "t2", "t3"])
 def test_compose_fixture_shape(design):
-    """Schema-level sanity on the mock fixtures: the harness slot carries
-    the mock-harness service (container t{N}-mock, sleep idle command, the
-    mounted repo + replay volume, GATEWAY_URL for t1/t2/t3), the t{N}-mock-*
-    container prefixes hold, the sensor stays behind --profile sensor, and
-    the t2/t3 jail shares the mock service's netns. The t3 fixture is the
-    t3 topology verbatim (fs tools proxied behind the gateway,
-    policy-t3.yaml) minus the pi/openclaw harness services."""
+    """Schema-level sanity on the mock BASES (DESIGN.md 7: placeholder
+    slot + control-binding overlay). t0 has no control slot and stays a
+    single-file fixture; t1/t2/t3 are bases with the gateway slot declared
+    but the control service ABSENT: the mock-harness service depends on the
+    slot's gateway service (which only the overlay provides — the base
+    alone is not a validatable unit) and points GATEWAY_URL at it by
+    service name. The t{N}-mock-* container prefixes, the sensor profile,
+    and the t2/t3 jail attachment to the mock service's netns hold."""
     path = ROOT / "compose" / f"{design}-mock.yaml"
     doc = yaml.safe_load(path.read_text())
     assert doc["name"] == f"inspection-{design}-mock"
@@ -589,9 +590,15 @@ def test_compose_fixture_shape(design):
     assert env["TARGET_LOG_DIR"] == "/var/log/targets"
     if design == "t0":
         assert "GATEWAY_URL" not in env
+        assert "gateway" not in doc["services"]
     else:
         assert env["GATEWAY_URL"] == "http://gateway:8090"
-        assert "gateway" in doc["services"]
+        # the slot is DECLARED (the harness service depends on it) but the
+        # control service is ABSENT: base+overlay is the validatable unit
+        assert "gateway" not in doc["services"]
+        assert "gateway" in svc["depends_on"]
+        # the log volume the slot's overlay wires the control's records to
+        assert "gateway-logs" in doc["volumes"]
     # every container name in the project carries the t{N}-mock- prefix
     # (the harness service itself is exactly t{N}-mock)
     for name, s in doc["services"].items():
@@ -607,23 +614,53 @@ def test_compose_fixture_shape(design):
         assert jail["network_mode"] == "service:mock-harness"
         assert jail["container_name"] == "t2-mock-egress-jail"
         assert jail["restart"] == "no"
+        assert "gateway" in jail["depends_on"]
     elif design == "t3":
-        # the t3 topology: the fs tool server proxied behind the gateway
+        # the t3 topology minus the gateway: the fs tool server stays in the
+        # base (the overlay's gateway proxies it)
         assert doc["services"]["mcp-fs-http"]["container_name"] \
             == "t3-mock-mcp-fs-http"
-        gw_env = doc["services"]["gateway"]["environment"]
-        assert gw_env["UPSTREAM_FS_URL"] == "http://mcp-fs-http:8092/mcp"
-        assert gw_env["GATEWAY_POLICY"] == "/opt/inspection/gateway/policy-t3.yaml"
-        assert gw_env["GATEWAY_AGENT_ID"] == "t3-mock-replay"
-        assert "mcp-fs-http" in doc["services"]["gateway"]["depends_on"]
         # same forced egress as t2, attached to the mock service's netns
         jail = doc["services"]["egress-jail-mock"]
         assert jail["network_mode"] == "service:mock-harness"
         assert jail["container_name"] == "t3-mock-egress-jail"
         assert jail["restart"] == "no"
+        assert "gateway" in jail["depends_on"]
     else:
         assert "egress-jail-mock" not in doc["services"]
         assert "mcp-fs-http" not in doc["services"]
+
+
+@pytest.mark.parametrize("design", ["t1", "t2", "t3"])
+def test_mock_overlay_fixture_shape(design):
+    """The shipped agt-gateway binding for the mock fixtures (DESIGN.md 7):
+    the gateway slot's service definition, moved out of the old single-file
+    fixture into the control's overlay bundle. The mock overlay is the
+    design overlay's binding on the mock project (container prefix and
+    agent id differ); t3's carries both tool classes behind the gateway and
+    the T3 policy."""
+    path = ROOT / "plugins" / "agt-gateway" / "overlay" / f"{design}-mock.yaml"
+    doc = yaml.safe_load(path.read_text())
+    # pure binding: the overlay adds the slot service and nothing else
+    assert set(doc) == {"services"}
+    assert set(doc["services"]) == {"gateway"}
+    gw = doc["services"]["gateway"]
+    assert gw["build"]["dockerfile"] == "gateway/Dockerfile"
+    assert gw["image"] == "inspection/gateway"
+    assert gw["container_name"] == f"{design}-mock-gateway"
+    assert gw["networks"] == [f"{design}net"]
+    env = gw["environment"]
+    assert env["UPSTREAM_URL"] == "http://mcp-http:8091/mcp"
+    assert env["GATEWAY_AGENT_ID"] == f"{design}-mock-replay"
+    assert gw["volumes"] == ["gateway-logs:/var/log/gateway"]
+    assert gw["restart"] == "unless-stopped"
+    if design == "t3":
+        # the t3 binding: fs tools proxied behind the gateway, T3 policy
+        assert env["UPSTREAM_FS_URL"] == "http://mcp-fs-http:8092/mcp"
+        assert env["GATEWAY_POLICY"] == "/opt/inspection/gateway/policy-t3.yaml"
+        assert gw["depends_on"] == ["mcp-http", "mcp-fs-http"]
+    else:
+        assert gw["depends_on"] == ["mcp-http"]
 
 
 @pytest.mark.skipif(shutil.which("docker") is None,
@@ -631,12 +668,36 @@ def test_compose_fixture_shape(design):
 @pytest.mark.parametrize("design", ["t0", "t1", "t2", "t3"])
 def test_compose_fixture_config_parses(design):
     """docker compose config accepts each mock fixture (parse-level
-    validation; building/starting the topology is the live pass)."""
-    path = ROOT / "compose" / f"{design}-mock.yaml"
-    proc = subprocess.run(
-        ["docker", "compose", "-f", str(path), "config", "--quiet"],
-        capture_output=True, text=True, timeout=60)
+    validation; building/starting the topology is the live pass). t0 is a
+    single-file fixture; t1/t2/t3 validate as the MERGED base+overlay
+    composition (the base alone is not a validatable unit)."""
+    base = ROOT / "compose" / f"{design}-mock.yaml"
+    overlay = (ROOT / "plugins" / "agt-gateway" / "overlay" /
+               f"{design}-mock.yaml")
+    files = [str(base)]
+    if design != "t0":
+        files.append(str(overlay))
+    cmd = ["docker", "compose"]
+    for f in files:
+        cmd += ["-f", f]
+    cmd += ["config", "--quiet"]
+    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
     assert proc.returncode == 0, proc.stderr
+
+
+@pytest.mark.skipif(shutil.which("docker") is None,
+                    reason="docker not available locally")
+@pytest.mark.parametrize("design", ["t1", "t2", "t3"])
+def test_mock_base_alone_fails_loudly(design):
+    """A base with a declared slot is NOT a validatable unit on its own
+    (DESIGN.md 7): docker compose config fails loudly, naming the missing
+    slot service the harness depends on."""
+    base = ROOT / "compose" / f"{design}-mock.yaml"
+    proc = subprocess.run(
+        ["docker", "compose", "-f", str(base), "config", "--quiet"],
+        capture_output=True, text=True, timeout=60)
+    assert proc.returncode != 0
+    assert "depends on undefined service \"gateway\"" in proc.stderr
 
 
 # --------------------------------------------------------- examples validate

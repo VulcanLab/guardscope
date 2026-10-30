@@ -263,13 +263,22 @@ def test_fixture_fingerprint_stable_across_executions(tmp_path):
     assert second.runs[0].run_id == "exp-t1-2"
     fp1 = first.runs[0].fixture_fingerprint
     fp2 = second.runs[0].fixture_fingerprint
-    # DESIGN.md 10 comparability key: compose id + sha256 (+ policy when
-    # the design deploys one) — identical across executions
+    # DESIGN.md 10 comparability key: the base+overlay composition
+    # (DESIGN.md 7) — base compose id + sha256, the bound control's overlay
+    # sha256, and the deployed policy when the design pins one — identical
+    # across executions
     assert fp1 == fp2
-    assert fp1["id"] == "reference-rig/t1"
+    assert fp1["id"] == "reference-rig/t1+agt-gateway"
     assert fp1["compose"]["id"] == "inspection-t1"
     assert fp1["compose"]["sha256"] == hashlib.sha256(
         (ROOT / "compose" / "t1.yaml").read_bytes()).hexdigest()
+    # the control-binding overlay hash is recorded separately from the
+    # base hash (a control version bump is visible apart from a design
+    # restructure)
+    assert fp1["overlay"]["path"] == "plugins/agt-gateway/overlay/t1.yaml"
+    assert fp1["overlay"]["sha256"] == hashlib.sha256(
+        (ROOT / "plugins" / "agt-gateway" / "overlay" / "t1.yaml")
+        .read_bytes()).hexdigest()
     assert fp1["enforcement_config"]["path"] == "gateway/policy.yaml"
     # the experiment hash is stable too; only timing/run ids differ
     assert first.manifest["experiment"]["sha256"] == \

@@ -12,9 +12,10 @@ runner machinery:
    this purpose; the runner CLI is unchanged);
 4. assemble the framework run manifest per run: the experiment file hash,
    the resolved fields including defaults_applied (DESIGN.md 6: recorded
-   defaults are facts), the fixture fingerprint (compose file id + sha256,
-   plus enforcement_config when the design deploys one; DESIGN.md 10
-   comparability key), plugin versions (plugins/*/manifest.json), the
+   defaults are facts), the fixture fingerprint (base compose file id +
+   sha256, the control-binding overlay's sha256 when the run binds one,
+   plus enforcement_config when the design deploys one; DESIGN.md 7
+   base+overlay, DESIGN.md 10 comparability key), plugin versions (plugins/*/manifest.json), the
    sensor version (env/versions.env; the runner-managed measuring
    instrument, informational only, DESIGN.md 9), the decision records
    (mapped to decision-record/1 via the v0 AuditEntry reader-side mapping,
@@ -53,6 +54,7 @@ from framework.records import (  # noqa: E402
     V0_DEFAULT_PLUGIN, V0_DEFAULT_PRODUCT, map_audit_entries,
     now_rfc3339_ms,
 )
+from framework.overlay import MOCK_HARNESS_ID, overlay_abs_path  # noqa: E402
 from framework import reconcile as reconcile_lib  # noqa: E402
 from framework.workdir import resolve_workdir  # noqa: E402
 
@@ -78,8 +80,9 @@ EVIDENCE_CLASS = "harness-run"
 EVIDENCE_CLASS_MOCK = "mock-run"
 EVIDENCE_CLASS_SELF_REPORTED = "self-reported"
 
-# DESIGN.md 8: the harness whose runs carry the mock-run evidence class.
-MOCK_HARNESS_ID = "mock-harness"
+# DESIGN.md 8: the harness whose runs carry the mock-run evidence class
+# (framework/overlay.py MOCK_HARNESS_ID; the constant lives with the
+# fixture/overlay machinery).
 
 
 def _profile_window_tolerance(harness: str) -> int:
@@ -253,21 +256,27 @@ def sensor_version(versions: dict | None = None) -> dict:
 
 
 def fixture_fingerprint(descriptor: RunDescriptor) -> dict:
-    """Fixture identity (DESIGN.md 10 comparability key): fixture id + the
-    compose file realizing the reference rig (project name + sha256), plus
-    the deployed enforcement_config artifact when the design pins one. For
-    a custom fixture (experiment fixture block) no compose file is pinned
-    this pass: the fingerprint records the declared name and a note."""
+    """Fixture identity (DESIGN.md 10 comparability key): the merged
+    fixture id, the BASE compose file realizing the design for this harness
+    (project name + sha256), the CONTROL-BINDING OVERLAY's sha256 when the
+    run binds one (the base+overlay composition, DESIGN.md 7: a base hash
+    change — a design restructure — and an overlay change — a control
+    version bump — are separately visible), plus the deployed
+    enforcement_config artifact when the design pins one. For a custom
+    fixture (experiment fixture block) no compose file is pinned this
+    pass: the fingerprint records the declared name and a note."""
     fingerprint: dict = {"id": descriptor.fixture}
-    # the compose file realizing the design FOR THIS HARNESS: the mock
+    # the base compose file realizing the design FOR THIS HARNESS: the mock
     # harness's fixtures are compose/t{N}-mock.yaml (own compose projects,
     # distinct container prefixes); the real harnesses run compose/t{N}.yaml
     compose_name = f"{descriptor.design}-mock.yaml" \
         if descriptor.harness == MOCK_HARNESS_ID else \
         f"{descriptor.design}.yaml"
     compose = COMPOSE_DIR / compose_name
-    if descriptor.fixture == f"reference-rig/{descriptor.design}" \
-            and compose.is_file():
+    # only the composed reference id pins the base (a custom fixture block
+    # must not be silently pinned to a base by naming)
+    composed_id = f"reference-rig/{descriptor.design}+{descriptor.control}"
+    if descriptor.fixture == composed_id and compose.is_file():
         doc = yaml.safe_load(compose.read_text(encoding="utf-8")) or {}
         fingerprint["compose"] = {
             "path": f"compose/{compose_name}",
@@ -279,6 +288,15 @@ def fixture_fingerprint(descriptor: RunDescriptor) -> dict:
         fingerprint["note"] = ("custom fixture: no compose file pinned this "
                                "pass (DESIGN.md 7 custom fixtures are "
                                "registry-tracked data)")
+    # the control-binding overlay (DESIGN.md 7 base+overlay): recorded
+    # separately from the base so either side's change moves the
+    # fingerprint on its own
+    if descriptor.overlay:
+        overlay = overlay_abs_path(descriptor.overlay)
+        fingerprint["overlay"] = {
+            "path": descriptor.overlay,
+            "sha256": sha256_file(overlay),
+        } if overlay.is_file() else None
     config_rel = _enforcement_config_file(descriptor.design, descriptor.harness)
     config_path = REPO_ROOT / config_rel if config_rel else None
     if config_path is not None and config_path.is_file():
