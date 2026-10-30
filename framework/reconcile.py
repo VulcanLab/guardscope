@@ -367,10 +367,10 @@ def decision_records_to_log_entries(records: list[dict]) -> list[dict]:
     entries = []
     for record in records:
         decision = record.get("decision")
-        if decision not in ("allow", "deny"):
+        if decision not in ("allow", "deny", "observe"):
             raise ValueError(
                 f"decision {decision!r} has no v0 AuditEntry equivalent "
-                f"(only allow/deny); cannot feed the C1-C4 log view")
+                f"(only allow/deny/observe); cannot feed the C1-C4 log view")
         ids = record.get("ids") or {}
         ts = ids.get("v0_timestamp")
         if ts is None:
@@ -381,7 +381,11 @@ def decision_records_to_log_entries(records: list[dict]) -> list[dict]:
         entry = {
             "timestamp": ts,
             "tool_name": record["tool"],
-            "allowed": decision == "allow",
+            # observe (a monitor-only control saw the action and did not
+            # block): the C1-C4 view counts it as checked-and-not-denied,
+            # the honest v0 equivalent for a monitor; the observe
+            # distinction stays in the record's decision field
+            "allowed": decision in ("allow", "observe"),
             "parameters": record.get("parameters") or {},
         }
         if "tool_call_id" in ids:

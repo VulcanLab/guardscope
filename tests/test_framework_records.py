@@ -239,3 +239,14 @@ def test_round_trip_preserves_timestamps_and_refs():
          "allowed": e["allowed"], "parameters": e["parameters"]}
         for e in line_set
     ]
+
+
+def test_observe_decision_maps_to_the_c1c4_log_view():
+    """A monitor-only control's observe records feed the C1-C4 accounting:
+    observed-and-not-blocked maps to the v0 view's checked-not-denied shape
+    (the observe distinction stays in the record's own decision field)."""
+    from framework.reconcile import decision_records_to_log_entries
+    record = make_decision_record(**base_fields(decision="observe"))
+    (entry,) = decision_records_to_log_entries([record])
+    assert entry["allowed"] is True
+    assert record["decision"] == "observe"

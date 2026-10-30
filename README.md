@@ -96,8 +96,9 @@ design without a binding overlay is a load-time error).
 
 ### Bring your own control (stub)
 
-The overlay mechanism is the whole binding surface for a control (the full
-onboarding flow is a later doc; this is the mechanics):
+The overlay mechanism is the whole binding surface for a control; the
+full walk-through is `docs/measure-your-control.md` (this is the
+mechanics):
 
 1. Ship a capability manifest declaring your supported designs and slot
    kinds: `plugins/<your-control>/manifest.json`.
@@ -130,11 +131,17 @@ so your control's version changes move the fingerprint on their own.
   dated, hash-pinned reference snapshot and compare run manifests; the
   reference badge (M3, `docs/DESIGN.md` 12) is earned by reproducing it.
 
-## Design
+## Docs
 
-The design document `docs/DESIGN.md` is the specification: the contracts,
-the C1-C6 checks, the evidence classes, the registry tiers, and the
-milestone roadmap (M1-M4+).
+- `docs/DESIGN.md`: the specification: the contracts, the C1-C6 checks,
+  the evidence classes, the registry tiers, and the milestone roadmap
+  (M1-M4+).
+- `docs/shim-guide.md`: translating a control's vendor log into
+  `decision-record/1` records, and verifying the translation with the L1
+  conformance run.
+- `docs/measure-your-control.md`: the onboarding walk-through for
+  bringing a control to measurement — manifest, binding overlay,
+  validation, measurement, and reading your coverage column honestly.
 
 ## Repository layout
 
