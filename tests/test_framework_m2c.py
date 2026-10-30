@@ -446,11 +446,20 @@ def test_l2_publishes_fidelity_flags_to_plugin_dir(tmp_path):
 # ==================================================== the registry (DESIGN.md 11)
 
 
+SEED_VERDICT = ROOT / "registry" / "open" / "agt-gateway.json"
+SEED_FACTS = ROOT / "registry" / "facts" / "agt-gateway.json"
+
+seed_present = pytest.mark.skipif(
+    not SEED_VERDICT.is_file(),
+    reason="the seeded registry verdict is a local run record "
+           "(untracked; see the plain-language/open-source sweeps)")
+
+
 def seeded_verdict() -> dict:
-    return json.loads((ROOT / "registry" / "open" / "agt-gateway.json")
-                      .read_text())["entries"][0]["verdict"]
+    return json.loads(SEED_VERDICT.read_text())["entries"][0]["verdict"]
 
 
+@seed_present
 def test_seed_verdict_file_is_valid_and_honest():
     docs = load_verdict_docs()
     assert set(docs["curated"]) == set()          # no curated verdict exists
@@ -470,6 +479,7 @@ def test_seed_verdict_file_is_valid_and_honest():
         suite_golden_fixture_hash()
 
 
+@seed_present
 def test_seed_verdict_reproduces_from_a_fresh_l1_run():
     # the recorded verdict is what a fresh in-test L1 run actually produces
     verdict = seeded_verdict()
@@ -479,6 +489,7 @@ def test_seed_verdict_reproduces_from_a_fresh_l1_run():
         assert fresh[component] == verdict[component]
 
 
+@seed_present
 def test_facts_file_validates_and_carries_provenance():
     facts = load_fact_docs()
     doc = facts["agt-gateway"]
