@@ -124,7 +124,7 @@ class HarnessAdapterContract(Protocol):
         Dispatch-record flush.
 
     teardown()
-        State isolation between grid cells; permission state must not leak.
+        State isolation between grid cells; permission state must not carry over.
     """
 
     def describe(self) -> dict: ...

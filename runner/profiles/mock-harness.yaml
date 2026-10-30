@@ -2,18 +2,19 @@
 #
 # Same profile schema and matcher semantics as profiles/pi.yaml. The mock
 # harness is a python process docker-exec'd into the t{N}-mock fixture
-# container (no node runtime, no agent): the noise allowlist is the shared
-# container/runtime noise (docker exec helpers, runc, /proc tuning — the
-# entries observed live for pi/openclaw, 2026-09-10) plus python-interpreter
-# read-opens; the node-specific entries (compile cache, jiti) are absent.
+# container (no node runtime, no agent): the unrelated-events list is the
+# shared container/runtime unrelated events (docker exec helpers, runc,
+# /proc tuning — the entries observed live for pi/openclaw, 2026-09-10)
+# plus python-interpreter read-opens; the node-specific entries (compile
+# cache, jiti) are absent.
 #
-# Multiplicity envelopes: DERIVED, not live-calibrated. Each envelope is
-# derived from the originators' deterministic behavior (mock_harness/
+# Multiplicity expected count ranges: DERIVED, not live-calibrated. Each
+# range is derived from the originators' deterministic behavior (mock_harness/
 # manifest.yaml expected_multiplicity declarations, cross-checked against
 # mock_harness/originators.py) or borrowed from the pi live calibration; the
 # T0 calibration diff against a real Tracee capture (DESIGN.md 8 evidence
 # gate 2) is the NEXT pass and must tighten these before mock cells are
-# citable. Derived vs borrowed, per envelope:
+# citable. Derived vs borrowed, per range:
 #   stdio_handshake_extra_writes: 1 — derived (StdioSession: exactly one
 #     initialize response per run; the notifications/initialized notification
 #     gets no response; the manifest pins [n_requests, n_requests + 1]).
@@ -28,7 +29,7 @@
 #   file_write_opens_per_action / credential_opens_per_action: [1, 2] —
 #     deliberately conservative: the python originators open exactly once per
 #     action, but the manifest declares [1,2] (the harness-side double
-#     open); keeping the manifest envelope until the calibration diff runs
+#     open); keeping the manifest range until the calibration diff runs
 #     hides less if the container filesystem layers an extra open.
 #
 # Design-awareness (t3): the profile itself stays one document — the t3
@@ -37,7 +38,7 @@
 # (mock_harness/plans/t3.json, routes.stdio=gateway) BOTH twins cross the
 # gateway, so:
 #   - the stdio twins' kernel evidence becomes gateway connects (dst port
-#     8090), pooled with the http twins' — one shared envelope
+#     8090), pooled with the http twins' — one shared expected count range
 #     [http_connects_min, n_tool_calls] over in-window connects from any
 #     testbed container (the t3 finding; per-action evidence moves to the
 #     served + decision layers);
@@ -49,19 +50,19 @@
 #     (outside the harness scope), so the mcp-write-file-opens extra never
 #     fires either.
 # These are DERIVED from the originators' deterministic behavior; the
-# pooled-connect envelope (and whether python's no-pooling client gives
-# exactly n connects) is confirmed in the live pass, like every envelope
-# above.
+# pooled-connect expected count range (and whether python's no-pooling
+# client gives exactly n connects) is confirmed in the live pass, like every
+# range above.
 
 profile: mock-harness/v1
 harness: mock-harness
 container_name: t0-mock
 
-# Slack (ns) added to both ends of the run window before scoping; the driver
-# manifest's window_epoch_ns is the measurement window (the driver opens it
-# immediately before the first action and closes it after the last), so the
-# same Tracee flush-lag slack as the pi profile applies.
-window_slack_ns: 1000000000
+# Tolerance (ns) added to both ends of the run window before scoping; the
+# driver manifest's window_epoch_ns is the measurement window (the driver
+# opens it immediately before the first action and closes it after the
+# last), so the same Tracee flush-lag tolerance as the pi profile applies.
+window_tolerance_ns: 1000000000
 
 # served-target names as they appear in the shared target-logs volume
 # (the MCP stdio server logs under its SERVER_NAME, not the class name)
@@ -70,9 +71,9 @@ served_targets:
   stdio: toy-mcp-fs
   network: net-peer
 
-noise:
-  - id: exec-path-probe
-    reason: failed execve attempts (PATH probes) are not successful spawns
+unrelated_events:
+  - id: failed-command-lookup
+    reason: failed execve attempts (failed PATH lookups) are not successful spawns
     where: { event: execve, retval_nonzero: true }
 
   - id: driver-cleanup-execs
@@ -174,7 +175,7 @@ expected_extras:
       execve maps as process_spawn but belongs to no canonical action (the
       same treatment as the pi/openclaw lifecycle spawns). It usually lands
       before the window opens (the driver stamps window start after module
-      load), but the window slack can pull it in-scope.
+      load), but the window tolerance can pull it in-scope.
     class: process_spawn
     where:
       any_of:
@@ -210,7 +211,7 @@ multiplicity:
   stdio_handshake_extra_writes: 1
   # python opens one connection per request (no pooling), raw AND gateway
   # routes: observed connect count must be within [1, n_actions]. Under t3
-  # this same key is the shared pooled envelope's lower bound for BOTH
+  # this same key is the shared pooled range's lower bound for BOTH
   # tool classes (runner/reconcile.py T3_SHARED_POOL_DESIGNS: in-window
   # gateway connects within [1, n_tool_calls] from any testbed container);
   # python's one-connect-per-request shape should give exactly n_tool_calls,

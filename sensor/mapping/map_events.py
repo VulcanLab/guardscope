@@ -13,9 +13,10 @@ Usage:
 Records carry: class, rule id, Tracee event name, timestamp, container/pid
 provenance, syscall return value (Tracee `returnValue`; fallback `retval`), extracted target (path / port / argv), and the raw
 event index so any mapped record can be traced back to the retained raw
-stream. Unmapped records carry the same envelope with a best-effort detail
-(path / port / flags / argv) so M6 reconciliation can noise-allowlist and
-debug leftovers without re-reading the raw stream.
+stream. Unmapped records carry the same record fields with a best-effort
+detail (path / port / flags / argv) so M6 reconciliation can apply
+unrelated-event allowlists and debug leftovers without re-reading the raw
+stream.
 """
 
 import argparse
@@ -249,9 +250,9 @@ class Mapper:
                 "detail": detail,
                 "provenance": {"raw_index": index, "retval": raw.get("returnValue", raw.get("retval"))},
             }
-        # Unmapped records keep the full envelope (M6 reconciliation needs the
-        # same fields for window/container scoping, noise allowlists and
-        # leftover debugging); detail is best-effort.
+        # Unmapped records keep the full record fields (M6 reconciliation
+        # needs the same fields for window/container scoping, unrelated-event
+        # allowlists and leftover debugging); detail is best-effort.
         detail = {k: v for k, v in {
             "path": a.get("pathname", a.get("filename")),
             "port": self._unmapped_port(ev, a),

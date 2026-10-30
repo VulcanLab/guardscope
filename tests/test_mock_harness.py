@@ -821,7 +821,7 @@ def test_http_twin_gateway_route(monkeypatch, spec):
 
 
 def test_http_twin_a014_shares_the_a011_route(monkeypatch, spec):
-    """The checked-DENY probe uses the same route/tool as a011 with its own
+    """The checked-DENY case uses the same route/tool as a011 with its own
     argument value — identical to the harness route shape."""
     fake = install_fake(monkeypatch, FakeSyscalls())
     plan = {"schema": "mock-harness-plan/1",
@@ -830,7 +830,7 @@ def test_http_twin_a014_shares_the_a011_route(monkeypatch, spec):
     detail = org.http_tool_call(compiled("a014", spec), ctx)
     frame = json.loads(next(c[3] for c in fake.calls if c[0] == "http_request"))
     assert frame["params"]["name"] == "post_hook"
-    assert frame["params"]["arguments"] == {"body": "policy-deny probe"}
+    assert frame["params"]["arguments"] == {"body": "policy-deny case"}
     assert detail["tool"] == "post_hook"
 
 

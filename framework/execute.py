@@ -81,12 +81,12 @@ EVIDENCE_CLASS_SELF_REPORTED = "self-reported"
 MOCK_HARNESS_ID = "mock-harness"
 
 
-def _profile_window_slack(harness: str) -> int:
-    """The harness profile's window slack (runner/profiles/<h>.yaml); the
+def _profile_window_tolerance(harness: str) -> int:
+    """The harness profile's window tolerance (runner/profiles/<h>.yaml); the
     run's own coverage used it, so the recompute must too."""
     profile = yaml.safe_load((REPO_ROOT / "runner" / "profiles" /
                               f"{harness}.yaml").read_text())
-    return int(profile.get("window_slack_ns", 1_000_000_000))
+    return int(profile.get("window_tolerance_ns", 1_000_000_000))
 
 # The deployed policy artifact per design: the enforcement_config component
 # of the fixture fingerprint (DESIGN.md 10: "fixture fingerprint, including
@@ -504,7 +504,7 @@ def _load_jsonl(path: Path) -> tuple[list[dict], list[str]]:
     return records, problems
 
 
-def _c5_report(outcome: dict, run_id: str, window, slack: int,
+def _c5_report(outcome: dict, run_id: str, window, tolerance: int,
                inspected_action_ids: set | None = None) -> dict:
     """Run C5 (id consistency, DESIGN.md 9) over one run's dispatch records
     and native decision stream when both artifacts are present; either
@@ -546,11 +546,11 @@ def _c5_report(outcome: dict, run_id: str, window, slack: int,
     window_pair = ((int(window["start"]), int(window["end"]))
                   if window else None)
     return run_c5(dispatch_records, native_records, run_id=run_id,
-                  window=window_pair, window_slack_ns=slack,
+                  window=window_pair, window_tolerance_ns=tolerance,
                   inspected_action_ids=inspected_action_ids)
 
 
-def _c6_report(outcome: dict, run_id: str, window, slack: int,
+def _c6_report(outcome: dict, run_id: str, window, tolerance: int,
                records: list[dict]) -> dict:
     """Run C6 (denial effectiveness, DESIGN.md 9) over one run's deny
     records against the run's kernel evidence. Sensor absent (the degraded
@@ -580,7 +580,7 @@ def _c6_report(outcome: dict, run_id: str, window, slack: int,
     window_pair = ((int(window["start"]), int(window["end"]))
                    if window else None)
     return run_c6(out_dir, all_records, window=window_pair,
-                  window_slack_ns=slack, run_id=run_id)
+                  window_tolerance_ns=tolerance, run_id=run_id)
 
 
 def _outcome_counts(outcome: dict, out_dir: Path,
@@ -643,14 +643,14 @@ def _assemble_run_summary(descriptor: RunDescriptor, outcome: dict,
     consistent = None
     findings: list[dict] = []
     window = outcome.get("window_epoch_ns")
-    slack = _profile_window_slack(descriptor.harness)
+    tolerance = _profile_window_tolerance(descriptor.harness)
     if records or outcome.get("coverage") is not None:
         recomputed = reconcile_lib.compute(
             spec,
             reconcile_lib.decision_records_to_log_entries(records),
             parse_problems, descriptor.design,
             (int(window["start"]), int(window["end"])) if window else None,
-            slack)
+            tolerance)
         findings += [dict(check) for check in recomputed.get("checks") or []
                     if check.get("status") != "pass"]
         reported = outcome.get("coverage")
@@ -684,7 +684,7 @@ def _assemble_run_summary(descriptor: RunDescriptor, outcome: dict,
     inspected = reconcile_lib.INSPECTED_CLASSES.get(descriptor.design, set())
     inspected_ids = {a["id"] for a in spec.get("actions", [])
                      if a.get("class") in inspected} or None
-    c5 = _c5_report(outcome, run_id, window, slack, inspected_ids)
+    c5 = _c5_report(outcome, run_id, window, tolerance, inspected_ids)
     if c5.get("status") == "fail":
         findings += [dict(f) for f in c5.get("findings") or []]
 
@@ -692,7 +692,7 @@ def _assemble_run_summary(descriptor: RunDescriptor, outcome: dict,
     # against the run's kernel evidence. Findings (a deny with the action's
     # kernel signature present, C6-ineffective) join the run's findings; a
     # sensor-less run skips C6 with a note, never a finding.
-    c6 = _c6_report(outcome, run_id, window, slack, records)
+    c6 = _c6_report(outcome, run_id, window, tolerance, records)
     if c6.get("status") == "fail":
         findings += [dict(f) for f in c6.get("findings") or []]
 

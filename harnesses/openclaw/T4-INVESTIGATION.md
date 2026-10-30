@@ -4,7 +4,7 @@
 docs (docs2.openclaw.ai + the docs shipped in the pinned image,
 `ghcr.io/openclaw/openclaw@sha256:6cb72e1…`, extracted locally — `/app/docs`).
 C2 is strongly indicated; ONE live check remains (does `/tools/invoke` fire
-`before_tool_call`?), with the probe procedure below.**
+`before_tool_call`?), with the check procedure below.**
 
 Image docs used: `docs/gateway/tools-invoke-http-api.md`,
 `docs/gateway/config-tools.md`, `docs/tools/mcp.md`, `docs/plugins/hooks.md`,
@@ -34,7 +34,7 @@ Mapping to the designs:
   `harnesses/pi/adapter/replay.ts`) evaluated in the hook; deny →
   `{ block: true, blockReason }`; the decision record carries the matched rule
   and the inspected arguments.
-- The deny probe (a014) needs `block` — confirmed available.
+- The deny case (a014) needs `block` — confirmed available.
 - Argument visibility for the inspectable-features claim: `event.params` —
   confirmed.
 
@@ -63,7 +63,7 @@ From `docs/gateway/tools-invoke-http-api.md` (in the pinned image):
 The single remaining check: does the invoke path fire the plugin
 `before_tool_call`/`after_tool_call` hooks (the online hooks doc says
 "explicitly invoked tool hooks remain active"; the pinned-image docs do not
-carry that exact line — verify live per the probe procedure below).
+carry that exact line — verify live per the check procedure below).
 
 ## C3 — MCP client config: CONFIRMED (docs)
 
@@ -96,7 +96,7 @@ Plus the naming fact (from `docs/gateway/config-tools.md`):
    `/tools/invoke` response shape decides whether the driver records status
    `denied` (expected) or `error`.
 
-## LIVE PROBE RESULT (2026-10-07): ALL CHECKS PASS — C2 CONFIRMED
+## LIVE CHECK RESULT (2026-10-07): ALL CHECKS PASS — C2 CONFIRMED
 
 Run against the t4-openclaw gateway (T6_MODE=1, the t6-policy variant):
 
@@ -130,7 +130,7 @@ Run against the t4-openclaw gateway (T6_MODE=1, the t6-policy variant):
 
 `investigate.sh` (static extraction from the pinned image) is superseded: the
 image docs were extracted locally (same digest) and the findings are above.
-What remains is ONE LIVE PROBE against a running gateway:
+What remains is ONE LIVE CHECK against a running gateway:
 
 1. Bring up `compose/t4.yaml` with the openclaw T4 adapter (`adapter/t4.js`)
    and an openclaw config registering the two toy MCP servers under

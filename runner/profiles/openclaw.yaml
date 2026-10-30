@@ -13,7 +13,7 @@ container_name: t0-openclaw
 # Tracee flushes events in batches; the LAST action's kernel events can land
 # slightly after the sampled window end (observed 139 us on the original local host).
 # Keep this well below the spacing between consecutive runs.
-window_slack_ns: 1000000000
+window_tolerance_ns: 1000000000
 
 # served-target names as they appear in the shared target-logs volume
 # (the MCP stdio server logs under its SERVER_NAME, not the class name)
@@ -22,9 +22,9 @@ served_targets:
   stdio: toy-mcp-fs
   network: net-peer
 
-noise:
-  - id: exec-path-probe
-    reason: failed execve attempts (PATH probes) are not successful spawns
+unrelated_events:
+  - id: failed-command-lookup
+    reason: failed execve attempts (failed PATH lookups) are not successful spawns
     where: { event: execve, retval_nonzero: true }
 
   - id: driver-cleanup-execs
@@ -122,7 +122,7 @@ noise:
       (mapped as stdio_tool_call); file writes are keyed on
       security_file_open (mapped as file_write). Residual risk, documented:
       a broken server registry degrades stdio per-action evidence to the
-      served layer (the write-count envelope still applies to mapped
+      served layer (the expected write-count range still applies to mapped
       records).
     where: { class: unmapped, event: write }
 

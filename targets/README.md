@@ -21,7 +21,7 @@ Each target writes one JSON object per event: `{"ts", "target", "event", ...}`.
   stdio server (its stdout is protocol-only per the MCP stdio transport spec).
 - `$TARGET_LOG_DIR/<target>.log` (default `/var/log/targets/`): the compose
   `target-logs` volume, shared by all containers, is the reconciliation-facing
-  sink.
+  writer.
 
 ## Ports and paths (override via env)
 
@@ -29,7 +29,7 @@ Each target writes one JSON object per event: `{"ts", "target", "event", ...}`.
 |---|---|---|
 | `HTTP_PORT` | 8080 | http-endpoint |
 | `NET_TCP_PORT` / `NET_UDP_PORT` | 9000 / 9001 | net-peer |
-| `TARGET_LOG_DIR` | /var/log/targets | all targets (log-file sink) |
+| `TARGET_LOG_DIR` | /var/log/targets | all targets (log-file writer) |
 | `SECRETS_DIR` | /run/secrets | credentials/seed.sh |
 | `WORKSPACE_DIR` | /workspace | fs/setup.sh |
 

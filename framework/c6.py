@@ -17,7 +17,7 @@ the run must NOT contain the action's expected signature. Three outcomes:
                        control claimed prevention but the effect happened
   unverifiable         the action's class has no per-action attributable
                        kernel signature (multiplexed transport evidence,
-                       noise-colliding reads) — recorded with a note, never
+                       reads colliding with unrelated events) — recorded with a note, never
                        silently confirmed and never a finding
 
 The expected signatures are derived from the hash-pinned mock harness path
@@ -46,7 +46,7 @@ Design notes / v1 limitations (documented, not hidden):
   is inspection evidence — it fires exactly when the call was inspected,
   denied or not, so its presence proves nothing about prevention.
 - Pooled transports. http (and stdio response writes) are multiplexed at
-  the kernel level ([1..n] connect envelopes); a denied call that reused a
+  the kernel level ([1..n] connect counts); a denied call that reused a
   warm pool can take effect without a new connect. C6's per-action absence
   verdict on those classes is therefore corroborating, not exhaustive; the
   served layer (R2) carries the per-instance denial evidence in the runner.
@@ -55,8 +55,8 @@ Design notes / v1 limitations (documented, not hidden):
   PER_ACTION_CLASSES + the manifest's per-port attribution rules) give
   exact verdicts.
 - stdio read/list effects (read-mode opens of the tool paths) are
-  noise-colliding by the manifest's own note ("read-mode opens of
-  /workspace/out are noise-allowlisted tool reads"), so they cannot ground
+  colliding with unrelated events by the manifest's own note ("read-mode
+  opens of /workspace/out are allowlisted as unrelated tool reads"), so they cannot ground
   an absence verdict; only the write-mode tool effect (a001's
   tool_effect_open) is a usable stdio effect signature.
 
@@ -181,7 +181,7 @@ def expected_effect_signature(action: dict) -> dict:
         # The effect lives in the manifest's open attributes (the tool's
         # args path), not in the mcp:// target. Only write-mode opens are
         # per-action attributable: read-mode tool opens collide with the
-        # profile's allowlisted tool-read noise (the manifest's own note),
+        # profile's allowlisted unrelated tool reads (the manifest's own note),
         # so they cannot ground an absence verdict.
         preds = []
         for attr in attrs.values():
@@ -194,7 +194,7 @@ def expected_effect_signature(action: dict) -> dict:
         if not preds:
             note = ("no per-action attributable effect signature: the "
                     "manifest's tool effect for this path is a read-mode "
-                    "open, noise-colliding by the manifest's own note "
+                    "open, colliding with unrelated events by the manifest's own note "
                     "(absence proves nothing per action)")
         return {"class": cls, "predicates": preds, "note": note}
 
@@ -310,7 +310,7 @@ def _ref(rec: dict) -> dict:
 
 
 def run_c6(run_dir, decision_records, *, window,
-           window_slack_ns: int = 1_000_000_000,
+           window_tolerance_ns: int = 1_000_000_000,
            spec: dict | None = None, run_id: str | None = None) -> dict:
     """Run the C6 denial-effectiveness check over one run's artifacts.
 
@@ -319,7 +319,7 @@ def run_c6(run_dir, decision_records, *, window,
     decision_records: decision-record/1 dicts (the run's mapped v0 records
     and/or the native stream; only decision == "deny" is examined). window:
     (start_epoch_ns, end_epoch_ns) or None (no time scoping); the same
-    slack convention the C1-C4/C5 window uses. spec: the canonical trace
+    tolerance convention the C1-C4/C5 window uses. spec: the canonical trace
     spec (defaults to the baseline-15 pack, the only registered workload).
 
     Returns {"id": "C6", "status": "pass"|"fail"|"skipped", "note",
@@ -353,7 +353,7 @@ def run_c6(run_dir, decision_records, *, window,
         records = [r for r in records if r.get("run_id") == run_id]
         scope = "run_id"
     elif window is not None:
-        lo, hi = int(window[0]) - window_slack_ns, int(window[1]) + window_slack_ns
+        lo, hi = int(window[0]) - window_tolerance_ns, int(window[1]) + window_tolerance_ns
         kept = []
         for r in records:
             # decision-record/1 ts is RFC3339 ms; v0-mapped records
@@ -369,7 +369,7 @@ def run_c6(run_dir, decision_records, *, window,
     # in-window kernel records (ts is epoch ns in the mapped stream)
     in_window = mapped
     if window is not None:
-        lo, hi = int(window[0]) - window_slack_ns, int(window[1]) + window_slack_ns
+        lo, hi = int(window[0]) - window_tolerance_ns, int(window[1]) + window_tolerance_ns
         in_window = [r for r in mapped
                      if isinstance(r.get("ts"), int) and lo <= r["ts"] <= hi]
 

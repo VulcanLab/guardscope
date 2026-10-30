@@ -118,7 +118,7 @@ variants:
     attribution: >-
       deferred — record.submitted_pid recorded at submission; attribute the
       child's execve by submitted_pid or by execve signature (pathname +
-      argv) within [record.started_epoch_ns, run window end + slack].
+      argv) within [record.started_epoch_ns, run window end + tolerance].
   - name: daemon
     applies_to: process_spawn
     semantics: >-
@@ -179,7 +179,7 @@ paths:
       rule: >-
         synchronous: server-child writes/effect attribute by the session
         child pid recorded in the run context, within the record window
-        (+ profile slack); the server execve is a run-level expected extra.
+        (+ profile tolerance); the server execve is a run-level expected extra.
       deferred: false
     notes: >-
       Twin fidelity: reproduces the harness's OWN T0-T2 transport for this
@@ -212,7 +212,7 @@ paths:
       syscalls: [write]
       attributes:
         response_write: {fd: 1, from: server child process, note: "maps as stdio_tool_call"}
-        tool_read_open: {path: /workspace/out/a.txt, flags: O_RDONLY, from: server child process, note: "read-mode opens of /workspace/out are noise-allowlisted tool reads, not a canonical class"}
+        tool_read_open: {path: /workspace/out/a.txt, flags: O_RDONLY, from: server child process, note: "read-mode opens of /workspace/out are allowlisted as unrelated tool reads, not a canonical class"}
     expected_multiplicity:
       stdio_response_writes: "[n_requests, n_requests + 1]"
     inspection_expectation:
@@ -230,7 +230,8 @@ paths:
       deferred: false
     notes: >-
       Same twin fidelity caveats as a001; no server-side write effect (the
-      read open stays unmapped tool noise by design on the local route; under
+      read open stays an unmapped unrelated tool read by design on the local
+      route; under
       the t3 gateway route the server-side opens happen in the mcp-fs-http
       container, outside the harness scope).
 
@@ -246,7 +247,7 @@ paths:
       syscalls: [write]
       attributes:
         response_write: {fd: 1, from: server child process, note: "maps as stdio_tool_call"}
-        tool_dir_open: {path: /workspace/out, flags: O_RDONLY, from: server child process, note: "directory read open — noise-allowlisted tool read"}
+        tool_dir_open: {path: /workspace/out, flags: O_RDONLY, from: server child process, note: "directory read open — allowlisted as an unrelated tool read"}
     expected_multiplicity:
       stdio_response_writes: "[n_requests, n_requests + 1]"
     inspection_expectation:
@@ -280,7 +281,7 @@ paths:
     kernel_signature:
       syscalls: [connect]
       attributes:
-        raw: {dst_host: http-endpoint, dst_port: 8080, one_connect_per_request: true, note: "python client opens one connect per request (no pooling): stays inside the profile envelope [1..n]"}
+        raw: {dst_host: http-endpoint, dst_port: 8080, one_connect_per_request: true, note: "python client opens one connect per request (no pooling): stays inside the profile's expected count range [1..n]"}
         gateway: {dst_host: gateway, dst_port: 8090, note: "the harness's own inspected connect under T1+ (mapping v6); the upstream 8080 connect then originates in the mcp-http container, outside the mock-harness scope"}
     inspection_expectation:
       t0: {disposition: none, note: "no enforcement point in T0 (raw route)"}
@@ -302,7 +303,7 @@ paths:
       FIDELITY LIMITATION (documented per the v1 brief): the raw route uses
       a python HTTP client — one connect per request, no node-fetch
       connection pooling, no keep-alive reuse — so the kernel connect count
-      is the request count, inside the profile's [min..n] envelope but not
+      is the request count, inside the profile's [min..n] expected count range but not
       byte-identical to the harness's pooled shape. The gateway route
       reproduces the harness's T1+ JSON-RPC POST exactly (tool routes
       above), which is the inspected twin's purpose.
@@ -366,9 +367,9 @@ paths:
     operation: POST
     origin_channel: http-connect
     origin_channel_detail: >-
-      the checked-DENY probe instance (v2): same route as a011 — raw POST
-      /hook with body "policy-deny probe"; gateway tools/call {post_hook,
-      {body: "policy-deny probe"}}. T6's policy denies it on argument
+      the checked-DENY case instance (v2): same route as a011 — raw POST
+      /hook with body "policy-deny case"; gateway tools/call {post_hook,
+      {body: "policy-deny case"}}. T6's policy denies it on argument
       values; T0-T5 allow it.
     kernel_signature:
       syscalls: [connect]
@@ -408,7 +409,7 @@ paths:
       syscalls: [connect]
       attributes:
         connect: {dst_host: net-peer, dst_port: 9000, transport: tcp, one_connect_per_action: true}
-        dns: {note: "the hostname resolves first (getaddrinfo): embedded-DNS traffic, noise-allowlisted like the harness's node resolver churn"}
+        dns: {note: "the hostname resolves first (getaddrinfo): embedded-DNS traffic, allowlisted as unrelated like the harness's node resolver churn"}
     expected_multiplicity:
       tcp_connects_per_action: 1
     inspection_expectation:
@@ -502,7 +503,7 @@ paths:
         outliving/daemon variants: the record ends at submission; attribute
         the execve by record.submitted_pid (recorded at submission) or by
         execve signature (pathname + argv) within [record.started_epoch_ns,
-        run window end + slack]. For the daemon variant pid-ancestry
+        run window end + tolerance]. For the daemon variant pid-ancestry
         attribution fails BY CONSTRUCTION (setsid + reparent to 1) — the
         submitted_pid handoff at submission time is the only lineage key.
     notes: >-

@@ -185,7 +185,7 @@ def child_exit_state(pid: int) -> tuple[str, int | None]:
 
 
 def alive(pid: int) -> bool:
-    """Best-effort existence probe for pids we cannot waitpid (kill(pid, 0))."""
+    """Best-effort existence check for pids we cannot waitpid (kill(pid, 0))."""
     try:
         os.kill(pid, 0)
         return True

@@ -14,7 +14,7 @@ Effect adjudication uses the deterministic replay's per-action terminal
 status (the adapter records execution outcomes; the served layer's
 independent evidence is reconciled separately by R2). The kernel record's
 contribution is class-level at v1: per-instance kernel attribution is the
-multiplicity-envelope evidence reconciled by R3, which the run record
+expected count range evidence reconciled by R3, which the run record
 carries alongside this classification.
 
 Outcome vocabulary (per instance):

@@ -49,7 +49,7 @@ SIX_CLASSES = rec_mod.SIX_CLASSES
 # the stdio class median excludes the session-establishing first call
 # (see module docstring); the raw a001 duration is reported separately
 STDIO_SESSION_CALL = "a001"
-DENY_PROBE = "a014"
+DENY_CASE = "a014"
 
 
 def _durations_ms(run_dir: Path) -> dict[str, float] | None:
@@ -145,8 +145,8 @@ def overheads(data: dict[str, dict[str, dict[str, float]]]) -> dict:
                                      f"(session establishment: "
                                      f"{med.get(STDIO_SESSION_CALL, float('nan')):.1f} ms "
                                      f"vs baseline {base.get(STDIO_SESSION_CALL, float('nan')):.1f} ms)")
-                if design == "t6" and DENY_PROBE in med:
-                    entry["deny_probe_ms"] = round(med[DENY_PROBE], 3)
+                if design == "t6" and DENY_CASE in med:
+                    entry["deny_case_ms"] = round(med[DENY_CASE], 3)
                 rows[cls] = entry
             entry_d = {
                 "n_runs": len(runs),

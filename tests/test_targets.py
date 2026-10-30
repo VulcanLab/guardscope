@@ -272,4 +272,4 @@ def test_compose_services_match_baseline_targets():
     assert "t0net" not in (tracee.get("networks") or [])
     assert tracee.get("privileged") is True and tracee.get("pid") == "host"
     assert all("target-logs:/var/log/targets" in c["volumes"]
-               for c in deployed.values())  # shared served-action log sink
+               for c in deployed.values())  # shared served-action log writer

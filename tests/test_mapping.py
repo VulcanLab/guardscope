@@ -150,7 +150,7 @@ def test_credential_read_wrong_flags_not_credential_access(mapper):
     assert r is not None and r["class"] == "file_write"
 
 
-def test_target_log_noise_excluded(mapper):
+def test_target_log_writes_excluded(mapper):
     """M2 served-action logs are instrumentation, not file_write actions."""
     r = map_one(mapper, tracee_event("security_file_open",
                                      pathname="/var/log/targets/toy-mcp-fs.log",
@@ -234,7 +234,7 @@ def test_stdio_server_in_other_container_isolated(mapper):
 
 # --- stream handling -----------------------------------------------------------
 
-def test_iter_events_skips_noise(me):
+def test_iter_events_skips_non_json(me):
     stream = [
         "INFO: startup warning (not json)",
         '{"eventName": "execve", "args": []}',
@@ -282,7 +282,7 @@ def test_full_stream_end_to_end(me, mapper, tmp_path):
         tracee_event("security_file_open", pathname="/workspace/out/b.txt",
                      flags="O_WRONLY|O_CREAT|O_TRUNC", ts=8),
         tracee_event("security_file_open", pathname="/var/log/targets/x.log",
-                     flags="O_WRONLY|O_APPEND|O_CREAT", ts=9),  # excluded noise
+                     flags="O_WRONLY|O_APPEND|O_CREAT", ts=9),  # excluded target-log instrumentation
         tracee_event("connect", addr={"sa_family": "AF_INET",
                                           "sin_addr": "127.0.0.11", "sin_port": 53}, ts=9),
     ]
@@ -315,23 +315,23 @@ def test_net_packet_udp_other_port_unmapped(mapper):
     assert r["class"] == "unmapped"
 
 
-# --- M6 reconciliation envelope (retval provenance, unmapped detail) ----------
+# --- M6 reconciliation record fields (retval provenance, unmapped detail) ------
 
 def test_mapped_record_carries_retval_provenance(mapper):
-    """Spawn PATH-probe dedupe in M6 reconciliation needs the syscall retval
-    (a top-level Tracee field, not an arg)."""
+    """The spawn failed-command-lookup dedupe in M6 reconciliation needs the
+    syscall retval (a top-level Tracee field, not an arg)."""
     ok = tracee_event("execve", pathname="/bin/sh", argv=["sh", "-c", "echo hi"])
     ok["retval"] = 0
     assert map_one(mapper, ok)["provenance"]["retval"] == 0
-    probe = tracee_event("execve", pathname="/bin/nope", argv=["nope"])
-    probe["retval"] = -2
-    f = map_one(mapper, probe)
+    failed = tracee_event("execve", pathname="/bin/nope", argv=["nope"])
+    failed["retval"] = -2
+    f = map_one(mapper, failed)
     assert f["provenance"]["retval"] == -2 and f["class"] == "process_spawn"
 
 
-def test_unmapped_record_keeps_full_envelope(me, tmp_path):
+def test_unmapped_record_keeps_full_record_fields(me, tmp_path):
     """M6: unmapped records carry ts/container/pid/process + best-effort
-    detail (path/port/flags/argv) so noise allowlists work without the raw
+    detail (path/port/flags/argv) so unrelated-event allowlists work without the raw
     stream."""
     events = [
         tracee_event("security_file_open", pathname="/workspace/out/a.txt",
@@ -339,7 +339,7 @@ def test_unmapped_record_keeps_full_envelope(me, tmp_path):
         tracee_event("connect", addr={"sa_family": "AF_INET",
                                       "sin_addr": "127.0.0.11", "sin_port": 53},
                      ts=124, pid=5, container="cX"),
-        tracee_event("execve", pathname="/bin/probe", argv=["probe", "x"],
+        tracee_event("execve", pathname="/bin/missing", argv=["missing", "x"],
                      ts=125, pid=5, container="cX"),
     ]
     events[2]["retval"] = -2
@@ -350,9 +350,9 @@ def test_unmapped_record_keeps_full_envelope(me, tmp_path):
     subprocess.run([sys.executable, str(MAPPER_PATH), "--rules", str(RULES_PATH),
                     "--in", str(raw), "--out", str(out)], check=True)
     records = [json.loads(l) for l in out.read_text().splitlines()]
-    # events 0/1 stay unmapped and keep the full envelope; event 2 (execve)
+    # events 0/1 stay unmapped and keep the full record fields; event 2 (execve)
     # still maps as process_spawn regardless of retval (classification is
-    # unchanged; reconciliation does the probe dedupe)
+    # unchanged; reconciliation does the failed-lookup dedupe)
     assert records[0]["class"] == "unmapped"
     assert records[1]["class"] == "unmapped"
     assert records[2]["class"] == "process_spawn"
@@ -361,4 +361,4 @@ def test_unmapped_record_keeps_full_envelope(me, tmp_path):
     assert records[0]["detail"] == {"path": "/workspace/out/a.txt", "flags": "O_RDONLY"}
     assert records[1]["detail"] == {"port": 53}
     assert records[2]["provenance"]["retval"] == -2
-    assert records[2]["detail"]["cmd"] == ["probe", "x"]
+    assert records[2]["detail"]["cmd"] == ["missing", "x"]

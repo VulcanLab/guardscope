@@ -68,7 +68,7 @@ def t1_decisions() -> list[dict]:
         entry(base + 0.5, "post_hook", params={"body": "tool-call payload"}),
         entry(base + 1.5, "get_health"),
         entry(base + 2.5, "put_state", params={"body": "k=v"}),
-        entry(base + 3.5, "post_hook", params={"body": "policy-deny probe"}),
+        entry(base + 3.5, "post_hook", params={"body": "policy-deny case"}),
     ]
 
 
@@ -122,7 +122,7 @@ def test_denied_decision_still_covers():
                  entry(WIN_START / 1e9 + 1.5, "get_health"),
                  entry(WIN_START / 1e9 + 2.5, "put_state"),
                  entry(WIN_START / 1e9 + 3.5, "post_hook", allowed=False,
-                       params={"body": "policy-deny probe"})]
+                       params={"body": "policy-deny case"})]
     report = compute(decisions)
     assert report["status"] == "pass"
     assert report["coverage"]["http_tool_call"]["coverage"] == 1.0
@@ -226,7 +226,7 @@ def test_iso_and_ns_timestamps_accepted():
                  {**entry(0), "timestamp": WIN_START + 2_500_000_000,
                   "tool_name": "put_state"},
                  {**entry(0), "timestamp": iso, "tool_name": "post_hook",
-                  "parameters": {"body": "policy-deny probe"}}]
+                  "parameters": {"body": "policy-deny case"}}]
     report = compute(decisions)
     assert report["status"] == "pass"
 
@@ -287,7 +287,7 @@ def test_runrecord_t1_embeds_coverage_and_hashes(tmp_path):
         entry(base + 0.5, "post_hook", params={"body": "tool-call payload"}),
         entry(base + 1.5, "get_health"),
         entry(base + 2.5, "put_state", params={"body": "k=v"}),
-        entry(base + 3.5, "post_hook", params={"body": "policy-deny probe"}),
+        entry(base + 3.5, "post_hook", params={"body": "policy-deny case"}),
     ]
     dec.write_text("\n".join(json.dumps(e) for e in in_window) + "\n")
     policy = gw / "policy.yaml"
@@ -359,7 +359,7 @@ def t3_decisions() -> list[dict]:
         entry(base + 2.5, "post_hook", params={"body": "tool-call payload"}),
         entry(base + 3.0, "get_health"),
         entry(base + 3.5, "put_state", params={"body": "k=v"}),
-        entry(base + 4.0, "post_hook", params={"body": "policy-deny probe"}),
+        entry(base + 4.0, "post_hook", params={"body": "policy-deny case"}),
     ]
 
 
@@ -423,7 +423,7 @@ def t4_decisions() -> list[dict]:
         ns_entry(base + 3.0, "mcp__toy-mcp-http__get_health", {}),
         ns_entry(base + 3.5, "mcp__toy-mcp-http__put_state", {"body": "k=v"}),
         ns_entry(base + 4.0, "mcp__toy-mcp-http__post_hook",
-                 {"body": "policy-deny probe"}),
+                 {"body": "policy-deny case"}),
     ]
 
 

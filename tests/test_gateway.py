@@ -1,5 +1,5 @@
 """T1-2 acceptance: gateway service (gateway/server.py) — docker-free unit
-tests for the importable pure parts (policy loading, audit sink, tool-action
+tests for the importable pure parts (policy loading, audit writer, tool-action
 mapping). The full intercept path (agent_os only available in the container)
 is exercised live in T1-5; the policy-to-GovernancePolicy contract is pinned
 here against the shape observed in the agent-os-kernel 3.7.0 spike.
@@ -60,14 +60,14 @@ def test_load_policy_yaml_matches_governancepolicy_shape():
     assert kwargs["max_tool_calls"] >= 14
 
 
-# --- audit sink --------------------------------------------------------------
+# --- audit writer ------------------------------------------------------------
 
-def test_audit_sink_writes_jsonl(tmp_path, capsys):
-    sink = gateway_server.JsonlAuditSink(tmp_path)
+def test_audit_writer_writes_jsonl(tmp_path, capsys):
+    writer = gateway_server.JsonlAuditWriter(tmp_path)
     entry = {"timestamp": 1.0, "agent_id": "t1-replay", "tool_name": "post_hook",
              "allowed": True, "reason": "in allowed_tools", "approval_status": None}
-    sink.record(entry)
-    sink.record({**entry, "tool_name": "nope", "allowed": False,
+    writer.record(entry)
+    writer.record({**entry, "tool_name": "nope", "allowed": False,
                  "reason": "tool 'nope' is not in the allowed list"})
     out = read_jsonl(tmp_path / "decisions.jsonl")
     assert out == [entry, {**entry, "tool_name": "nope", "allowed": False,
@@ -76,12 +76,12 @@ def test_audit_sink_writes_jsonl(tmp_path, capsys):
     assert len(capsys.readouterr().out.strip().splitlines()) == 2
 
 
-def test_audit_sink_missing_dir_is_silent(tmp_path):
+def test_audit_writer_missing_dir_is_silent(tmp_path):
     """Logging must never break enforcement (same rule as targets/common.py):
     a missing log dir drops the file write but keeps stdout emission."""
-    sink = gateway_server.JsonlAuditSink(tmp_path / "does-not-exist")
-    sink.record({"tool_name": "post_hook", "allowed": True})  # no raise
-    assert not sink.path.exists()
+    writer = gateway_server.JsonlAuditWriter(tmp_path / "does-not-exist")
+    writer.record({"tool_name": "post_hook", "allowed": True})  # no raise
+    assert not writer.path.exists()
 
 
 # --- forwarded-method contract ----------------------------------------------

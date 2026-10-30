@@ -15,7 +15,7 @@ against a built topology is the next pass):
   - the mock-run evidence class through execute_experiment with a fake
     executor (mock-harness vs pi vs the degraded no-sensor mode);
   - the reconcile profile (runner/profiles/mock-harness.yaml) and its
-    multiplicity envelopes against the path manifest's declarations;
+    expected count ranges against the path manifest's declarations;
   - the compose fixtures (docker compose config parse when docker is
     available; schema-level sanity otherwise);
   - the example experiment files validate through framework.cli.
@@ -455,14 +455,14 @@ def test_mock_run_evidence_not_upgraded_by_merge(tmp_path):
 # --------------------------------------------------------- reconcile profile
 
 
-def test_mock_profile_loads_and_declares_envelopes():
+def test_mock_profile_loads_and_declares_expected_ranges():
     """runner/profiles/mock-harness.yaml validates through the shared
-    profile loader and declares the mock multiplicity envelopes."""
+    profile loader and declares the mock expected count ranges."""
     profile = runner_reconcile.load_profile(PROFILE)
     assert profile["profile"] == "mock-harness/v1"
     assert profile["harness"] == "mock-harness"
     assert profile["container_name"] == "t0-mock"
-    assert isinstance(profile["window_slack_ns"], int)
+    assert isinstance(profile["window_tolerance_ns"], int)
     mult = profile["multiplicity"]
     assert mult["stdio_handshake_extra_writes"] == 1
     assert mult["http_connects_min"] == 1
@@ -477,7 +477,7 @@ def test_mock_profile_loads_and_declares_envelopes():
 
 
 def test_mock_profile_multiplicity_matches_path_manifest():
-    """The profile's per-class envelopes agree with the pinned path
+    """The profile's per-class expected count ranges agree with the pinned path
     manifest's expected_multiplicity declarations (mock_harness/
     manifest.yaml), which the driver refuses to run against on drift."""
     profile = runner_reconcile.load_profile(PROFILE)
@@ -515,13 +515,13 @@ def test_mock_profile_reconciler_end_to_end():
         assert checks[f"R3-kernel-{cls}"] == "fail"
 
 
-def test_mock_profile_t3_pooled_envelope():
+def test_mock_profile_t3_pooled_range():
     """Design-aware reconciliation consumes the mock profile under t3: BOTH
     tool classes take the shared pooled-gateway branch (runner/reconcile.py
     T3_SHARED_POOL_DESIGNS — the stdio twins' gateway route produces the
     same pooled gateway connects as the http twins, no local stdio
-    session), and with no kernel evidence the pooled envelope fails loud,
-    never silently. The profile adds no t3-specific keys: the envelope's
+    session), and with no kernel evidence the pooled count range fails loud,
+    never silently. The profile adds no t3-specific keys: the range's
     lower bound IS http_connects_min."""
     profile = runner_reconcile.load_profile(PROFILE)
     spec = runner_reconcile.load_spec(BASELINE)

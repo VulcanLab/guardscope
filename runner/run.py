@@ -228,13 +228,13 @@ def container_id(name: str) -> str:
 
 
 def in_window_mapped(mapped_path: Path, window: dict, container_id: str | None,
-                     slack_ns: int = 1_000_000_000) -> int:
+                     tolerance_ns: int = 1_000_000_000) -> int:
     """Count mapped records inside the replay window for the harness
     container (0 -> the capture raced Tracee's flush; see run_one)."""
     if not Path(mapped_path).is_file():
         return 0
-    lo = int(window["start"]) - slack_ns
-    hi = int(window["end"]) + slack_ns
+    lo = int(window["start"]) - tolerance_ns
+    hi = int(window["end"]) + tolerance_ns
     n = 0
     with open(mapped_path, encoding="utf-8") as f:
         for line in f:
@@ -530,7 +530,7 @@ def assemble_sensorless(spec_path: Path, profile: dict, replay: dict,
                         harness: str, run_id: str, design: str = "t0",
                         gateway_log: Path | None = None,
                         gateway_policy: Path | None = None,
-                        window_slack_ns: int = 1_000_000_000
+                        window_tolerance_ns: int = 1_000_000_000
                         ) -> tuple[dict, dict, dict]:
     """Assemble the run record + manifest for a degraded no-sensor run
     (DESIGN.md 9: "Degraded no-eBPF mode ... every output it produces is
@@ -572,7 +572,7 @@ def assemble_sensorless(spec_path: Path, profile: dict, replay: dict,
         coverage_report = cov_mod.compute(
             spec, decisions, parse_problems, design,
             (int(w["start"]), int(w["end"])) if w else None,
-            window_slack_ns)
+            window_tolerance_ns)
         pinned["gateway_package"] = versions.get("GATEWAY_PACKAGE", "unknown")
         pinned["gateway_package_version"] = versions.get(
             "GATEWAY_PACKAGE_VERSION", "unknown")
@@ -852,7 +852,7 @@ def run_one(harness: str, run_id: str, runs_dir: Path, timeout_s: float | None =
             gateway_policy=(gateway_dir / "policy.yaml" if (gateway_dir / "policy.yaml").is_file()
                             else gateway_dir / "policy.json" if (gateway_dir / "policy.json").is_file()
                             else None) if gateway_dir else None,
-            window_slack_ns=int(profile.get("window_slack_ns", 1_000_000_000)))
+            window_tolerance_ns=int(profile.get("window_tolerance_ns", 1_000_000_000)))
     else:
         # degraded no-eBPF mode: the kernel-dependent assembly is replaced
         # by the sensorless one (R1-R5 skipped-with-note, outcomes labeled
@@ -866,7 +866,7 @@ def run_one(harness: str, run_id: str, runs_dir: Path, timeout_s: float | None =
             gateway_policy=(gateway_dir / "policy.yaml" if (gateway_dir / "policy.yaml").is_file()
                             else gateway_dir / "policy.json" if (gateway_dir / "policy.json").is_file()
                             else None) if gateway_dir else None,
-            window_slack_ns=int(profile.get("window_slack_ns", 1_000_000_000)))
+            window_tolerance_ns=int(profile.get("window_tolerance_ns", 1_000_000_000)))
     artifacts = {
         "replay-result": out_dir / "replay-result.json",
         "replay-log": out_dir / "replay-log.jsonl",
@@ -1105,7 +1105,7 @@ def load_repro_verdicts(runs_dir: Path, harness: str) -> list[dict]:
 def build_report(runs_dir: Path, design: str = "t0") -> dict:
     """Summary table + done-criteria checklist over the run records of one
     deployment design (records carry `design`; pre-T1-5 records default t0).
-    Warmup runs (`warmup-` prefix: pre-measurement shakedown, window not
+    Warmup runs (`warmup-` prefix: pre-measurement first run (warmup), window not
     clean) are excluded: their reconciliation status is meaningless for the
     done criteria and must not enter the gate, the counting, or
     `runs_recorded`. For t1, a record is a pass only when reconciliation AND
@@ -1392,7 +1392,7 @@ def main() -> int:
             rec_mod.load_target_logs([str(d / "target-logs")]),
             cid, versions, args.harness, run_id, design=args.design,
             gateway_log=gateway_log, gateway_policy=gateway_policy,
-            window_slack_ns=int(profile.get("window_slack_ns", 1_000_000_000)))
+            window_tolerance_ns=int(profile.get("window_tolerance_ns", 1_000_000_000)))
         artifacts = {
             "tracee-events": d / "tracee-events.json",
             "mapped-actions": d / "mapped-actions.jsonl",

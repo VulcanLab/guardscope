@@ -1,8 +1,8 @@
 # Reconciliation profile: Pi harness (M6, C7).
 #
 # A profile carries everything reconciliation needs that is harness-specific:
-#   noise             — in-scope kernel records that are harness/runtime/driver
-#                       infrastructure, not workload (allowlist; excluded from
+#   unrelated_events  — in-scope kernel records that are harness/runtime/driver
+#                       infrastructure, not workload (list; excluded from
 #                       per-class accounting AND leftover detection)
 #   expected_extras   — kernel observations that ARE workload side-effects but
 #                       belong to no canonical action (e.g. the MCP server
@@ -12,7 +12,7 @@
 #                       harnesses/pi/README.md): how many kernel observations
 #                       one canonical action produces
 #
-# Noise rules apply to BOTH mapped and unmapped records. A `where` key absent
+# Unrelated-events rules apply to BOTH mapped and unmapped records. A `where` key absent
 # from a rule is a wildcard; all present keys must match. Matchers: event,
 # class, process (substring), path / path_prefix / path_basename / path_glob,
 # port, flags_contain (open(2) flag tokens), argv_contains (joined argv
@@ -22,11 +22,11 @@ profile: pi/v1
 harness: pi
 container_name: t0-pi
 
-# Slack (ns) added to both ends of the replay window before scoping.
+# Tolerance (ns) added to both ends of the replay window before scoping.
 # Tracee flushes events in batches; the LAST action's kernel events can land
 # slightly after the sampled window end (observed 139 us on the original local host).
 # Keep this well below the spacing between consecutive runs.
-window_slack_ns: 1000000000
+window_tolerance_ns: 1000000000
 
 # served-target names as they appear in the shared target-logs volume
 # (the MCP stdio server logs under its SERVER_NAME, not the class name)
@@ -35,13 +35,13 @@ served_targets:
   stdio: toy-mcp-fs
   network: net-peer
 
-noise:
-  - id: exec-path-probe
+unrelated_events:
+  - id: failed-command-lookup
     reason: >
       node/pi resolve commands through PATH; Tracee records every execve
-      attempt, so ENOENT probes appear as failed execve records (pi-specific:
-      4 records per resolved binary for the pi shim and the MCP python3
-      spawn). Only successful execs are spawns.
+      attempt, so ENOENT failed lookups appear as failed execve records
+      (pi-specific: 4 records per resolved binary for the pi shim and the
+      MCP python3 spawn). Only successful execs are spawns.
     where: { event: execve, retval_nonzero: true }
 
   - id: driver-cleanup-execs
@@ -150,7 +150,7 @@ noise:
       (mapped as stdio_tool_call); file writes are keyed on
       security_file_open (mapped as file_write). Residual risk, documented:
       a broken server registry degrades stdio per-action evidence to the
-      served layer (the write-count envelope still applies to mapped
+      served layer (the expected write-count range still applies to mapped
       records).
     where: { class: unmapped, event: write }
 

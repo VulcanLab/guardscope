@@ -112,10 +112,11 @@ already warm.
   The version is embedded in run records so re-mapping stays reproducible.
 - `mapping/map_events.py` — stateful mapper: raw Tracee NDJSON (file or
   stdin) → canonical action records (JSONL) with provenance (`raw_index`,
-  `retval` — the M6 PATH-probe dedupe needs the syscall return value), plus
-  an unmapped bucket (full envelope: ts/container/pid/process + best-effort
-  path/port/flags detail, so M6 reconciliation noise allowlists work without
-  re-reading the raw stream) and a stderr summary line.
+  `retval` — the M6 failed-command-lookup dedupe needs the syscall return
+  value), plus an unmapped bucket (full record fields: ts/container/pid/
+  process + best-effort path/port/flags detail, so M6 reconciliation's
+  unrelated-event allowlists work without re-reading the raw stream) and a
+  stderr summary line.
 - `smoke_workload.py` — the M3 acceptance workload: performs all six action
   classes from container context and prints per-action ns bounds.
 
@@ -136,7 +137,7 @@ already warm.
   expected multiplicity, reconciled in M6.
 - Port lists in `rules.yaml` decide `http_tool_call` (:8080) vs
   `direct_network` (:9000 tcp, :9001 udp); other ports stay unmapped
-  (DNS, health probes, co-tenant containers on this shared host).
+  (DNS, health checks, co-tenant containers on this shared host).
 - `/var/log/targets/` and `/tmp/tracee/` opens are excluded from
   `file_write` (target-internal instrumentation).
 
@@ -153,8 +154,8 @@ docker logs t0-tracee 2>/dev/null > /tmp/tracee-raw.jsonl
 python3 sensor/mapping/map_events.py \
   --in /tmp/tracee-raw.jsonl --out /tmp/mapped.jsonl
 # stderr summary shows all six classes mapped; scope by the workload's
-# [start_ns, end_ns] window on the `ts` field (epoch ns) to exclude co-tenant
-# container noise, then reconcile per class (M6).
+# [start_ns, end_ns] window on the `ts` field (epoch ns) to exclude unrelated
+# co-tenant container events, then reconcile per class (M6).
 ```
 
 Validated 2026-09-10: all six classes mapped within the workload window,

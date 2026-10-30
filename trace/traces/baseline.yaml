@@ -62,7 +62,7 @@ actions:
     op: PUT
     args: { path: /state, body: "k=v" }
 
-  # a014: the checked-DENY probe (v2). Same route as a011 (POST /hook), a
+  # a014: the checked-DENY case (v2). Same route as a011 (POST /hook), a
   # different argument value: T6's in-process policy constrains post_hook to
   # the canonical body prefix and denies this instance on argument values;
   # T0-T5's enforcement points allow it. Covered by the served layer's
@@ -71,7 +71,7 @@ actions:
     class: http_tool_call
     target: http://http-endpoint:8080
     op: POST
-    args: { path: /hook, body: "policy-deny probe" }
+    args: { path: /hook, body: "policy-deny case" }
 
   # --- direct_network (agent code connects out directly, no tool transport) ---
   - id: a021

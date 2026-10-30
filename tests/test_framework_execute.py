@@ -62,7 +62,7 @@ HTTP_DECISIONS = [
     {"tool_name": "post_hook",
      "parameters": {"path": "/hook", "body": "tool-call payload"}},
     {"tool_name": "post_hook",
-     "parameters": {"path": "/hook", "body": "policy-deny probe"}},
+     "parameters": {"path": "/hook", "body": "policy-deny case"}},
     {"tool_name": "get_health", "parameters": {"path": "/health"}},
     {"tool_name": "put_state", "parameters": {"path": "/state", "body": "k=v"}},
 ]

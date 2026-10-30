@@ -169,12 +169,12 @@ def test_c6_skipped_without_kernel_evidence(tmp_path):
 
 def test_c6_deny_without_action_id_resolves_by_target_identity(tmp_path):
     # the v0-mapped shape (action_id null): a014 vs a011 share the POST
-    # /hook route; the exact parameter match (the deny probe body) picks
+    # /hook route; the exact parameter match (the deny case body) picks
     # a014, and its endpoint-connect signature is absent -> confirmed
     write_mapped(tmp_path, [])
     v0_deny = deny_record(
         action_id=None, tool="post_hook", method="POST", path="/hook",
-        parameters={"path": "/hook", "body": "policy-deny probe"},
+        parameters={"path": "/hook", "body": "policy-deny case"},
         transport="none", ts_ns=1_500_000_000)
     rep = run_c6(tmp_path, [v0_deny], window=WINDOW, run_id="r1")
     assert rep["status"] == "pass"
@@ -192,14 +192,14 @@ def test_c6_deny_without_action_id_resolves_by_target_identity(tmp_path):
 
 
 def test_c6_window_scoping(tmp_path):
-    # the denied action's signature lands OUTSIDE the window (+slack):
+    # the denied action's signature lands OUTSIDE the window (+tolerance):
     # absence within the window still confirms the denial
     write_mapped(tmp_path, [
         mapped("direct_network", "connect", WINDOW[1] + 10 * 10**9,
                {"target_port": 9000, "transport": "tcp"}),
     ])
     rep = run_c6(tmp_path, [deny_record(action_id="a021")],
-                 window=WINDOW, window_slack_ns=10**9, run_id="r1")
+                 window=WINDOW, window_tolerance_ns=10**9, run_id="r1")
     assert rep["per_deny"][0]["verdict"] == "prevented-confirmed"
 
 
@@ -264,7 +264,8 @@ def test_c6_stdio_write_effect_via_manifest_attribute(tmp_path):
 
 
 def test_c6_stdio_read_deny_is_unverifiable_not_confirmed(tmp_path):
-    # a002 (read_file): the manifest's read-mode open is noise-colliding by
+    # a002 (read_file): the manifest's read-mode open collides with unrelated
+    # events by
     # its own note, so absence cannot ground a verdict — unverifiable with
     # a note, never a finding, never silently confirmed
     write_mapped(tmp_path, [])
@@ -333,7 +334,7 @@ HTTP_DECISIONS = [
     {"tool_name": "post_hook",
      "parameters": {"path": "/hook", "body": "tool-call payload"}},
     {"tool_name": "post_hook",
-     "parameters": {"path": "/hook", "body": "policy-deny probe"}},
+     "parameters": {"path": "/hook", "body": "policy-deny case"}},
     {"tool_name": "get_health", "parameters": {"path": "/health"}},
     {"tool_name": "put_state", "parameters": {"path": "/state", "body": "k=v"}},
 ]
@@ -592,7 +593,7 @@ def test_runner_sensorless_assembly(tmp_path):
         "pi", "ns-1", design="t2",
         gateway_log=tmp_path / "gateway" / "decisions.jsonl",
         gateway_policy=None,
-        window_slack_ns=1_000_000_000)
+        window_tolerance_ns=1_000_000_000)
     # the degraded labeling (DESIGN.md 9)
     assert run_record["sensor"]["present"] is False
     assert run_record["reconciliation"]["status"] == "skipped-no-sensor"

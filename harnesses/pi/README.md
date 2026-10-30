@@ -27,10 +27,10 @@ driver (runner/trigger_pi.py)
   for the matching `response`.
 - The container entrypoint only seeds targets and sleeps; **one pi RPC process
   is execed per replay run**, so the pi process lifetime ≈ the replay window
-  (clean Tracee scoping; no harness-internal idle noise).
+  (clean Tracee scoping; no harness-internal idle records).
 - The adapter is TypeScript loaded via jiti (`pi -e`); no transpile step.
 - Global extensions do not exist in the container (fresh `~/.pi`), so no
-  user-extension noise.
+  user-extension records.
 
 ## Replay contract (same as OpenClaw, M4)
 
@@ -72,17 +72,18 @@ Same classes as OpenClaw (M4) plus one pi-specific finding:
 - **process_spawn (pi-specific)**: node/pi resolve commands through the PATH,
   and Tracee records each `execve` attempt — the pi shim (`/usr/local/bin/pi`
   → `node`) and the MCP server launch (`python3` from PATH) appear as 4 execve
-  records each (ENOENT PATH probes included) before the successful exec.
-  Reconciliation must dedupe execve probes per successful exec.
+  records each (ENOENT failed lookups included) before the successful exec.
+  Reconciliation must dedupe failed execve attempts per successful exec.
 - **http**: node `fetch` pools connections → 3 http_tool_call actions share 1
   `connect` to :8080.
 - **file_write**: double `security_file_open` per write action (open +
   re-open); same for credential_access (each read opens twice).
 - **udp**: dgram sends via `sendmsg` (unparsed destination); `net_packet_udp`
   (`dst_port`) is the UDP observation.
-- runc/container-start `execve` + `/proc/*/oom_score_adj` noise appears inside
-  the window (compose restarts, driver chown) — window/container/process scoping
-  in M6 reconciliation handles it (same as the OpenClaw profile).
+- runc/container-start `execve` + `/proc/*/oom_score_adj` unrelated events
+  appear inside the window (compose restarts, driver chown) —
+  window/container/process scoping in M6 reconciliation handles it (same as
+  the OpenClaw profile).
 
 ## Usage
 

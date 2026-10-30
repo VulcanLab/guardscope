@@ -28,7 +28,7 @@
 # process_spawn / file_write / credential_access bypass (inside the netns —
 # the process-level escape T3 leaves open). At the kernel, ALL tool calls
 # share one pooled connect origin (gateway:8090) — the t3 finding; the
-# shared pooled envelope is reconciled in runner/reconcile.py.
+# shared pooled expected count range is reconciled in runner/reconcile.py.
 #
 # The runner gates the replay on the jail's clean exit (run.py docker-waits
 # t3-mock-egress-jail), so a run never starts uninspected.

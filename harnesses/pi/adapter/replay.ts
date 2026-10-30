@@ -144,7 +144,7 @@ let gatewayRpcId = 0;
 // io.inspection/attempt, used wherever this adapter builds the request
 // (stdio sessions and gateway-routed http tools/call); (2) HTTP headers
 // x-inspection-action-id / x-inspection-attempt on raw (non-MCP) http tool
-// calls. Paths that cannot carry _meta (the additive gateway-probe client's
+// calls. Paths that cannot carry _meta (the additive gateway check client's
 // call interface) record carrier_used "none" and the request goes out
 // unchanged — byte-identical behavior when carriers cannot be applied.
 // Carrier injection never fails a replay: a transport that rejects _meta
@@ -219,7 +219,7 @@ const T4_HTTP_SERVER = "toy_mcp_http";
 const T4_MCP_READY_TIMEOUT_MS = 30000;
 
 async function gatewayFsToolCall(action: any): Promise<unknown> {
-  if (probeGatewayClient) return await probeGatewayClient.call(action.tool, action.arguments ?? {}, action.id);
+  if (checkGatewayClient) return await checkGatewayClient.call(action.tool, action.arguments ?? {}, action.id);
   const msg = { jsonrpc: "2.0", id: ++gatewayRpcId, method: "tools/call",
                 params: withMetaCarriers({ name: action.tool, arguments: action.arguments ?? {} }, action.id) };
   const resp = await withTimeout(fetch(`${GATEWAY_URL.replace(/\/$/, "")}/mcp`, {
@@ -231,12 +231,12 @@ async function gatewayFsToolCall(action: any): Promise<unknown> {
   return { text: data.result?.content?.[0]?.text, via: "gateway", tool: action.tool };
 }
 
-let probeGatewayClient: any = null;
-async function initProbeGateway() {
-  if (process.env.GATEWAY_CLIENT_MODULE && !probeGatewayClient) {
+let checkGatewayClient: any = null;
+async function initCheckGateway() {
+  if (process.env.GATEWAY_CLIENT_MODULE && !checkGatewayClient) {
     const { GatewayClient } = await import(process.env.GATEWAY_CLIENT_MODULE);
-    probeGatewayClient = new GatewayClient(GATEWAY_URL);
-    await probeGatewayClient.start();
+    checkGatewayClient = new GatewayClient(GATEWAY_URL);
+    await checkGatewayClient.start();
   }
 }
 
@@ -246,7 +246,7 @@ async function mcpHttpToolCall(action: any): Promise<unknown> {
   if (!tool) throw new Error(`no gateway tool route for ${action.method} ${u.pathname}`);
   const toolArgs: Record<string, string> = {};
   if (action.body !== undefined) toolArgs.body = action.body;
-  if (probeGatewayClient) return await probeGatewayClient.call(tool, toolArgs, action.id);
+  if (checkGatewayClient) return await checkGatewayClient.call(tool, toolArgs, action.id);
   const msg = { jsonrpc: "2.0", id: ++gatewayRpcId, method: "tools/call",
                 params: withMetaCarriers({ name: tool, arguments: toolArgs }, action.id) };
   const resp = await withTimeout(fetch(`${GATEWAY_URL.replace(/\/$/, "")}/mcp`, {
@@ -340,11 +340,11 @@ async function execAction(action: any): Promise<unknown> {
   switch (action.kind) {
     case "mcp": {
       // carriers (DESIGN.md 5): _meta on every tools/call this adapter builds
-      // (stdio session or gateway-routed); the probe client's call interface
+      // (stdio session or gateway-routed); the check client's call interface
       // cannot carry _meta, so its dispatches record carrier "none" and go
       // out unchanged. One dispatch record per attempt either way.
-      const viaGatewayFs = GATEWAY_FS && !probeGatewayClient?.disabled;
-      const carrierUsed = viaGatewayFs && probeGatewayClient ? "none" : "mcp_meta";
+      const viaGatewayFs = GATEWAY_FS && !checkGatewayClient?.disabled;
+      const carrierUsed = viaGatewayFs && checkGatewayClient ? "none" : "mcp_meta";
       try {
         const detail = viaGatewayFs
           ? await gatewayFsToolCall(action)
@@ -360,9 +360,9 @@ async function execAction(action: any): Promise<unknown> {
     case "http": {
       // carriers (DESIGN.md 5): gateway-routed http actions are MCP
       // tools/call -> _meta; raw fetch (T0) -> HTTP headers (carrier 2)
-      const viaGateway = !!GATEWAY_URL && !probeGatewayClient?.disabled;
+      const viaGateway = !!GATEWAY_URL && !checkGatewayClient?.disabled;
       const carrierUsed = viaGateway
-        ? (probeGatewayClient ? "none" : "mcp_meta")
+        ? (checkGatewayClient ? "none" : "mcp_meta")
         : "http_header";
       try {
         const detail = viaGateway
@@ -466,7 +466,7 @@ async function ensureMcpSession() {
 async function runReplay(trace: any) {
   await fs.mkdir(REPLAY_LOG_DIR, { recursive: true });
   await csbSnapshot(trace); // BEFORE the measurement window, and off by default
-  await initProbeGateway(); // initialize/session/tool discovery outside measurement window
+  await initCheckGateway(); // initialize/session/tool discovery outside measurement window
   const logPath = `${REPLAY_LOG_DIR}/replay-log.jsonl`;
   const log = createWriteStream(logPath, { flags: "w" });
   const startedNs = ns();
@@ -483,9 +483,9 @@ async function runReplay(trace: any) {
       let errorDetail: any = null;
       let status = "ok", detail: unknown = null, error: string | null = null;
       try {
-        // Only the additive all-tool probe client suppresses the local child;
+        // Only the additive all-tool check client suppresses the local child;
         // preserve legacy executor paths, and restore stdio in its baseline.
-        if (action.kind === "mcp" && (!GATEWAY_FS || !probeGatewayClient || probeGatewayClient.disabled)) await ensureMcpSession();
+        if (action.kind === "mcp" && (!GATEWAY_FS || !checkGatewayClient || checkGatewayClient.disabled)) await ensureMcpSession();
         detail = await execAction(action);
       } catch (exc) {
         status = "error";
@@ -810,7 +810,7 @@ function t4RegisterProvider(pi: ExtensionAPI) {
 // Captured for the T4 command phase (MCP readiness polling).
 let piRef: ExtensionAPI | null = null;
 
-// Optional probe evaluator: enforcement remains at this real dispatch hook.
+// Optional check evaluator: enforcement remains at this real dispatch hook.
 // NeMo's Python runtime is a local child; no loopback policy service or LLM.
 let externalEvaluator: any = null;
 async function getExternalEvaluator() {

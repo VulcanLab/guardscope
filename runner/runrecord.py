@@ -8,7 +8,8 @@ replay run, per the T0 done-criteria:
     - canonical trace hash (SHA-256 of the spec, canonical + raw forms)
     - per-action-class ground-truth counts (six classes)
     - mapped Tracee events, each traceable back to the raw stream
-      (provenance.raw_index) — the in-scope kernel records post-noise
+      (provenance.raw_index) — the in-scope kernel records after unrelated-event
+    filtering
     - reconciliation verdict (pass/fail with checks + leftovers)
     - pinned versions: harness, Tracee, kernel, container image digests
 
@@ -126,7 +127,7 @@ def assemble(spec_path: Path, profile: dict, replay: dict, mapped: list[dict],
              versions: dict, harness: str, run_id: str,
              design: str = "t0", gateway_log: Path | None = None,
              gateway_policy: Path | None = None,
-             window_slack_ns: int = 1_000_000_000) -> tuple[dict, dict, dict]:
+             window_tolerance_ns: int = 1_000_000_000) -> tuple[dict, dict, dict]:
     """Run reconciliation and build (run_record, manifest, report).
 
     design != t0 additionally computes the inspection-coverage section
@@ -155,7 +156,7 @@ def assemble(spec_path: Path, profile: dict, replay: dict, mapped: list[dict],
         w = replay.get("window_epoch_ns") or {}
         coverage_report = cov_mod.compute(
             rec_mod.load_spec(spec_path), decisions, parse_problems, design,
-            (int(w["start"]), int(w["end"])) if w else None, window_slack_ns)
+            (int(w["start"]), int(w["end"])) if w else None, window_tolerance_ns)
         pinned["gateway_package"] = versions.get("GATEWAY_PACKAGE", "unknown")
         pinned["gateway_package_version"] = versions.get(
             "GATEWAY_PACKAGE_VERSION", "unknown")
@@ -259,7 +260,7 @@ def main() -> int:
                     help="decisions.jsonl from the enforcement point (t1+)")
     ap.add_argument("--gateway-policy", type=Path, default=None,
                     help="deployed gateway policy.yaml (manifest-hashed, t1+)")
-    ap.add_argument("--window-slack-ns", type=int, default=1_000_000_000)
+    ap.add_argument("--window-tolerance-ns", type=int, default=1_000_000_000)
     ap.add_argument("--out-dir", type=Path, required=True)
     args = ap.parse_args()
 
@@ -276,7 +277,7 @@ def main() -> int:
         args.spec, profile, replay, mapped, target_logs, args.container_id,
         versions, args.harness, run_id, design=args.design,
         gateway_log=args.gateway_log, gateway_policy=args.gateway_policy,
-        window_slack_ns=args.window_slack_ns)
+        window_tolerance_ns=args.window_tolerance_ns)
 
     artifacts = {
         "tracee-events": args.tracee_raw,

@@ -4,7 +4,7 @@ Every target emits one JSON log line per served action so reconciliation
 (M6) can diff "what was served" against the canonical trace spec, and so
 mismatch debugging has a first-class artifact.
 
-Log sinks:
+Log writers:
   - stdout (HTTP endpoint, net-peer): captured by `docker logs`
   - stderr (MCP stdio server): stdout is the MCP protocol channel and MUST
     carry only JSON-RPC messages (MCP stdio transport rule)
@@ -25,7 +25,7 @@ TARGET_LOG_DIR = Path(os.environ.get("TARGET_LOG_DIR", "/var/log/targets"))
 def log_event(target: str, event: str, stream: str = "stdout", **fields) -> None:
     """Emit one structured log line for a served action.
 
-    `stream` selects the console sink: "stdout" (docker logs) or "stderr"
+    `stream` selects the console writer: "stdout" (docker logs) or "stderr"
     (required for the MCP stdio server, whose stdout is protocol-only).
     """
     record = {

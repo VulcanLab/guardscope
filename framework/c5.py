@@ -42,7 +42,7 @@ def _pair(record: dict) -> tuple[str, int]:
 
 
 def run_c5(dispatch_records, decision_records, *, run_id=None,
-           window=None, window_slack_ns: int = 1_000_000_000,
+           window=None, window_tolerance_ns: int = 1_000_000_000,
            inspected_action_ids=None) -> dict:
     """Run the C5 id-consistency check over one run's two record streams.
 
@@ -50,7 +50,7 @@ def run_c5(dispatch_records, decision_records, *, run_id=None,
     decision_records: decision-record/1 dicts (the native stream; v0-mapped
     records carry action_id null and are skipped). run_id/window scope the
     decision records (see the module docstring); window is
-    (start_epoch_ns, end_epoch_ns) with window_slack_ns tolerance, the same
+    (start_epoch_ns, end_epoch_ns) with window_tolerance_ns tolerance, the same
     convention the C1-C4 window uses.
 
     Returns {"id": "C5", "status": "pass"|"fail", "scope", "counts",
@@ -110,8 +110,8 @@ def run_c5(dispatch_records, decision_records, *, run_id=None,
         records = [r for r in records if r.get("run_id") == run_id]
         scope_method = "run_id"
     elif window is not None:
-        lo = int(window[0]) - window_slack_ns
-        hi = int(window[1]) + window_slack_ns
+        lo = int(window[0]) - window_tolerance_ns
+        hi = int(window[1]) + window_tolerance_ns
         records = [r for r in records
                    if (ns := ts_to_epoch_ns(r.get("ts"))) is not None
                    and lo <= ns <= hi]

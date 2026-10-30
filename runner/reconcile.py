@@ -15,19 +15,19 @@ layers for one replay run:
 
 Reconciliation is scoped to the measurement window and (optionally) the
 harness container, applies the per-harness profile (runner/profiles/
-<harness>.yaml: noise allowlist, expected extras, kernel multiplicity
-envelope), and then checks:
+<harness>.yaml: unrelated-events list, expected extras, kernel expected
+count ranges), and then checks:
 
   R1 replay layer   executed == spec action count; every action status ok and
                     matching the spec's id/class/op
   R2 served layer   (when target logs are given) every action with a
                     target-facing observable is served within the window
   R3 kernel layer   per-action kernel support for spawn/file-write/credential
-                    (exact target match, deduped multiplicity), multiplicity
-                    envelopes for stdio/http/network
-  R4 no leftovers   every in-scope kernel record is noise-allowlisted (with a
-                    reason) or accounted to a spec action / profile
-                    expected-extra; anything else fails the run
+                    (exact target match, deduped multiplicity), expected
+                    count ranges for stdio/http/network
+  R4 no leftovers   every in-scope kernel record is allowlisted as an
+                    unrelated event (with a reason) or accounted to a spec
+                    action / profile expected-extra; anything else fails the run
   R5 counts         effective per-class counts equal the spec's ground-truth
                     counts EXACTLY
 
@@ -64,7 +64,7 @@ SIX_CLASSES = [
 ]
 
 # Classes whose kernel observations match per action (exact target string);
-# the rest are reconciled as documented multiplicity-envelope groups, with
+# the rest are reconciled as documented expected-count-range groups, with
 # per-action evidence from the served layer when target logs are available.
 PER_ACTION_CLASSES = ("process_spawn", "file_write", "credential_access")
 GROUP_CLASSES = ("stdio_tool_call", "http_tool_call", "direct_network")
@@ -102,7 +102,7 @@ PREVENTED_CLASSES = {
 # designs in which ALL tool calls share one pooled origin (gateway:8090): the
 # kernel cannot attribute connects to the stdio vs http class — the gateway
 # collapses the transport distinction T0–T2 exposed. Reconciliation (R3)
-# uses one shared pooled envelope for the two tool classes; per-action
+# uses one shared pooled expected count range for the two tool classes; per-action
 # evidence moves to the served + decision (coverage) layers.
 T3_SHARED_POOL_DESIGNS = {"t3"}
 T3_TOOL_CLASSES = ("stdio_tool_call", "http_tool_call")
@@ -120,9 +120,9 @@ _REFUSAL_RE = re.compile(
     r"|Network is unreachable|Network is down|Network dropped"
     r"|Connection aborted|Connection reset|No route to host")
 
-# slack (ns) around the replay window for target-log timestamps (container
+# tolerance (ns) around the replay window for target-log timestamps (container
 # clocks are the host clock; small scheduling jitter tolerated)
-SERVED_SLACK_NS = 2_000_000_000
+SERVED_TOLERANCE_NS = 2_000_000_000
 
 
 # --- loading -------------------------------------------------------------------
@@ -147,10 +147,10 @@ def load_profile(path: Path, _seen: tuple = ()) -> dict:
             raise ValueError("profile extends must name a sibling YAML file")
         base = load_profile(path.parent / parent, (*_seen, path))
         profile = {**base, **profile,
-                   "noise": base["noise"] + profile.get("noise", []),
+                   "unrelated_events": base["unrelated_events"] + profile.get("unrelated_events", []),
                    "expected_extras": base["expected_extras"] + profile.get("expected_extras", []),
                    "multiplicity": {**base["multiplicity"], **profile.get("multiplicity", {})}}
-    for key in ("profile", "harness", "noise", "expected_extras", "multiplicity"):
+    for key in ("profile", "harness", "unrelated_events", "expected_extras", "multiplicity"):
         if key not in profile:
             raise ValueError(f"profile {path}: missing '{key}'")
     pin = profile["multiplicity"].get("stdio_startup_calibration")
@@ -178,12 +178,12 @@ def load_profile(path: Path, _seen: tuple = ()) -> dict:
             or not valid_argv(http_pin.get("replay_argv"))
             or not valid_argv(http_pin.get("readiness_argv"))):
         raise ValueError(f"profile {path}: invalid HTTP startup calibration pin")
-    for rule in profile.get("pre_window_noise", []):
+    for rule in profile.get("pre_window_unrelated", []):
         if (not valid_argv(rule.get("argv")) or not rule.get("reason") or not rule.get("records")
                 or any(not r.get("where") or ("max_records" in r and
                        (type(r["max_records"]) is not int or r["max_records"] < 1))
                        for r in rule["records"])):
-            raise ValueError(f"profile {path}: invalid pre-window noise rule")
+            raise ValueError(f"profile {path}: invalid pre-window unrelated-events rule")
     return profile
 
 
@@ -365,7 +365,7 @@ class Reconciler:
                          for c in SIX_CLASSES}
         self._served_per_action: dict[str, list[str]] = {}
         self._replay_status: dict[str, str] = {}
-        self._noise: list[dict] = []
+        self._unrelated: list[dict] = []
         self.checks: list[dict] = []
         self.leftovers: list[dict] = []
         self.extras: list[dict] = []   # in-scope records attributed to expected-extras
@@ -378,8 +378,8 @@ class Reconciler:
 
     def window(self) -> tuple[int, int]:
         w = self.replay.get("window_epoch_ns") or {}
-        slack = int(self.profile.get("window_slack_ns", 0))
-        return int(w["start"]) - slack, int(w["end"]) + slack
+        tolerance = int(self.profile.get("window_tolerance_ns", 0))
+        return int(w["start"]) - tolerance, int(w["end"]) + tolerance
 
     @staticmethod
     def _ref(rec: dict) -> dict:
@@ -450,7 +450,7 @@ class Reconciler:
 
     def served_in_window(self) -> list[dict]:
         start, end = self.window()
-        lo, hi = start - SERVED_SLACK_NS, end + SERVED_SLACK_NS
+        lo, hi = start - SERVED_TOLERANCE_NS, end + SERVED_TOLERANCE_NS
         out = []
         for rec in self.target_logs:
             ts = _iso_to_epoch_ns(rec.get("ts"))
@@ -463,7 +463,7 @@ class Reconciler:
         if not self.target_logs:
             self.check("R2-served-layer", True,
                        "target logs not provided; served layer skipped "
-                       "(kernel multiplicity envelopes are the only per-action "
+                       "(kernel expected count ranges are the only per-action "
                        "evidence for pooled transports)", hard=False)
             return {"available": False, "per_action": per_action}
 
@@ -537,7 +537,7 @@ class Reconciler:
                    if not problems else "; ".join(problems))
         return {"available": True, "per_action": per_action}
 
-    # -- scoping + noise (window / container / allowlist) -----------------------
+    # -- scoping + unrelated events (window / container / list) ------------------
 
     def in_scope(self) -> tuple[list[dict], dict]:
         start, end = self.window()
@@ -560,7 +560,7 @@ class Reconciler:
         self._in_window_all = in_window_all
         return scoped, stats
 
-    def prelude_source(self, rec: dict) -> dict | None:
+    def pre_window_source(self, rec: dict) -> dict | None:
         """Latest non-failed exec for this PID/container, from the full capture.
 
         Use exact argv at the call site; processName alone is not attribution.
@@ -579,25 +579,25 @@ class Reconciler:
     def exec_argv(rec: dict | None):
         return ((rec or {}).get("detail") or {}).get("cmd")
 
-    def split_noise(self, scoped: list[dict]) -> tuple[list[dict], list[dict]]:
+    def split_unrelated(self, scoped: list[dict]) -> tuple[list[dict], list[dict]]:
         """Apply ordinary allowlists and command-bound pre-window readiness.
 
         Readiness is not a workload allowance: post-start records, unmatched
         commands and over-budget connects remain subject to R3/R4.
         """
-        noise, account, used = [], [], {}
+        unrelated, account, used = [], [], {}
         start = self.replay["window_epoch_ns"]["start"]
         for rec in scoped:
             flat = flatten(rec)
             before = type(rec.get("ts")) is int and rec["ts"] < start
             attribution = None
             if before:
-                for rule in self.profile.get("pre_window_noise", []):
+                for rule in self.profile.get("pre_window_unrelated", []):
                     candidates = [(i, item) for i, item in enumerate(rule["records"])
                                   if match_where(flat, item["where"])]
                     if not candidates:
                         continue
-                    source = self.prelude_source(rec)
+                    source = self.pre_window_source(rec)
                     if self.exec_argv(source) != rule["argv"]:
                         continue
                     for i, item in candidates:
@@ -610,18 +610,18 @@ class Reconciler:
                     if attribution:
                         break
             if attribution:
-                noise.append(attribution)
+                unrelated.append(attribution)
                 continue
-            for rule in self.profile.get("noise", []):
+            for rule in self.profile.get("unrelated_events", []):
                 if rule.get("before_replay") and not before:
                     continue
                 if match_where(flat, rule.get("where", {})):
-                    noise.append({"record": rec, "rule": rule.get("id", "?"),
-                                  "reason": (rule.get("reason") or "").strip()})
+                    unrelated.append({"record": rec, "rule": rule.get("id", "?"),
+                                      "reason": (rule.get("reason") or "").strip()})
                     break
             else:
                 account.append(rec)
-        return noise, account
+        return unrelated, account
 
     # -- R3: kernel layer --------------------------------------------------------
 
@@ -642,8 +642,9 @@ class Reconciler:
             path = flatten(rec)["path"]
             path_groups.setdefault(path, []).append(rec)
 
-        # spawn multiplicity: failed execve attempts (e.g. PATH probes that
-        # slipped past the noise allowlist) must not count as spawns
+        # spawn multiplicity: failed execve attempts (e.g. failed PATH
+        # lookups that slipped past the unrelated-events list) must not
+        # count as spawns
         if cls == "process_spawn":
             for path, group in list(path_groups.items()):
                 ok_rec = [r for r in group if (flatten(r)["retval"] or 0) == 0]
@@ -656,7 +657,7 @@ class Reconciler:
 
         supported = [bool(path_groups.get(a["target"])) for a in actions]
 
-        # multiplicity envelope: documented opens per action
+        # multiplicity expected count range: documented opens per action
         mult_problems = []
         rng = self.mult.get({"file_write": "file_write_opens_per_action",
                              "credential_access": "credential_opens_per_action"
@@ -692,13 +693,14 @@ class Reconciler:
         }
 
     def calibrated_stdio(self, recs: list[dict]) -> dict:
-        """Derive extras from each real no-tool config prelude, not a guessed count.
+        """Derive extras from each real no-tool config pre-window events, not a
+        guessed count.
 
         Only start(pid) -> initialize -> tools/list -> first tools/call (or
         stop) transcript intervals qualify. Sizes are diagnostics, not matching
         signatures. The registered-server mapping and PID bind response writes
         to the transcript. Full capture is needed even if startup precedes the
-        measurement/slack window.
+        measurement/tolerance window.
         """
         pin = self.mult["stdio_startup_calibration"]
         target = self.profile.get("served_targets", {}).get("stdio", "toy-mcp-fs")
@@ -756,7 +758,7 @@ class Reconciler:
                                "transcript": s["transcript"],
                                "transcript_sha256": hashlib.sha256(json.dumps(s["transcript"], sort_keys=True).encode()).hexdigest()})
         if not sessions:
-            problems.append("startup transcript missing; no calibration prelude")
+            problems.append("startup transcript missing; no calibration pre-window events")
         intersecting = sum(s["in_scope_writes"] > 0 for s in calibrated)
         extra = [r for r in recs if key(r) in startup_keys]
         workload = len(recs) - len(extra)
@@ -775,14 +777,15 @@ class Reconciler:
                                     "total_writes": len(recs), "startups_in_window": intersecting},
                        "sessions": calibrated, "problems": problems}
         return {"spec": len(self.by_class["stdio_tool_call"]), "kernel_raw": len(recs),
-                "evidence": "kernel-group+calibrated-startup-prelude", "problems": problems,
+                "evidence": "kernel-group+calibrated-startup-pre-window", "problems": problems,
                 "calibration": calibration}
 
     def calibrated_gateway_stdio(self) -> dict:
         """Native stdout *frames*, never harness syscalls or fs-sibling writes.
 
-        Derive each no-tool prelude from the frozen bridge wire and bind it to
-        the exact gateway exec/session lifetime. HTTP remains kernel support.
+        Derive each no-tool pre-window event sequence from the frozen bridge
+        wire and bind it to the exact gateway exec/session lifetime. HTTP
+        remains kernel support.
         """
         pin = self.mult["stdio_startup_calibration"]
         problems, sessions = [], []
@@ -829,11 +832,11 @@ class Reconciler:
                     decoded.append((row, msg))
             first_call = next((i for i, (r, m) in enumerate(decoded)
                                if r["direction"] == "stdin" and m.get("method") == "tools/call"), len(decoded))
-            prelude = decoded[:first_call]
-            requests = [(r, m) for r, m in prelude if r["direction"] == "stdin"]
-            frames = [(r, m) for r, m in prelude if r["direction"] == "stdout"]
+            pre_window = decoded[:first_call]
+            requests = [(r, m) for r, m in pre_window if r["direction"] == "stdin"]
+            frames = [(r, m) for r, m in pre_window if r["direction"] == "stdout"]
             if [m.get("method") for _, m in requests] != ["initialize", "notifications/initialized", "tools/list"]:
-                errors.append("gateway prelude request sequence mismatch")
+                errors.append("gateway pre-window request sequence mismatch")
             replies = [(r, m) for r, m in frames if "id" in m]
             notifications = [m.get("method") for _, m in frames if "id" not in m]
             correlated = [requests[i] for i in (0, 2)] if len(requests) == 3 else []
@@ -844,22 +847,22 @@ class Reconciler:
                            for (q, req), (r, resp) in zip(correlated, replies))
                     or (len(requests) == 3 and len(replies) == 2
                         and replies[0][0]["received_epoch_ns"] > requests[1][0]["received_epoch_ns"])):
-                errors.append("gateway prelude response ID/time mismatch")
+                errors.append("gateway pre-window response ID/time mismatch")
             if notifications != pin["notification_methods"] or len(frames) != pin["stdout_frames_per_startup"]:
-                errors.append("gateway prelude stdout frame envelope mismatch")
+                errors.append("gateway pre-window stdout frame count mismatch")
             role = "replay" if first_call < len(decoded) else "readiness"
             if role == "replay":
                 call_ts = decoded[first_call][0]["received_epoch_ns"]
                 if not rw["start"] <= call_ts <= rw["end"]:
                     errors.append("gateway tool call outside replay window")
-            elif any(r["received_epoch_ns"] >= rw["start"] for r, _ in prelude):
-                errors.append("readiness prelude not before replay")
+            elif any(r["received_epoch_ns"] >= rw["start"] for r, _ in pre_window):
+                errors.append("readiness pre-window events not before replay")
             in_scope = sum(type(r.get("received_epoch_ns")) is int and lo <= r["received_epoch_ns"] <= hi
                            for r, _ in frames)
             sessions.append({"session": sid, "pid": pid, "role": role, "lifecycle": start,
                              "status": "fail" if errors else "pass", "observed_frames": len(frames),
-                             "in_scope_frames": in_scope, "transcript": [r for r, _ in prelude],
-                             "transcript_sha256": hashlib.sha256(json.dumps([r for r, _ in prelude], sort_keys=True).encode()).hexdigest()})
+                             "in_scope_frames": in_scope, "transcript": [r for r, _ in pre_window],
+                             "transcript_sha256": hashlib.sha256(json.dumps([r for r, _ in pre_window], sort_keys=True).encode()).hexdigest()})
             problems += [f"session {sid}: {e}" for e in errors]
         intersecting = sum(s["in_scope_frames"] > 0 for s in sessions)
         extras = sum(s["in_scope_frames"] for s in sessions)
@@ -868,7 +871,7 @@ class Reconciler:
         if sum(s["role"] == "replay" for s in sessions) != 1 or sum(s["role"] == "readiness" for s in sessions) > 1:
             problems.append("expected one replay and at most one readiness gateway session")
         if not pin["extra_frames"][0] <= extras <= pin["extra_frames"][1]:
-            problems.append("gateway startup frames outside pinned slack envelope")
+            problems.append("gateway startup frames outside pinned frame range")
         return {"status": "fail" if problems else "pass", "kind": "gateway-wire", "pin": pin,
                 "scope": "gateway native protocol only; not harness kernel writes",
                 "expected": {"frames_per_startup": pin["stdout_frames_per_startup"],
@@ -877,17 +880,18 @@ class Reconciler:
                              "sessions": len(sessions)}, "sessions": sessions, "problems": problems}
 
     def calibrated_http(self, recs: list[dict], n: int | None = None) -> dict:
-        """Separate GatewayClient's discovery prelude from canonical connects.
+        """Separate GatewayClient's discovery pre-window events from canonical
+        connects.
 
-        Slack may include current Pi discovery plus the preceding Node readiness
-        client. Neither is a tool decision. Bind both to exact exec argv and
+        The tolerance window may include current Pi discovery plus the
+        preceding Node readiness client. Neither is a tool decision. Bind both to exact exec argv and
         retain the ledger; do not borrow evidence from another container (T3).
         """
         pin = self.mult["http_startup_calibration"]
         start = self.replay["window_epoch_ns"]["start"]
         startups, workload, problems, ledger = {}, [], [], []
         for rec in recs:
-            source = self.prelude_source(rec)
+            source = self.pre_window_source(rec)
             argv = self.exec_argv(source)
             before = type(rec.get("ts")) is int and rec["ts"] < start
             valid = (rec.get("event") == "connect" and flatten(rec)["port"] == pin["port"]
@@ -926,11 +930,11 @@ class Reconciler:
                        "observed": {"workload_connects": len(workload), "startups": len(startups),
                                     "startup_connects": sum(map(len, startups.values()))},
                        "records": ledger, "problems": problems}
-        return {"spec": n, "kernel_raw": len(recs), "evidence": "kernel-group+calibrated-http-prelude",
+        return {"spec": n, "kernel_raw": len(recs), "evidence": "kernel-group+calibrated-http-pre-window",
                 "problems": problems, "calibration": calibration}
 
     def kernel_group(self, cls: str, recs: list[dict]) -> dict:
-        """Group kernel support under the documented multiplicity envelope."""
+        """Group kernel support under the documented expected count range."""
         if (cls == "http_tool_call" and "http_startup_calibration" in self.mult
                 and not self.mult["http_startup_calibration"].get("all_tool_classes")):
             return self.calibrated_http(recs)
@@ -973,15 +977,16 @@ class Reconciler:
                 # connects still map via port 9000) and must equal the spec
                 # count. UDP: net_packet_udp may not fire when netfilter
                 # rejects the packet at the output hook, so the raw sendmsg
-                # syscalls (allowlisted as node-socket-churn noise) are the
-                # attempt evidence; a lower bound suffices there — effect is
-                # adjudicated by the served layer (R2 requires absence).
+                # syscalls (allowlisted as node-socket-churn unrelated
+                # events) are the attempt evidence; a lower bound suffices
+                # there — effect is adjudicated by the served layer (R2
+                # requires absence).
                 if len(tcp) != n_tcp:
                     problems.append(f"{len(tcp)} tcp connect attempts != {n_tcp}")
-                noise_udp = sum(1 for n in self._noise
+                unrelated_udp = sum(1 for n in self._unrelated
                                 if (n.get("record") or {}).get("event") == "sendmsg")
-                if n_udp and len(udp) + noise_udp < n_udp:
-                    problems.append(f"{len(udp)} udp + {noise_udp} noise sendmsg "
+                if n_udp and len(udp) + unrelated_udp < n_udp:
+                    problems.append(f"{len(udp)} udp + {unrelated_udp} unrelated sendmsg "
                                     f"< {n_udp} attempted datagrams")
             else:
                 if len(tcp) != n_tcp:
@@ -998,19 +1003,19 @@ class Reconciler:
     # -- R3 + R4 ---------------------------------------------------------------
 
     def pooled_gateway_records(self, account: list[dict]) -> list[dict]:
-        """In-window, noise-allowlisted pooled-origin connect records from
-        ANY container (see the T3 pooled-evidence note above): the harness's
-        connects INTO the gateway (gateway:8090) and the gateway's own
-        downstream connects to the endpoint (http-endpoint:8080 — reachable
-        only through the gateway under forced egress)."""
+        """In-window, allowlisted-as-unrelated pooled-origin connect records
+        from ANY container (see the T3 pooled-evidence note above): the
+        harness's connects INTO the gateway (gateway:8090) and the gateway's
+        own downstream connects to the endpoint (http-endpoint:8080 —
+        reachable only through the gateway under forced egress)."""
         scoped_http = [r for r in account if r.get("class") == "http_tool_call"]
         if self.profile.get("deployment_axes", {}).get("shared_tool_pool") == "harness-only":
             return scoped_http
         seen = {id(r) for r in scoped_http}
-        noise_ids = {id(n["record"]) for n in self._noise}
+        unrelated_ids = {id(n["record"]) for n in self._unrelated}
         extra = []
         for rec in self._in_window_all:
-            if id(rec) in seen or id(rec) in noise_ids:
+            if id(rec) in seen or id(rec) in unrelated_ids:
                 continue
             if rec.get("class") == "http_tool_call":
                 extra.append(rec)
@@ -1028,16 +1033,17 @@ class Reconciler:
                 # T3: all tool calls cross the gateway on one pooled origin —
                 # the kernel connects are shared between the two tool classes
                 # and not attributable per class (the T3 finding itself).
-                # Evidence: pooled-connect envelope + served per-action +
-                # gateway decisions (coverage layer). The envelope counts
-                # in-window connects to the gateway origin from ANY testbed
-                # container (the harness or its proxied upstreams): node's
-                # connection pooling may establish the harness's connect
-                # BEFORE the measurement window, and every in-window call
-                # then reuses it (observed live 2026-10-07 — a warm openclaw
-                # pool yielded 0 harness connects in-window while the calls
-                # crossed and were served). Records from other containers
-                # are still noise-allowlisted before counting.
+                # Evidence: pooled-connect expected count range + served
+                # per-action + gateway decisions (coverage layer). The range
+                # counts in-window connects to the gateway origin from ANY
+                # testbed container (the harness or its proxied upstreams):
+                # node's connection pooling may establish the harness's
+                # connect BEFORE the measurement window, and every in-window
+                # call then reuses it (observed live 2026-10-07 — a warm
+                # openclaw pool yielded 0 harness connects in-window while
+                # the calls crossed and were served). Records from other
+                # containers are still checked against the unrelated-events
+                # list before counting.
                 recs = self.pooled_gateway_records(account)
                 n_tool_calls = (len(self.by_class["stdio_tool_call"])
                                 + len(self.by_class["http_tool_call"]))
@@ -1049,16 +1055,16 @@ class Reconciler:
                         result["problems"].append(
                             f"{len(by_class['stdio_tool_call'])} unexpected harness stdio tool records")
                     result["spec"] = len(self.by_class[cls])
-                    result["evidence"] = "kernel-harness-shared+calibrated-http-prelude"
+                    result["evidence"] = "kernel-harness-shared+calibrated-http-pre-window"
                     if (cls == "stdio_tool_call" and self.mult.get("stdio_startup_calibration", {}).get("kind") == "gateway-wire"):
                         result["http_calibration"] = result["calibration"]
                         result["calibration"] = self.calibrated_gateway_stdio()
                         result["problems"].extend(result["calibration"]["problems"])
-                        result["evidence"] += "+gateway-stdio-wire-prelude"
+                        result["evidence"] += "+gateway-stdio-wire-pre-window"
                 else:
                     problems = []
-                    # The pooled envelope upper bound: a pooling client
-                    # contributes ~1 gateway connect (pi) and the gateway's
+                    # The pooled expected count range upper bound: a
+                    # pooling client contributes ~1 gateway connect (pi) and the gateway's
                     # downstream connects to the http endpoint (one per
                     # http twin) are the per-call evidence; a no-pooling
                     # client (the mock harness, plain python) contributes
@@ -1098,12 +1104,12 @@ class Reconciler:
                 result["evidence"] += "+served-per-action"
             if "supported" in result:  # per-action classes
                 ok = all(result["supported"]) and not result["problems"] and served_ok
-            else:  # group classes: envelope + served evidence
+            else:  # group classes: expected count range + served evidence
                 ok = not result["problems"] and served_ok
             per_class[cls] = result
             self.check(f"R3-kernel-{cls}", ok,
                        f"{result['kernel_raw']} kernel observations; " +
-                       ("envelope satisfied" if not result["problems"]
+                       ("expected range satisfied" if not result["problems"]
                         else "; ".join(result["problems"])))
 
         # R4: leftovers — every in-scope record must be accounted for
@@ -1144,8 +1150,8 @@ class Reconciler:
         self._served_per_action = served["per_action"]
 
         scoped, stats = self.in_scope()
-        noise, account = self.split_noise(scoped)
-        self._noise = noise
+        unrelated, account = self.split_unrelated(scoped)
+        self._unrelated = unrelated
         per_class = self.reconcile_kernel(account)
         effective = self.effective_counts(per_class)
 
@@ -1176,7 +1182,7 @@ class Reconciler:
                    f"denied {denied_by_class})")
         self.check("R4-leftovers", not self.leftovers,
                    f"{len(account)} in-scope records fully accounted "
-                   f"({len(noise)} noise-allowlisted)" if not self.leftovers
+                   f"({len(unrelated)} unrelated events allowlisted)" if not self.leftovers
                    else f"{len(self.leftovers)} leftover records (see report)")
 
         hard_fail = any(c["status"] == "fail" for c in self.checks if c["hard"])
@@ -1195,14 +1201,14 @@ class Reconciler:
             "served": {"available": served["available"],
                        "per_action": self._served_per_action},
             "kernel": {"per_class": per_class,
-                       "noise_count": len(noise),
+                       "noise_count": len(unrelated),
                        "account_count": len(account),
                        "scoped_records": scoped,
                        "extras": self.extras,
                        "noise": [{"rule": n["rule"], "reason": n["reason"],
                                   **self._ref(n["record"]), "detail": flatten(n["record"]),
                                   **({"source_exec": n["source_exec"]} if "source_exec" in n else {})}
-                                 for n in noise]},
+                                 for n in unrelated]},
             "ground_truth_counts": spec_counts,
             "effective_counts": effective,
             "leftovers": self.leftovers,

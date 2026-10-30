@@ -73,7 +73,7 @@ The reconciler enforces the limit: ingested records can support `bypassed` (kern
 | `ready()` | Dispatch loop running (readiness confirmed by a signal, not by a fixed sleep delay); gateway endpoint responding; replay injection confirmed |
 | `inject(trace)` | Single-pass, ordered, no retries by contract default; if the adapter cannot disable internal retries it emits one dispatch record per attempt and the run is flagged; sets correlation carriers wherever the transport allows |
 | `collect()` | Dispatch-record flush |
-| `teardown()` | State isolation between grid cells; permission state must not leak |
+| `teardown()` | State isolation between grid cells; permission state must not carry over |
 
 Harness-native enforcement (T4/T6) emits decision records in the main schema with the harness as the `enforcement_point`. Dispatch records use the sibling schema `dispatch-record/1` sharing the identity fields; this shared identity closes the attribution gap between the two record streams (which otherwise share no id). **The mock harness formally implements this contract in reduced form** (`describe` / `inject` / dispatch records), so mock-harness-derived cells are treated the same as harness cells and the dispatch tooling is shared. The mock harness is never called a harness: it is a path-originator fixture, an instrument on the workload side, never an evaluated component and never a row or column of the grid. It only adds provenance labels to cells.
 
@@ -227,7 +227,7 @@ Reference designs and fixtures:
 | T0 | None (bare harness); defines the full action surface | Reference row for kernel signatures |
 | T1 | Gateway for HTTP tools; transport/process escapes exposed | All egress open |
 | T2 | T1 + forced network egress (default-deny at netns output) | Egress jail is environment: silent, non-emitting, hashed into the fingerprint |
-| T3 | Gateway as sole enforcement point, all tools behind it; stdio transport eliminated | Kernel sees one pooled connect per tool call; shared pooled envelope in reconciliation |
+| T3 | Gateway as sole enforcement point, all tools behind it; stdio transport eliminated | Kernel sees one pooled connect per tool call; shared pooled expected count range in reconciliation |
 | T4 | Harness-native permission chain | `control: null`; permission chain is harness-intrinsic, configured by `enforcement_config` |
 | T5 | Harness permission chain + gateway (two points) | Gateway is selected; chain is harness-intrinsic; the attribution gap between the two record streams is what this design measures |
 | T6 | In-process policy engine (declarative rules at the harness tool-call hook) | Harness-embedded control registers with an `embedded` slot |
@@ -278,11 +278,11 @@ Workload packs are registered and versioned like plugins, but follow their own s
 
 Hard properties: per-process determinism with interleaving-independent classification; digest pinning; trust-domain placement documented per run; independence (no self-reporting; Tracee is the sole ground truth); policy-blind originators; never a row or column of the grid; only per-cell provenance labels. Exposure (a path exists and escapes) is a property of the topology: any policy-blind originator inside the trust domain can prove it, if the kernel confirms the action executed. Inhabitation (real agents take the path) is a property of real agents: only real-harness runs can show it. Mock-harness cells assert "the path exists and escapes this topology, kernel-confirmed; no agent in the loop." v1 exclusions: no OpenClaw host mode (the hook-API blockage must not drive the design; revisit opportunistically via a harness-spawned MCP server), and no overhead or performance claims from the instrument. Mock-harness provenance (origin, placement, digests) is stored in a per-record field; the only other pipeline change is capture-window and attribution support for async paths (daemon submission, outliving processes) with ancestry-based attribution.
 
-**Anti-overfitting rule:** primary published claims require at least one non-baseline pack; grid cells record which pack produced them; generated packs stay exploratory until replay-conformance passes; a leak check ships in conformance.
+**Anti-overfitting rule:** primary published claims require at least one non-baseline pack; grid cells record which pack produced them; generated packs stay exploratory until replay-conformance passes; an unmatched-counters check ships in conformance.
 
 ## 9. Run & reconcile
 
-**Runner state machine:** `provision -> configure -> ready-gate -> window open -> inject -> quiesce (wait for in-flight actions) -> window close -> collect -> teardown -> reconcile`. The window opens only after every enforcement point passes its readiness check; only the runner controls the window, never a plugin.
+**Runner state machine:** `provision -> configure -> ready-gate -> window open -> inject -> drain (wait for in-flight actions) -> window close -> collect -> teardown -> reconcile`. The window opens only after every enforcement point passes its readiness check; only the runner controls the window, never a plugin.
 
 **Tracee is runner-managed shared infrastructure:** one sensor per run, N controls, one clock source (host clock, offsets recorded at run start). Deploy, sensor check, collect, and teardown of the sensor are owned by the runner, not the control contract; the sensor is the measuring instrument and must never share the contract of the components it measures. Slot descriptors carry cgroup/namespace scope so the sensor can be scoped per slot. Sensor health (dropped-event counts) is a required run input; a run with a degraded sensor is downgraded and flagged, never trusted silently. The sensor is re-checked **after control provisioning** (a kernel-level control can interfere with or tamper with it); a failed sensor check invalidates the run. Known gaps are listed in every health report.
 
@@ -293,7 +293,7 @@ Hard properties: per-process determinism with interleaving-independent classific
 | C1 | Parse: every decision record validates against `decision-record/1` |
 | C2 | In-window and `run_id` match |
 | C3 | Per-point 1:1 accounting (no missing, duplicated, or unmatched decisions within a stream) |
-| C4 | No inspected-class leakage (unmatched kernel events in inspected classes are findings, not noise) |
+| C4 | No unmatched inspected-class events (unmatched kernel events in inspected classes are findings, not unrelated events) |
 | C5 | Id consistency: echoed ids match the carriers the harness dispatched; fabrication, duplication, and stripping are detected |
 | C6 | Denial effectiveness: `prevented` = deny record + verified absence of the action's kernel signature; the expected per-class kernel signature is derived from mock-harness baseline runs |
 
@@ -304,7 +304,7 @@ Hard properties: per-process determinism with interleaving-independent classific
 - `outcome: checked | prevented | bypassed | enforcement_failure | not_observed` (reconciler-only).
 - `claimed[]` (decision records + attribution methods) and `verified` (kernel match) as **separate, never-merged structures**.
 - `attribution_method`; `evidence class: harness-run | mock-run | self-reported | derived`; `degraded: [reasons]`; structured C1-C6 findings.
-- Per-run leakage counters: unmatched kernel events, unmatched decisions, unmatched expected actions; organic-traffic volume per stream.
+- Per-run unmatched counters: unmatched kernel events, unmatched decisions, unmatched expected actions; organic-traffic volume per stream.
 
 The primary reported numbers come from verified results only. Harness-run and mock-run cells are reported separately, never aggregated. Stated limit: `prevented` is the only fully kernel-verifiable outcome (deny record + verified absence of the action's kernel signature); `checked` confidence is limited by conformance, determinism, and record plausibility: a fabricated allow-record for an action that did occur passes both the id check and the kernel-presence check.
 

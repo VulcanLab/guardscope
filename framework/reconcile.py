@@ -152,7 +152,7 @@ def _route_action(spec: dict) -> dict[tuple[str, str], list[str]]:
 
 def compute(spec: dict, decisions: list[dict], parse_problems: list[str],
             design: str, window: tuple[int, int] | None = None,
-            window_slack_ns: int = 1_000_000_000, prevented_classes: set | None = None) -> dict:
+            window_tolerance_ns: int = 1_000_000_000, prevented_classes: set | None = None) -> dict:
     """Coverage report for one run. `window` is (start_ns, end_ns) from the
     replay result; None counts every decision (no volume-persistence guard)."""
     if design not in INSPECTED_CLASSES:
@@ -197,7 +197,7 @@ def compute(spec: dict, decisions: list[dict], parse_problems: list[str],
     # --- window scoping -----------------------------------------------------
     lo = hi = None
     if window:
-        lo, hi = int(window[0]) - window_slack_ns, int(window[1]) + window_slack_ns
+        lo, hi = int(window[0]) - window_tolerance_ns, int(window[1]) + window_tolerance_ns
 
     in_scope, out_of_window = [], []
     for e in decisions:

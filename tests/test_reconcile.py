@@ -1,18 +1,19 @@
 """Reconciliation tests (C7, M6 acceptance).
 
-Builds synthetic mapped-action JSONL streams (v5 envelope) for a correct
-15-action replay of baseline.yaml (v2: includes the a014 checked-DENY probe,
+Builds synthetic mapped-action JSONL streams (v5 record format) for a correct
+15-action replay of baseline.yaml (v2: includes the a014 checked-DENY case,
 allowed in T0-T5 and denied only under T6's policy) — including every
 documented kernel-level
 multiplicity (HTTP pooling, stdio handshake write, double file opens, UDP
-double capture, pi PATH probes) and the known harness-internal noise — and
+double capture, pi failed PATH lookups) and the known harness-internal
+unrelated events — and
 asserts:
 
   - a correct run passes with per-class counts matching the spec exactly
   - a run with a missing action FAILS
   - a run with a deliberately corrupted mapping FAILS
   - unmapped leftovers inside the measurement window FAIL the run
-  - window/container scoping and the noise allowlist behave as documented
+  - window/container scoping and the unrelated-events list behave as documented
 
 Run from experiments/mediation/:  python3 -m pytest tests/test_reconcile.py -v
 """
@@ -54,7 +55,7 @@ WIN_END = WIN_START + 5_000_000_000
 
 def rec(cls, event, offset_ns, pid=100, container=CONTAINER, detail=None,
         retval=0, process="node"):
-    """A mapped (or unmapped) record in the v5 envelope."""
+    """A mapped (or unmapped) record in the v5 record format."""
     out = {
         "class": cls, "event": event, "ts": WIN_START + offset_ns,
         "container": container, "pid": pid, "process": process,
@@ -68,7 +69,7 @@ def rec(cls, event, offset_ns, pid=100, container=CONTAINER, detail=None,
 
 def correct_openclaw_stream():
     """All kernel observations of a correct replay, with documented
-    multiplicities + noise (harnesses/openclaw/README.md)."""
+    multiplicities + unrelated events (harnesses/openclaw/README.md)."""
     mcp_pid, node_pid = 200, 100
     return [
         # stdio: initialize handshake + 3 tool-call responses = 4 writes
@@ -86,7 +87,8 @@ def correct_openclaw_stream():
             detail={"target_port": 9001, "transport": "udp"}),
         rec("direct_network", "net_packet_udp", 22_000_000, node_pid,
             detail={"target_port": 9001, "transport": "udp"}),
-        # spawns: /bin/sh + /bin/echo (plus pi-style PATH probes -> noise)
+        # spawns: /bin/sh + /bin/echo (plus pi-style failed PATH lookups ->
+        # allowlisted as unrelated)
         rec("process_spawn", "execve", 30_000_000, node_pid,
             detail={"target": "/bin/sh", "cmd": ["sh", "-c", "echo hi"]}),
         rec("process_spawn", "execve", 31_000_000, node_pid,
@@ -136,7 +138,7 @@ def correct_openclaw_stream():
         # pi RPC / MCP-request pipe writes (transport traffic, not canonical)
         rec("unmapped", "write", 3_600_000, 100,
             detail={"count": 74}, process="pi"),
-        # --- documented noise (must be allowlisted, not accounted) ---
+        # --- documented unrelated events (allowlisted, not accounted) ---
         rec("unmapped", "security_file_open", 3_000_000, node_pid,
             detail={"path": "/etc/resolv.conf", "flags": "O_RDONLY"}),
         rec("unmapped", "security_file_open", 3_100_000, node_pid,
@@ -160,22 +162,23 @@ def correct_openclaw_stream():
 
 
 def correct_pi_stream():
-    """Pi variant: PATH probes for the pi shim and the MCP python3 spawn."""
+    """Pi variant: failed PATH lookups for the pi shim and the MCP python3
+    spawn."""
     stream = correct_openclaw_stream()
-    probes = [
+    failed_lookups = [
         rec("unmapped", "execve", 900_000_000 + i * 100_000, 100,
             detail={"path": p, "argv": ["pi", "--mode", "rpc"]}, retval=-2,
             process="sh")
         for i, p in enumerate(["/usr/local/sbin/pi", "/usr/local/bin/pi",
                                "/usr/sbin/pi", "/usr/bin/pi"])
     ]
-    py_probes = [
+    py_failed_lookups = [
         rec("unmapped", "execve", 901_000_000 + i * 100_000, 100,
             detail={"path": p, "argv": ["python3", "/opt/inspection/mcp-fs/server.py"]},
             retval=-2, process="sh")
         for i, p in enumerate(["/usr/local/sbin/python3", "/usr/local/bin/python3"])
     ]
-    return probes + py_probes + stream
+    return failed_lookups + py_failed_lookups + stream
 
 
 def replay_result(stream_ok=True, executed=None):
@@ -212,7 +215,7 @@ def target_logs():
         {"ts": iso(t0 + 10_000_000), "target": "http-endpoint", "event": "request",
          "method": "POST", "path": "/hook", "body_text": "tool-call payload"},
         {"ts": iso(t0 + 13_000_000), "target": "http-endpoint", "event": "request",
-         "method": "POST", "path": "/hook", "body_text": "policy-deny probe"},
+         "method": "POST", "path": "/hook", "body_text": "policy-deny case"},
         {"ts": iso(t0 + 11_000_000), "target": "http-endpoint", "event": "request",
          "method": "GET", "path": "/health"},
         {"ts": iso(t0 + 12_000_000), "target": "http-endpoint", "event": "request",
@@ -272,10 +275,10 @@ def test_all_documented_multiplicities_absorbed():
     assert report["leftovers"] == []
 
 
-def test_noise_rules_all_matched_with_reason():
+def test_unrelated_events_rules_all_matched_with_reason():
     report = reconcile(correct_openclaw_stream(), harness="openclaw")
     ids = {n["rule"] for n in report["kernel"]["noise"]}
-    assert {"exec-path-probe", "runtime-execs", "oom-score-adj",
+    assert {"failed-command-lookup", "runtime-execs", "oom-score-adj",
             "node-socket-churn", "pipe-writes", "infra-read-opens",
             "infra-paths", "tool-file-reads"} <= ids
 
@@ -322,7 +325,7 @@ def test_unmapped_leftover_inside_window_fails():
 
 
 def test_write_open_falling_to_unmapped_fails():
-    """The tool-file-reads noise rule is READ-mode only: a write-mode open of
+    """The tool-file-reads rule is READ-mode only: a write-mode open of
     a workspace file that fails to map (corrupted file_write rule) must be a
     leftover, not silently absorbed."""
     stream = correct_openclaw_stream() + [
@@ -456,7 +459,8 @@ def t2_stream():
     """T2 kernel observations: the direct-network ATTEMPTS replace the T0/T1
     completions. TCP connect fires (mapped via port 9000, rejected outcome);
     net_packet_udp does NOT fire when netfilter rejects at the output hook —
-    the raw sendmsg syscalls surface as unmapped node-socket-churn noise."""
+    the raw sendmsg syscalls surface as unmapped node-socket-churn records
+    (allowlisted as unrelated)."""
     s = [r for r in correct_openclaw_stream()
          if r["class"] != "direct_network"]
     # prevented tcp_connect a021: connect syscall fires, refused (retval -111)
@@ -583,7 +587,8 @@ def test_t3_run_passes():
     expect = dict(GROUND_TRUTH)
     expect["direct_network"] = 0
     assert report["effective_counts"] == expect
-    # the shared pooled envelope is the evidence for both tool classes
+    # the shared pooled expected count range is the evidence for both tool
+    # classes
     stdio = [c for c in report["checks"] if c["id"] == "R3-kernel-stdio_tool_call"][0]
     assert "2 kernel observations" in stdio["detail"]
 
@@ -599,7 +604,7 @@ def test_t3_zero_gateway_connects_fail():
 
 
 def test_t3_pooled_connects_above_n_fail():
-    """More pooled connects than the documented envelope (n tool calls +
+    """More pooled connects than the documented expected count range (n tool calls +
     n http downstream: a no-pooling client contributes one connect per
     call, the gateway one downstream connect per http twin) fails loud."""
     s = t3_stream()
@@ -633,9 +638,9 @@ def t4_stream():
     the harness; the fs tool calls run through pi's MCP client (server child
     writes: the 3 tool responses, plus 0..2 config-handshake writes depending
     on when the window opens); the http tool calls are connects to the
-    endpoint from the http-stdio child (pooled envelope as in T0)."""
+    endpoint from the http-stdio child (pooled count range as in T0)."""
     s = correct_openclaw_stream()
-    # 1 config-handshake write in-window (worst case; envelope allows 0..2)
+    # 1 config-handshake write in-window (worst case; the range allows 0..2)
     s.append(rec("stdio_tool_call", "write", 500_000, 200,
                  detail={"target": "mcp://stdio", "fd": 1}, process="python3"))
     return s
@@ -651,8 +656,8 @@ def test_t4_run_passes():
     assert stdio["status"] == "pass"
 
 
-def test_t4_stdio_envelope_bounds():
-    """T0's exact envelope (n + 1) must still pass under T4's wider one, and
+def test_t4_stdio_range_bounds():
+    """T0's exact count (n + 1) must still pass under T4's wider range, and
     too many writes must fail."""
     # 5 writes: 3 tool responses + 2 handshake = inside [3, 5]
     s = [r for r in t4_stream() if r["class"] != "stdio_tool_call"]
@@ -698,7 +703,7 @@ def test_t6_run_passes():
     assert report["effective_counts"] == GROUND_TRUTH
 
 
-# --- checked-DENY (v2 trace: the a014 argument-level deny probe) -----------------
+# --- checked-DENY (v2 trace: the a014 argument-level deny case) ------------------
 
 
 def t6_replay():
@@ -717,7 +722,7 @@ def t6_target_logs():
     """T6 served logs: the DENIED a014 must NOT appear (no request with its
     body reached the endpoint); the allowed a011 POST is served as usual."""
     return [l for l in target_logs()
-            if l.get("body_text") != "policy-deny probe"]
+            if l.get("body_text") != "policy-deny case"]
 
 
 def test_t6_denied_run_passes():
@@ -737,7 +742,7 @@ def test_t6_denied_but_served_fails():
         {"ts": datetime.fromtimestamp((WIN_START + 14_000_000) / 1e9,
                                       tz=timezone.utc).isoformat(),
          "target": "http-endpoint", "event": "request", "method": "POST",
-         "path": "/hook", "body_text": "policy-deny probe"}]
+         "path": "/hook", "body_text": "policy-deny case"}]
     report = reconcile(t4_stream(), harness="pi", replay=t6_replay(),
                        target_logs=logs, design="t6")
     assert report["status"] == "fail"

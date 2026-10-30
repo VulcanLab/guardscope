@@ -220,6 +220,13 @@ def normalize_golden_log_set(golden_log_set, *, plugin_id: str | None = None,
         golden.setdefault("lines", [])
         golden.setdefault("parse_problems", [])
         golden.setdefault("window", None)
+        # The golden-set key is window_slack_ns: it is covered by
+        # golden_fixture_hash, which the seeded registry verdict
+        # (registry/open/agt-gateway.json) pins, so the recorded key name
+        # stays; accept the renamed key from newer callers too.
+        if "window_slack_ns" not in golden:
+            golden["window_slack_ns"] = golden.get(
+                "window_tolerance_ns", 1_000_000_000)
         golden.setdefault("window_slack_ns", 1_000_000_000)
         return golden
     if isinstance(golden_log_set, (str, Path)):

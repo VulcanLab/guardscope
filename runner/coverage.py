@@ -49,7 +49,7 @@ def main() -> int:
     ap.add_argument("--decisions", type=Path, required=True)
     ap.add_argument("--replay", type=Path, default=None,
                    help="replay-result.json; supplies the measurement window")
-    ap.add_argument("--window-slack-ns", type=int, default=1_000_000_000)
+    ap.add_argument("--window-tolerance-ns", type=int, default=1_000_000_000)
     ap.add_argument("--out", type=Path, default=None)
     args = ap.parse_args()
 
@@ -60,7 +60,7 @@ def main() -> int:
         w = rec_mod.load_replay(args.replay).get("window_epoch_ns") or {}
         window = (int(w["start"]), int(w["end"]))
     report = compute(spec, decisions, problems, args.design, window,
-                     args.window_slack_ns)
+                     args.window_tolerance_ns)
 
     payload = json.dumps(report, indent=1, sort_keys=True) + "\n"
     if args.out:

@@ -129,7 +129,7 @@ def t1_line_set() -> list[dict]:
         entry(base + 1.5, "get_health"),
         entry(base + 2.5, "put_state", params={"body": "k=v"}),
         entry(base + 3.5, "post_hook", allowed=False,
-              params={"body": "policy-deny probe"}),
+              params={"body": "policy-deny case"}),
     ]
 
 

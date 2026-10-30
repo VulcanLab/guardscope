@@ -8,14 +8,14 @@ package, MCP Security Gateway spec 1.0) — this container is thin glue:
 
   harness ──JSON-RPC POST /mcp──▶ gateway ──intercept_tool_call()──▶ forward ──▶ upstream MCP server
                                     │
-                                    └─ audit_sink ─▶ decisions.jsonl (enforcement-point record)
+                                    └─ audit_writer ─▶ decisions.jsonl (enforcement-point record)
 
 Protocol: single-message streamable HTTP (POST /mcp), same wire shape as
 targets/mcp-http/server.py. initialize / tools/list / ping are forwarded
 untouched; tools/call is intercepted: allowed -> forwarded, denied -> JSON-RPC
 error returned WITHOUT contacting the upstream (fail-closed).
 
-The audit sink writes one JSON line per decision (AuditEntry dict, spec §12:
+The audit writer writes one JSON line per decision (AuditEntry dict, spec §12:
 timestamp, agent_id, tool_name, allowed, reason, approval_status) to
 $GATEWAY_LOG_DIR/decisions.jsonl — the file the T1-4 enforcement-point sensor
 parses — plus stdout for docker-logs capture.
@@ -67,14 +67,15 @@ def load_policy_yaml(path: Path) -> dict:
         "denied_tools": list(raw.get("denied_tools", [])),
         "sensitive_tools": list(raw.get("sensitive_tools", [])),
         # per-agent budget; set above the trace size so T1 measures coverage of
-        # an allow-all policy, not rate-limiting (rate-limit probes are later)
+        # an allow-all policy, not rate-limiting (rate-limit cases are later)
         "max_tool_calls": int(raw.get("max_tool_calls", 1000)),
         "blocked_patterns": list(raw.get("blocked_patterns", [])),
     }
 
 
-class JsonlAuditSink:
-    """MCPAuditSink: one AuditEntry dict per line, stdout + decisions.jsonl."""
+class JsonlAuditWriter:
+    """The MCPGateway SDK's MCPAuditSink interface: one AuditEntry dict per
+    line, stdout + decisions.jsonl."""
 
     def __init__(self, log_dir: Path) -> None:
         self.path = log_dir / "decisions.jsonl"
@@ -218,7 +219,7 @@ def native_decision_record(*, tool_name, arguments, allowed, reason=None,
     producer.record_source "native" and the id carriers echoed (DESIGN.md 5).
     protocol is "mcp": every decision here is a JSON-RPC tools/call over
     HTTP POST /mcp (the v0 reader-side mapping of the same decision says
-    "http"; the native emitter names the protocol envelope)."""
+    "http"; the native emitter names the protocol it actually carries)."""
     if not isinstance(tool_name, str) or not tool_name:
         raise ValueError("tool_name is required")
     fields = {
@@ -259,7 +260,7 @@ def native_decision_record(*, tool_name, arguments, allowed, reason=None,
     return fields
 
 
-class NativeRecordSink:
+class NativeRecordWriter:
     """Appends one decision-record/1 line per decision to
     <log_dir>/decision-records.jsonl, with per-stream monotonic seq. Never
     raises into the enforcement path (logging must never break enforcement)."""
@@ -301,7 +302,7 @@ def build_gateway(policy_kwargs: dict):
         policy,
         denied_tools=policy_kwargs["denied_tools"],
         sensitive_tools=policy_kwargs["sensitive_tools"],
-        audit_sink=JsonlAuditSink(LOG_DIR),
+        audit_sink=JsonlAuditWriter(LOG_DIR),
     )
 
 
@@ -383,16 +384,17 @@ class Handler(BaseHTTPRequestHandler):
         params = msg.get("params") or {}
         tool_name = params.get("name", "")
         arguments = params.get("arguments") or {}
-        # returns (allowed, reason); SDK records the AuditEntry via audit_sink
+        # returns (allowed, reason); SDK records the AuditEntry via its
+        # audit_sink parameter (the external SDK API; the writer is ours)
         allowed, reason = gateway.intercept_tool_call(AGENT_ID, tool_name, arguments)
         # native decision-record/1 stream (M2a; see the duplication note at
         # the NATIVE_* constants above). Echo-only ids (DESIGN.md 5); the
         # emission sees the same internal decision the AuditEntry path sees
         # and must never break enforcement.
-        native_sink = getattr(self.server, "native_sink", None)
-        if native_sink is not None:
+        native_writer = getattr(self.server, "native_writer", None)
+        if native_writer is not None:
             try:
-                native_sink.record(
+                native_writer.record(
                     tool_name=tool_name, arguments=arguments,
                     allowed=allowed, reason=reason,
                     policy=getattr(self.server, "policy_info", None),
@@ -426,7 +428,7 @@ def main() -> None:
     # the native decision-record stream (M2a) + the policy identity its
     # records carry (DESIGN.md 4 policy block; the v0 AuditEntry carries no
     # policy identity, which is why the reader-side mapping says "unmapped")
-    server.native_sink = NativeRecordSink(LOG_DIR)  # type: ignore[attr-defined]
+    server.native_writer = NativeRecordWriter(LOG_DIR)  # type: ignore[attr-defined]
     server.policy_info = {  # type: ignore[attr-defined]
         "policy_id": policy_kwargs["name"],
         "policy_version": os.environ.get("GATEWAY_POLICY_VERSION", "unknown"),

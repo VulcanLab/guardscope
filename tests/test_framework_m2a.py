@@ -187,7 +187,7 @@ def test_c5_v0_null_action_ids_are_skipped_not_findings():
                     run_id="run-1")
     assert report["findings"][0]["id"] == "C5-stripping"  # a011 not echoed
     assert report["skipped"]["decision_null_action_id"] == 2
-    # with the echo present, the null-id records are pure noise
+    # with the echo present, the null-id records are purely incidental
     report = run_c5([dispatch("a011")],
                     [decision(None, seq=0), decision("a011", seq=1)],
                     run_id="run-1")
@@ -256,7 +256,7 @@ HTTP_DECISIONS = [
     {"tool_name": "post_hook",
      "parameters": {"path": "/hook", "body": "tool-call payload"}},
     {"tool_name": "post_hook",
-     "parameters": {"path": "/hook", "body": "policy-deny probe"}},
+     "parameters": {"path": "/hook", "body": "policy-deny case"}},
     {"tool_name": "get_health", "parameters": {"path": "/health"}},
     {"tool_name": "put_state", "parameters": {"path": "/state", "body": "k=v"}},
 ]
@@ -432,7 +432,7 @@ def test_fidelity_check_pass():
     assert report["status"] == "pass"
     assert report["preserves_meta"] is True
     assert report["preserves_header"] is True
-    # one marked call per transport, distinct per-transport probe ids so one
+    # one marked call per transport, distinct per-transport check ids so one
     # transport's echo cannot satisfy another's assertion
     assert [c[0] for c in issuer.calls] == ["mcp_meta", "http_header"]
     assert issuer.calls[0][1] != issuer.calls[1][1]
@@ -465,8 +465,8 @@ def test_fidelity_check_per_transport_flags():
 def test_fidelity_check_explicit_action_id_and_attempt():
     issuer = FakeIssuer()
     report = run_fidelity_check(issuer, issuer.collect,
-                                action_id="probe-x", attempt=3)
-    assert all(action_id == "probe-x" and attempt == 3
+                                action_id="check-x", attempt=3)
+    assert all(action_id == "check-x" and attempt == 3
                for _, action_id, attempt in issuer.calls)
     assert report["attempt"] == 3
 
@@ -669,10 +669,10 @@ def test_gateway_native_record_deny_carries_evidence():
     assert rec["action_id"] is None
 
 
-def test_gateway_native_sink_appends_monotonic_seq(tmp_path):
-    sink = gateway_server.NativeRecordSink(tmp_path)
+def test_gateway_native_writer_appends_monotonic_seq(tmp_path):
+    writer = gateway_server.NativeRecordWriter(tmp_path)
     for i in range(3):
-        sink.record(tool_name="get_health", arguments={}, allowed=True,
+        writer.record(tool_name="get_health", arguments={}, allowed=True,
                     action_id=f"a01{i}", attempt=0,
                     correlation_transport="mcp_meta")
     lines = (tmp_path / "decision-records.jsonl").read_text().splitlines()

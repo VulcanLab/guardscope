@@ -154,7 +154,7 @@ def _exec_child(argv: list[str], stdin_fd: int | None = None,
                 syscalls.close_fd(stdout_fd)
         path = argv[0] if "/" in argv[0] else (shutil.which(argv[0]) or argv[0])
         syscalls.execv(path, list(argv))
-    except BaseException:  # noqa: BLE001 — the child must never leak back
+    except BaseException:  # noqa: BLE001 — the child must never propagate back
         pass
     syscalls.exit_child(127)
 
@@ -279,7 +279,7 @@ def _daemonize_intermediate(argv: list[str], pid_r: int, pid_w: int) -> None:
     """Intermediate child of the daemon variant: new session (setsid),
     fork the worker (which execve's the canonical argv and never returns),
     report the worker pid over the pipe, then exit. NEVER returns to the
-    caller — a failure can never leak back into the parent's run loop."""
+    caller — a failure can never propagate back into the parent's run loop."""
     try:
         syscalls.setsid()
         worker_pid = syscalls.fork()
@@ -288,7 +288,7 @@ def _daemonize_intermediate(argv: list[str], pid_r: int, pid_w: int) -> None:
         syscalls.close_fd(pid_r)
         syscalls.write_fd(pid_w, f"{worker_pid}\n".encode())
         syscalls.close_fd(pid_w)
-    except BaseException:  # noqa: BLE001 — the intermediate must never leak back
+    except BaseException:  # noqa: BLE001 — the intermediate must never propagate back
         pass
     syscalls.exit_child(0)
 

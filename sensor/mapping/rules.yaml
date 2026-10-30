@@ -14,9 +14,9 @@
 # v5 (M6): /workspace/replay/ added to file_write exclude_path_prefixes — the
 # replay adapter's own log/result writes are testbed instrumentation, not
 # workload. Classification otherwise unchanged from v4; unmapped records now
-# carry the full envelope (ts/container/pid/retval/best-effort detail) so
-# reconciliation can noise-allowlist and debug leftovers (map_events change,
-# not a rule change).
+# carry the full record fields (ts/container/pid/retval/best-effort detail)
+# so reconciliation can apply unrelated-event allowlists and debug
+# leftovers (map_events change, not a rule change).
 # v6 (T1-5): port 8090 added to http_tool_call tcp_ports — in the T1 topology
 # the harness's HTTP tool call crosses the MCP Security Gateway (gateway:8090),
 # so the harness→gateway connect IS the kernel evidence of the inspected tool
@@ -25,7 +25,7 @@
 # T0 classification is unaffected.
 version: 6
 
-# Opt-in envelope only; v6 class rules and default/container modes unchanged.
+# Opt-in record fields only; v6 class rules and default/container modes unchanged.
 attribution_modes:
   csb-host-tree-v1:
     evidence: host-tree.json + jail-snapshot.json + process-snapshots.jsonl
@@ -63,7 +63,8 @@ classes:
                         # node's dgram sends via sendmsg, whose raw event does
                         # not expose the destination; the parsed packet event does)
     # connect/sendto/sendmsg to ports outside every list above stay unmapped:
-    # they are infrastructure noise (DNS, health probes), not workload.
+    # they are unrelated infrastructure events (DNS, health checks), not
+    # workload.
 
   credential_access:
     events: [security_file_open]

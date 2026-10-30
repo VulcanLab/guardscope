@@ -104,7 +104,7 @@
           },
           "expected_multiplicity": {
             "type": "object",
-            "description": "Documented kernel-level multiplicity envelopes (per runner/profiles/*.yaml)."
+            "description": "Documented kernel-level expected count ranges (per runner/profiles/*.yaml)."
           },
           "inspection_expectation": {
             "type": "object",

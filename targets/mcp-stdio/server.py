@@ -2,7 +2,7 @@
 """Toy MCP stdio tool server (C4): the stdio_tool_call target.
 
 Implements the MCP stdio transport (newline-delimited JSON-RPC 2.0 on
-stdin/stdout; stderr is the only logging sink on the console because stdout
+stdin/stdout; stderr is the only console logging writer because stdout
 MUST carry protocol messages only) with three filesystem tools matching the
 baseline trace spec (trace/traces/baseline.yaml):
 

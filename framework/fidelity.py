@@ -55,7 +55,7 @@ def run_fidelity_check(issuer, collector, *, action_id=None, attempt: int = 0,
 
     issuer(transport, action_id, attempt) sends the marked tools/call;
     collector() returns the decision records emitted since the call. When
-    action_id is None a per-transport probe id is used (so one transport's
+    action_id is None a per-transport check id is used (so one transport's
     echo cannot satisfy another transport's assertion); an explicit
     action_id is used verbatim for every transport.
     """
@@ -65,15 +65,15 @@ def run_fidelity_check(issuer, collector, *, action_id=None, attempt: int = 0,
                          f"(known: {list(TRANSPORTS)})")
     per_transport = {}
     for transport in transports:
-        probe_id = (action_id if action_id is not None
+        check_id = (action_id if action_id is not None
                     else f"fidelity-check:{transport}")
-        issuer(transport, probe_id, attempt)
+        issuer(transport, check_id, attempt)
         records = [r for r in (collector() or []) if isinstance(r, dict)]
         echoing = [r for r in records
-                  if r.get("action_id") == probe_id
+                  if r.get("action_id") == check_id
                   and _attempt_of(r) == attempt]
         per_transport[transport] = {
-            "action_id": probe_id,
+            "action_id": check_id,
             "attempt": attempt,
             "records_collected": len(records),
             "records_echoing": len(echoing),
