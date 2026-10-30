@@ -90,6 +90,7 @@ HARNESSES = {
     "pi": {
         "container": "t0-pi",
         "compile_py": HERE / "trace" / "compile" / "pi" / "compile.py",
+        "trigger": "pi",
         "replay_mount": "/workspace/replay",
         # T4/T5 runs are two-phase (command phase + agent run driven by the
         # scripted provider, including pi's first-prompt MCP tool wait); the
