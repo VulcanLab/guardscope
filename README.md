@@ -15,8 +15,9 @@ at what latency and fidelity cost.
   `docs/DESIGN.md` (privilege tiers). Without kernel privileges the
   framework still works in its degraded mode (`--no-sensor`): every
   output is labeled self-reported and unverified.
-- arm64 (aarch64) for the shipped fixture images; the compose files are
-  arch-neutral but the tested reference host family is arm64.
+- Linux, arm64 (aarch64) or x86_64. Both families are validated
+  (Graviton m7g and Intel m7i, Ubuntu 24.04, kernel 7.0.x-aws): every
+  acceptance run passes on both, with identical outcome counts.
 - About 50 GB of free disk: the fixture images and their build cache,
   plus the raw kernel-event captures that a sensor-backed run writes
   (a single capture can be several GB; the reconciled outputs are small).
