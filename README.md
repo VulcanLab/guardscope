@@ -38,14 +38,9 @@ git clone <repo-url> && cd guardscope
 pip install -e .
 ```
 
-`pip install -e .` (editable, from the checkout) installs the
-`guardscope` command and the `framework` package. v1 is an
-editable-install-from-checkout model: the framework resolves the fixtures
-repository (compose files, runner profiles, the canonical trace, plugin
-manifests, the registry, the mock harness) as the directory next to the
-installed package, i.e. the checkout. A plain `pip install .` does not
-bundle those fixtures and cannot run experiments; a distribution-quality
-package is later work. Use `pip install -e .` from the checkout.
+This installs the `guardscope` command. The checkout must stay on your
+machine: the framework reads the compose files, traces, and plugin data
+from it at run time. Do not delete or move the checkout after installing.
 
 ## Quickstart
 
