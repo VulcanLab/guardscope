@@ -1,6 +1,53 @@
-# ActPlane (T7 exemplar) — kernel/arch compatibility incident (final: 2026-10-07)
+# ActPlane (T7 exemplar) — kernel/arch compatibility incident (RESOLVED: 2026-10-31)
 
-**Status: T7 is OUT OF REACH with ActPlane.** The prebuilt eBPF programs fail
+**Status: RESOLVED — ActPlane is workable on kernel 6.17.** The
+2026-10-31 probe (wider-control phase 0, run-id actplane-probe-20261031,
+evidence in ~/research/wider-control/results/actplane-probe-20261031/)
+found the working zone and verified live enforcement. The original matrix
+below is preserved: its conclusion was correct for the kernels it tested
+(6.8, 7.0) but the failure classes are kernel-version properties, not
+ActPlane build artifacts.
+
+## Resolution details (probe, x86_64, Ubuntu 24.04, c6i.xlarge spot)
+
+| kernel | result |
+|---|---|
+| 6.1.189 (AL2023) | FAIL: bpf_user_ringbuf_drain helper missing — hard floor is 6.2+ (the README's "6.1+" is stale for current code) |
+| 6.8.0-1055-aws | FAIL: combined stack 608 > 512 (trace_recvfrom_exit) — reproduces with a FROM-SOURCE clang-18 rebuild, so not a stale-binary artifact |
+| 7.0.0-1014-aws / 1017-azure | FAIL: verifier 1M-insn budget (CAP_DOMAIN_DEPTH exec handler); byte-identical verifier stats on both cloud builds |
+| **6.17.0-1010-aws** | **PASS: engine loads; kill + notify + block enforced live; full e2e suites 12/12 + 8/8 green; the crate 0.1.8 PREBUILT object also loads (no rebuild needed)** |
+
+Context: ActPlane's CI was green through Oct 16 on GitHub's 24.04 runner
+(kernel 6.17.0-1022-azure at the time) and has NOT run on the runner's
+current 7.0 kernel — consistent with the 7.0 failure above.
+
+### Fixture requirements discovered
+
+1. Pin kernel 6.17.x. Three distinct, source-level verifier failure
+   classes block 6.1, 6.8, and 7.0.
+2. Write-sink rules (read/write/unlink/open) cannot be installed as
+   `actplane run` runtime deltas (the pinned singleton loads with an
+   empty config and reserves hooks but not file-sink matcher classes);
+   they must be loaded at engine start via the config-loader path
+   (`bpf/process --config <blob>`, the approach their own e2e driver
+   uses). Exec/connect rules work fine via `run` deltas. This maps to
+   guardscope's `configure(policy_descriptor)` at provision, with
+   re-configure requiring an engine reload rather than a delta.
+3. The singleton pin (/sys/fs/bpf/actplane/v1) persists after run exit:
+   the T7 fixture needs explicit teardown between cells (R4/leftover
+   discipline) and per-cell feature-profile control.
+4. Block rules need BPF-LSM active. Ubuntu-family kernels: add `bpf` to
+   the `lsm=` boot parameter in /etc/default/grub.d/
+   50-cloudimg-settings.cfg and reboot (CONFIG_BPF_LSM=y is already set
+   in -aws kernels). AL2023 ships with bpf active by default.
+5. Commit bb89c77 (master, 2026-10-16) tested; crate 0.1.8 pinned binary
+   re-verified on 6.17 — the existing target pin does not need a rebuild.
+
+---
+
+# Original incident (2026-10-07, preserved)
+
+**Status (superseded): T7 is OUT OF REACH with ActPlane.** The prebuilt eBPF programs fail
 the verifier on every host/kernel/arch combination provisioned (4 combos,
 both the pinned 0.1.8 crate and git master). This file records the full
 matrix so a future retry (new ActPlane release, or a from-source BPF rebuild
