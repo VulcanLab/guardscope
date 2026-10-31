@@ -17,7 +17,9 @@ at what latency and fidelity cost.
   output is labeled self-reported and unverified.
 - arm64 (aarch64) for the shipped fixture images; the compose files are
   arch-neutral but the tested reference host family is arm64.
-- About 50 GB of free disk for images and run artifacts.
+- About 50 GB of free disk: the fixture images and their build cache,
+  plus the raw kernel-event captures that a sensor-backed run writes
+  (a single capture can be several GB; the reconciled outputs are small).
 
 Check a host quickly with the environment probe:
 
