@@ -3,14 +3,32 @@
 guardscope is a measurement framework for runtime controls in LLM-agent
 systems: it measures how much of an agent's action surface an inspection
 layer (gateway, policy engine, sandbox) actually sees and decides on, and
-at what latency and fidelity cost. The design is in `docs/DESIGN.md`.
+at what latency and fidelity cost.
+
+## Requirements
+
+- Python 3.12+ (a virtualenv or equivalent; see Install)
+- Docker Engine 24+ with the compose plugin (every experiment runs on a
+  Linux Docker host)
+- Linux, kernel 5.8 or newer with BTF (`/sys/kernel/btf/vmlinux`), for the
+  kernel sensor; the supported kernel families are listed in
+  `docs/DESIGN.md` (privilege tiers). Without kernel privileges the
+  framework still works in its degraded mode (`--no-sensor`): every
+  output is labeled self-reported and unverified.
+- arm64 (aarch64) for the shipped fixture images; the compose files are
+  arch-neutral but the tested reference host family is arm64.
+- About 50 GB of free disk for images and run artifacts.
+
+Check a host quickly with the environment probe:
+
+```sh
+bash env/probe-server.sh
+```
+
+It reports pass/warn/fail for kernel, BTF, Docker, compose, cgroup v2,
+privilege path, and disk headroom.
 
 ## Install
-
-You need the repo checkout plus a Python 3.12+ environment with Docker
-and the compose plugin (runs execute on a Linux Docker host; the kernel
-sensor additionally needs a supported kernel family, see `docs/DESIGN.md`
-privilege tiers).
 
 ```sh
 git clone <repo-url> && cd guardscope
@@ -65,8 +83,12 @@ warmup costs: the compose images build on first `up`, and the first run
 per harness compiles the canonical trace into `cache/compile/` (reused
 afterwards). The repo stays read-only source.
 
-Add `--no-sensor` to `run` when the topology came up without the sensor
-profile; the run is then labeled self-reported throughout.
+The first run of a design also pays a warmup run: warmup run IDs
+(`warmup-` prefix) are pre-measurement first runs excluded from
+acceptance; the first live run of a design produces leftover
+bookkeeping records (harness startup writes) and fails the leftover
+check by design. Run once to warm up, then run again for the accepted
+measurement.
 
 ### Gateway designs: base + control overlay
 
@@ -103,14 +125,15 @@ mechanics):
 1. Ship a capability manifest declaring your supported designs and slot
    kinds: `plugins/<your-control>/manifest.json`.
 2. Ship one binding overlay per supported design (and its mock variant
-   when the mock fixture is in scope): `plugins/<your-control>/overlay/t1.yaml`
-   — the gateway slot's compose service definition (image/build, env,
-   policy, log wiring), moved into your plugin directory. The service name
-   must be the one declared in `compose/slots/<design>.yaml`.
+   when the mock fixture is in scope):
+   `plugins/<your-control>/overlay/t1.yaml` — the gateway slot's compose
+   service definition (image/build, env, policy, log wiring), moved into
+   your plugin directory. The service name must be the one declared in
+   `compose/slots/<design>.yaml`.
 3. The on-matrix rule: the overlay defines exactly the declared slot
-   service, may add auxiliary services only named `control-*` attached to
-   the slot's network, and must not touch any base service. Violations are
-   not errors: the run is flagged off-matrix as a custom fixture
+   service, may add auxiliary services only named `control-*` attached
+   to the slot's network, and must not touch any base service. Violations
+   are not errors: the run is flagged off-matrix as a custom fixture
    (`docs/DESIGN.md` 7).
 
 The fixture fingerprint records the base and overlay hashes separately,
@@ -140,7 +163,7 @@ so your control's version changes move the fingerprint on their own.
   `decision-record/1` records, and verifying the translation with the L1
   conformance run.
 - `docs/measure-your-control.md`: the onboarding walk-through for
-  bringing a control to measurement — manifest, binding overlay,
+  bringing a control to measurement: manifest, binding overlay,
   validation, measurement, and reading your coverage column honestly.
 
 ## Repository layout
@@ -153,3 +176,7 @@ topologies + the `compose/slots/` sidecar slot declarations), `gateway/`,
 `registry/`, `examples/`, `env/`. Writable artifacts never land in the
 repo; they go to the experiments workdir (`GUARDSCOPE_WORKDIR`),
 described above.
+
+## License
+
+Apache-2.0 (see `LICENSE`).
