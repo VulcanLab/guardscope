@@ -1,0 +1,25 @@
+# compose/slots/t7.yaml — framework-side slot descriptor for design T7
+# (DESIGN.md 7). Sidecar data, NOT a compose file (compose rejects unknown
+# top-level keys). One descriptor per design; the mock-harness fixture does
+# not exist for t7 (the mock originator's kernel-position measurement is
+# follow-up work; plugins/mock-harness/manifest.json declares t0-t3).
+#
+# The T7 slot is a KERNEL slot (0.2.0): the control enforces from the host
+# kernel — a privileged container sharing the host pid namespace — not from
+# a network position. The slot's network attachment exists only for compose
+# topology consistency (aux control-* services and healthchecks); the
+# enforcement surface is the host kernel, and the overlay validator's
+# kernel-slot rule (framework/overlay.py) requires privileged: true and
+# pid: host on the slot service. The kernel facts this slot rests on are
+# pinned by the 2026-10-31 probe (targets/actplane/README.md): the
+# exemplar control's eBPF engine loads on kernel 6.17.x and fails on 6.8
+# (stack), 7.0 (verifier budget), and <6.2 (user-ringbuf helper); grid
+# hosts pin 6.17.x and the kernel joins the comparability keys.
+schema: 1
+design: t7
+slot: kernel-enforcement
+kind: kernel
+service: kernel-control
+network: t7net
+log_volume: control-logs
+policy: plugins/actplane/policy/t7.ap.yaml

@@ -1,0 +1,56 @@
+# T7 fixture policy (ActPlane DSL) — the design's enforcement_config,
+# hash-pinned per run into the fixture fingerprint (DESIGN.md 10).
+#
+# Design intent, mirroring the T1/T3 allow-all philosophy (gateway/policy.yaml:
+# "the inspected-class coverage number isolates the topology from policy
+# content") at the kernel position:
+#
+#   - NOTIFY over every mediated class of the canonical trace, so the engine
+#     emits ONE record per mediated action instance and coverage measures
+#     MEDIATION, not policy content:
+#       process_spawn  a031/a032  (exec)
+#       file_write     a041/a042  (write/unlink)
+#       direct_network a021/a022  (connect, numeric IPv4 endpoints)
+#   - KILL on the credential reads (a051/a052, file:///run/secrets/**): the
+#     kernel-deny arm of the fixture. This is the T7 analogue of a014's
+#     checked-DENY role in T6 — an argument-level constraint is NOT
+#     expressible at the kernel (no payload visibility, DESIGN.md 1), so
+#     the deny boundary is a kernel-observable feature: the secret path.
+#     Every secret read becomes `prevented` (deny record + verified kernel
+#     absence, C6) — the kernel position's prevention measurement.
+#   - Reads of non-secret paths are deliberately NOT notified: they carry
+#     no canonical action class (the six-class taxonomy has no generic
+#     file-read class; tool-caused reads are expected-extras in the
+#     reconcile profiles), and a record without an action class cannot be
+#     accounted. Their mediation happens at the kernel by construction.
+#
+# Scope: the engine is seeded to the harness container's process tree (the
+# loader's --seed-pid), so these patterns label only the measured agent
+# tree — never the targets, the sensor, or unrelated host processes.
+#
+# Requires config-at-load (probe 2026-10-31: write-sink rules cannot be
+# installed as runtime deltas) — the control service compiles this policy
+# and loads the engine with it (plugins/actplane/entrypoint/t7-entrypoint.sh).
+version: 1
+policy: |
+  source AGENT = exec "**"
+
+  rule t7-notify-exec:
+    notify exec "**" if AGENT
+    because "T7 coverage: one record per mediated exec (process_spawn)"
+
+  rule t7-notify-write:
+    notify write file "/**" if AGENT
+    because "T7 coverage: one record per mediated write (file_write)"
+
+  rule t7-notify-unlink:
+    notify unlink file "/**" if AGENT
+    because "T7 coverage: unlink mediation (file_write variant)"
+
+  rule t7-notify-connect:
+    notify connect endpoint "*" if AGENT
+    because "T7 coverage: one record per mediated connect (direct_network; numeric IPv4 endpoints)"
+
+  rule t7-kill-secret-read:
+    kill read file "/run/secrets/**" if AGENT
+    because "T7 prevention arm: credential reads are denied at the kernel (a051/a052); deny + verified absence = prevented (C6)"

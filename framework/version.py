@@ -21,5 +21,12 @@ registry keys), and plugin versions (each plugin's manifest.json, registry
 keys), which change on their own schedules.
 """
 
-__version__ = "0.1.0"
-FRAMEWORK_LINE = "0.1"
+# 0.2.0: the T7 kernel slot materialized (DESIGN.md 7; the kernel
+# facts pinned by the 2026-10-31 probe). Additive for existing
+# designs: a control-bound t7 run composes compose/t7.yaml with a
+# kernel control binding; control:null t7 keeps the observation-row
+# semantics unchanged. Schema notes: capabilities-manifest/1 gains
+# the kernel slot kind + the kernel_interference declaration;
+# decision-record/1 gains protocol "none" (kernel-position records).
+__version__ = "0.2.0"
+FRAMEWORK_LINE = "0.2"

@@ -130,12 +130,12 @@ def test_null_control_with_t4_requires_hostable_harness(tmp_path):
 
 
 def test_designs_checked_against_harness_t_modes(tmp_path):
-    # pi supports t0-t6; t7 (kernel observation row) is not a pi t-mode
-    p = write_experiment(tmp_path, base_doc(designs=["t0", "t7"],
-                                            harness="pi"))
+    # pi supports t0-t7 (t7 since 0.2.0); openclaw has no t4 fixture
+    p = write_experiment(tmp_path, base_doc(designs=["t4"],
+                                            harness="openclaw"))
     with pytest.raises(ExperimentError) as exc:
         load_experiment(p)
-    assert "design t7 not supported by harness 'pi'" in str(exc.value)
+    assert "design t4 not supported by harness 'openclaw'" in str(exc.value)
     assert "supported t-modes" in str(exc.value)
 
 
@@ -270,6 +270,52 @@ def test_plan_flags_t7_observation_only(tmp_path):
         assert by_design["t7"].observation_only is True
         assert by_design["t7"].fixture == "reference-rig/t7"
         assert by_design["t0"].observation_only is False
+    finally:
+        contracts.PLUGINS_DIR = real_dir
+
+
+def test_t7_control_bound_is_a_kernel_placement(tmp_path):
+    """0.2.0: a control-bound t7 run composes the kernel slot — the
+    composed fixture id, the binding overlay, and NOT the observation-row
+    flag (that stays the control:null expression)."""
+    p = write_experiment(tmp_path, base_doc(control="actplane",
+                                            designs=["t7"]))
+    plan = resolve(load_experiment(p))
+    assert len(plan.runs) == 1
+    run = plan.runs[0]
+    assert run.control_binding == "selected"
+    assert run.fixture == "reference-rig/t7+actplane"
+    assert run.overlay == "plugins/actplane/overlay/t7.yaml"
+    assert run.overlay_problems == []
+    assert run.off_matrix is False
+    assert run.observation_only is False
+
+
+def test_t7_example_file_resolves(tmp_path):
+    p = ROOT / "examples" / "t7-actplane.yaml"
+    plan = resolve(load_experiment(p))
+    assert len(plan.runs) == 1
+    assert plan.runs[0].design == "t7"
+    assert plan.runs[0].observation_only is False
+
+
+def test_kernel_slot_control_requires_interference_declaration(tmp_path):
+    """A control binding kernel slots without the kernel_interference
+    declaration is refused at load (DESIGN.md 3 eBPF-enforcing controls)."""
+    plugin = tmp_path / "k9"
+    plugin.mkdir(parents=True)
+    (plugin / "manifest.json").write_text(json.dumps({
+        "schema": 1, "id": "k9", "version": "1", "kind": "control",
+        "slot_kinds": ["kernel"], "record_source": "ingested",
+        "can_enforce": "enforce", "observable_action_classes": ["process_spawn"],
+        "supported_designs": ["t7"]}))
+    real_dir = contracts.PLUGINS_DIR
+    contracts.PLUGINS_DIR = tmp_path
+    try:
+        with pytest.raises(ExperimentError, match="kernel_interference"):
+            load_experiment(
+                write_experiment(tmp_path, base_doc(control="k9",
+                                                    designs=["t7"])))
     finally:
         contracts.PLUGINS_DIR = real_dir
 

@@ -240,7 +240,7 @@ Reference designs and fixtures:
 | T4 | Harness-native permission chain | `control: null`; permission chain is harness-intrinsic, configured by `enforcement_config` |
 | T5 | Harness permission chain + gateway (two points) | Gateway is selected; chain is harness-intrinsic; the attribution gap between the two record streams is what this design measures |
 | T6 | In-process policy engine (declarative rules at the harness tool-call hook) | Harness-embedded control registers with an `embedded` slot |
-| T7 | Kernel-level enforcement | Observation row: kernel observability of all 15 paths |
+| T7 | Kernel-level enforcement | Kernel slot (0.2.0): the exemplar actplane binding loads the engine on the pinned 6.17.x host kernel; `control: null` keeps the observation row (kernel observability, no enforcement) |
 
 **Custom fixtures** run off-matrix: full measurement fidelity (all streams, all evidence classes), but only grid placement is provisional. They carry an `off_matrix` flag, a mandatory **nearest-design projection** (which core design the fixture most resembles, plus a divergence note), and registry-tracked recurrence. Custom fixtures arrive two ways: an experiment `fixture` block, or an on-matrix rule violation by a control-binding overlay (above; the run is measured at full fidelity with the violations recorded). The flag controls whether results enter the grid, not whether they are published: off-matrix results appear in an extension section with their own evidence class.
 

@@ -163,6 +163,18 @@ DESIGNS = {
     # as the auditable policy artifact.
     "t6": {"prefix": "t6", "compose": "t6.yaml", "gateway": True,
            "enforcement_record": "harness", "harness_policy": "/opt/inspection/t6-policy.json"},
+    # t7: kernel-level enforcement (0.2.0). The enforcement-point record is
+    # the kernel CONTROL's decision-records stream on the control-logs
+    # volume: the control service (a kernel slot, compose/slots/t7.yaml)
+    # translates its engine's match events into decision-record/1 via its
+    # shim and appends them to /var/log/control/decisions.jsonl. The
+    # deployed policy artifact is the fixture policy the binding mounts
+    # (plugins/actplane/policy/t7.ap.yaml for the actplane binding). The
+    # harness itself runs in T0 mode (no intrinsic enforcement).
+    "t7": {"prefix": "t7", "compose": "t7.yaml", "gateway": True,
+           "enforcement_record": "control",
+           "record_container": "kernel-control",
+           "record_dir": "/var/log/control"},
 }
 
 
@@ -178,7 +190,7 @@ def harness_cfg(harness: str, design: str = "t0",
         raise ValueError(f"unknown design {design!r} (known: {sorted(DESIGNS)})")
     # t4: validated on the pi and openclaw harnesses (openclaw's
     # before_tool_call hook — see harnesses/openclaw/T4-INVESTIGATION.md)
-    if design in ("t4", "t5", "t6") and harness not in ("pi", "openclaw"):
+    if design in ("t4", "t5", "t6", "t7") and harness not in ("pi", "openclaw"):
         raise ValueError(f"design {design} uses the harness-native "
                          "enforcement surface; validated on the pi and "
                          "openclaw harnesses (see T4-INVESTIGATION.md)")
@@ -508,6 +520,28 @@ def pull_gateway_log(out_dir: Path, prefix: str, subdir: str = "gateway") -> Pat
                        check=False)
     (d / "decision-records.jsonl").write_text(proc.stdout or "")
     return d
+
+
+def pull_control_log(out_dir: Path, design: str) -> Path:
+    """T7: the enforcement-point record is the kernel CONTROL's stream —
+    the control service's shim output on the control-logs volume
+    (decisions.jsonl, decision-record/1) plus the raw match events
+    (actplane-events.log, the vendor log the records' raw_ref points at)
+    and the deployed policy artifact (the fixture policy the binding
+    mounted). Same downstream plumbing as the gateway's record dir."""
+    d = DESIGNS[design]
+    container = d["record_container"]
+    rec_dir = d["record_dir"]
+    out = out_dir / "gateway"
+    out.mkdir(parents=True, exist_ok=True)
+    for name in ("decisions.jsonl", "actplane-events.log"):
+        proc = docker_exec(container, f"cat {rec_dir}/{name} 2>/dev/null",
+                           check=False)
+        (out / name).write_text(proc.stdout or "")
+    proc = docker_exec(container, "cat /policy/t7.ap.yaml 2>/dev/null",
+                       check=False)
+    (out / "policy.yaml").write_text(proc.stdout or "")
+    return out
 
 
 def pull_harness_log(out_dir: Path, harness: str,
@@ -877,6 +911,10 @@ def run_one(harness: str, run_id: str, runs_dir: Path, timeout_s: float | None =
         if DESIGNS[design].get("gateway_side"):
             # t5: the second enforcement point's record (gateway side)
             pull_gateway_log(out_dir, prefix, subdir="gateway-side")
+    elif DESIGNS[design].get("enforcement_record") == "control":
+        # t7: the kernel control's shimmed record stream (the control
+        # service appends decision-record/1 to the slot's log volume)
+        gateway_dir = pull_control_log(out_dir, design)
     else:
         gateway_dir = (pull_gateway_log(out_dir, prefix)
                        if DESIGNS[design]["gateway"] else None)

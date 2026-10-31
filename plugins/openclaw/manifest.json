@@ -16,10 +16,11 @@
     "t2",
     "t3",
     "t5",
-    "t6"
+    "t6",
+    "t7"
   ],
   "hostable_enforcement_points": [
     "dispatch_plugins"
   ],
-  "notes": "t4 pending the dispatch-hook investigation; validated on pi only in v1"
+  "notes": "t4 pending the dispatch-hook investigation; validated on pi only in v1 t7 (0.2.0): the kernel-position design; the harness itself runs in its t0 configuration (no intrinsic enforcement) \u2014 the selected kernel control (e.g. actplane) enforces from the host."
 }

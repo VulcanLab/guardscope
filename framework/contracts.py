@@ -416,6 +416,17 @@ def load_capabilities(plugin_id: str, version: str | None = None) -> dict:
                 raise ContractError(
                     f"manifest {plugin_id}: control kind requires "
                     f"{field!r} (DESIGN.md 3 describe())")
+        # DESIGN.md 3 'eBPF-enforcing controls': a control that binds a
+        # kernel slot must declare its kernel interference (the claim the
+        # run's pre-/post-provision sensor checks verify)
+        if "kernel" in (manifest.get("slot_kinds") or []):
+            ki = manifest.get("kernel_interference") or {}
+            for field in ("declared", "mechanism", "sensor_impact"):
+                if field not in ki:
+                    raise ContractError(
+                        f"manifest {plugin_id}: kernel slot kinds require a "
+                        f"kernel_interference declaration with {field!r} "
+                        f"(DESIGN.md 3 eBPF-enforcing controls)")
         for position in manifest.get("positions", []):
             missing = [d for d in position.get("designs", [])
                       if d not in manifest["supported_designs"]]

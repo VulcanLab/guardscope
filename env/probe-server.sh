@@ -22,6 +22,25 @@ KVER=$(uname -r)
 KMINOR=$(echo "$KVER" | grep -oE '^\[0-9]+\.[0-9]+' | cut -d. -f2)
 KMAJOR=$(echo "$KVER" | cut -d. -f1)
 if [[ -z "$KMINOR" ]] || (( KMAJOR > 5 || (KMAJOR == 5 && KMINOR >= 8) )); then ok "kernel version $KVER (>= 5.8 required for Tracee)"; else bad "kernel version $KVER (Tracee needs >= 5.8, ideally >= 5.10)"; fi
+# T7 kernel-slot pin (0.2.0; probe 2026-10-31, targets/actplane/README.md):
+# the exemplar kernel control's eBPF engine loads on 6.17.x; it fails on
+# 6.8 (verifier combined-stack limit), 7.0 (verifier 1M-insn budget), and
+# <6.2 (bpf_user_ringbuf_drain helper missing). Only warn when the host
+# runs another family: every design except t7 is unaffected.
+case "$KVER" in
+  6.17.*) ok "kernel family 6.17.x: the T7 kernel slot's pinned engine verified (probe 2026-10-31)" ;;
+  6.8.*) warnk "kernel family 6.8.x: the T7 kernel control's engine FAILS this family's verifier (combined-stack 512 limit; probe 2026-10-31) — pin 6.17.x for t7 runs" ;;
+  7.*) warnk "kernel family 7.x: the T7 kernel control's engine FAILS this family's verifier (1M-insn budget; probe 2026-10-31) — pin 6.17.x for t7 runs" ;;
+  *) warnk "kernel family unverified for the T7 kernel slot (engine needs >= 6.2; 6.17.x is the verified pin) — every other design is unaffected" ;;
+esac
+# BPF-LSM: kernel block rules (ActPlane 'block') need the bpf LSM active;
+# without it the control degrades to tracepoint kill/notify (still valid
+# for measurement; the run manifest records the active mode).
+if grep -qw bpf /sys/kernel/security/lsm 2>/dev/null; then
+  ok "BPF-LSM active (/sys/kernel/security/lsm contains bpf): kernel block rules available"
+else
+  warnk "BPF-LSM not in /sys/kernel/security/lsm: the T7 control runs kill/notify only (block rules need 'bpf' in the kernel lsm= boot parameter)"
+fi
 uname -m
 
 header "BTF (required by Tracee CO-RE)"

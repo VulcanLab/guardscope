@@ -1,0 +1,40 @@
+{
+  "schema": 1,
+  "id": "actplane",
+  "version": "0.1.8",
+  "kind": "control",
+  "slot_kinds": ["kernel"],
+  "positions": [
+    {
+      "id": "kernel-enforcement",
+      "designs": ["t7"],
+      "note": "kernel-level enforcement position (eBPF tracepoints + BPF-LSM); watches the harness containers' process trees from the host kernel"
+    }
+  ],
+  "record_source": "ingested",
+  "observable_action_classes": [
+    "process_spawn",
+    "file_write",
+    "credential_access",
+    "direct_network"
+  ],
+  "can_enforce": "enforce",
+  "emitted_schema_versions": ["decision-record/1"],
+  "correlation": {
+    "echoes_meta": false,
+    "echoes_header": false
+  },
+  "supported_designs": ["t7"],
+  "kernel_interference": {
+    "declared": true,
+    "mechanism": "eBPF tracepoints (exec/open/write/unlink/connect) + BPF-LSM hooks for block rules; pinned ActPlane 0.1.8 engine (commit bb89c77 verified live)",
+    "sensor_impact": "shares the host kernel with the runner-managed sensor: the engine's own eBPF attachments overlap the sensor's hook set (exec/connect events observed by both); no event suppression expected, but the sensor is re-checked post-provision (DESIGN.md 9 eBPF-enforcing control rule)",
+    "pinned_kernels": [
+      "6.17.x (engine verified live 2026-10-31: kill + block + notify, e2e 12+8 green)",
+      ">=6.2 required (bpf_user_ringbuf_drain)",
+      "not 6.8 (verifier combined-stack 512 limit)",
+      "not 7.0 (verifier 1M-insn budget)"
+    ]
+  },
+  "notes": "The exemplar kernel-level control (arXiv:2606.25189), measured under the kernel-position design. Records are translated from ActPlane's match-event stream by the plugin's shim (plugins/actplane/shim/) into decision-record/1 with raw_ref provenance (DESIGN.md 3 shims: record_source ingested). ActPlane emits one record per RULE MATCH: per-action allow records come from the fixture policy's notify rules over the mediated classes (the fixture's enforcement_config, hash-pinned per run)."
+}

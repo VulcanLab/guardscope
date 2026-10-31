@@ -1,0 +1,48 @@
+# plugins/actplane/overlay/t7.yaml — the actplane control binding for design
+# T7 (DESIGN.md 7): the service definition of the kernel-enforcement slot
+# (compose/slots/t7.yaml), moved into the control's binding bundle.
+#
+# Merged bring-up (the base comes FIRST):
+#   docker compose -f compose/t7.yaml -f plugins/actplane/overlay/t7.yaml up -d
+#   docker compose -f compose/t7.yaml -f plugins/actplane/overlay/t7.yaml --profile sensor up -d tracee
+#
+# A kernel slot (overlay.py kernel rule): the service MUST be privileged and
+# share the host pid namespace; the mounts are the ones the compatibility
+# probe pinned (targets/actplane/README.md): tracefs for the tracepoint
+# hooks, /sys/fs/bpf for the singleton pin, securityfs for the lsm check.
+# The docker socket is needed to discover the harness container's init pid
+# (the engine seeds THAT process tree only — scope, not host-wide). The
+# fixture policy (plugins/actplane/policy/t7.ap.yaml) is the design's
+# enforcement_config, hash-pinned into the fixture fingerprint (DESIGN.md
+# 10); the shim (plugins/actplane/shim/translate.py) translates the match
+# stream into decision-record/1 on the slot's log volume.
+#
+# Kernel facts (probe 2026-10-31, targets/actplane/README.md): the pinned
+# engine loads on 6.17.x and fails on 6.8/7.0/<6.2 — the grid host pins the
+# kernel, and the env probe checks it (env/probe-server.sh).
+services:
+  kernel-control:
+    build:
+      context: ..
+      dockerfile: targets/actplane/Dockerfile
+    image: inspection/actplane
+    container_name: t7-kernel-control
+    networks: [t7net]
+    privileged: true
+    pid: host
+    environment:
+      CONTROL_STREAM_ID: kernel-control
+      CONTROL_RUN_ID: "${GUARDSCOPE_RUN_ID:-unknown-run}"
+      HARNESS_CONTAINER: "${GUARDSCOPE_T7_HARNESS_CONTAINER:-t7-pi}"
+    volumes:
+      - /sys/kernel/tracing:/sys/kernel/tracing
+      - /sys/kernel/security:/sys/kernel/security
+      - /sys/fs/bpf:/sys/fs/bpf
+      - /var/run/docker.sock:/var/run/docker.sock
+      - control-logs:/var/log/control
+      - ../plugins/actplane/policy/t7.ap.yaml:/policy/t7.ap.yaml:ro
+      - ../plugins/actplane/entrypoint/t7-entrypoint.sh:/opt/actplane/t7-entrypoint.sh:ro
+      - ../plugins/actplane/shim:/opt/actplane-shim:ro
+    working_dir: /
+    entrypoint: ["/bin/bash", "/opt/actplane/t7-entrypoint.sh"]
+    restart: "no"

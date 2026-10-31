@@ -119,12 +119,55 @@ def test_slot_descriptors_load(design):
     assert ("GATEWAY_URL" in env) == (design in ("t1", "t2", "t3"))
 
 
-@pytest.mark.parametrize("design", ["t0", "t4", "t6", "t7"])
+@pytest.mark.parametrize("design", ["t0", "t4", "t6"])
 def test_no_slot_designs_declare_none(design):
-    # t0/t4/t6/t7 have no control slot (DESIGN.md 7): single-file fixtures
+    # t0/t4/t6 have no control slot (DESIGN.md 7): single-file fixtures
     assert has_slot(design) is False
     with pytest.raises(OverlayError, match="no slot descriptor"):
         load_slot(design)
+
+
+# --- the T7 kernel slot (0.2.0) ---------------------------------------------------
+
+def test_t7_slot_descriptor_loads():
+    """The kernel slot: kind kernel, the kernel-control service, the
+    control-logs volume (DESIGN.md 7; compose/slots/t7.yaml)."""
+    slot = load_slot("t7")
+    assert slot.design == "t7"
+    assert slot.name == "kernel-enforcement"
+    assert slot.doc["kind"] == "kernel"
+    assert slot.service == "kernel-control"
+    assert slot.network == "t7net"
+    assert slot.log_volume == "control-logs"
+    assert has_slot("t7") is True
+
+
+def test_t7_actplane_overlay_is_on_matrix():
+    """The shipped actplane binding preserves the structure AND satisfies
+    the kernel-slot rule (privileged + host pid namespace)."""
+    rel = overlay_rel_path("actplane", "t7", "pi")
+    ok, problems = validate_overlay("t7", overlay_abs_path(rel),
+                                    harness="pi")
+    assert (ok, problems) == (True, []), problems
+
+
+def test_t7_kernel_slot_requires_privileged():
+    """A kernel-slot binding without privileged: true / pid: host is a
+    custom-fixture problem, never a load error (DESIGN.md 7)."""
+    rel = overlay_rel_path("actplane", "t7", "pi")
+    doc = yaml.safe_load(Path(overlay_abs_path(rel)).read_text())
+    svc = doc["services"]["kernel-control"]
+    for key, value in (("privileged", None), ("pid", "host")):
+        stripped = yaml.safe_load(yaml.safe_dump(doc))
+        if key == "privileged":
+            stripped["services"]["kernel-control"].pop(key)
+        else:
+            stripped["services"]["kernel-control"][key] = "not-host"
+        bad = Path("/tmp") / f"t7-bad-{key.replace(':', '')}.yaml"
+        bad.write_text(yaml.safe_dump(stripped))
+        ok, problems = validate_overlay("t7", bad, harness="pi")
+        assert ok is False
+        assert any(key in p for p in problems), problems
 
 
 # --- the shipped overlays pass the on-matrix rule ---------------------------------

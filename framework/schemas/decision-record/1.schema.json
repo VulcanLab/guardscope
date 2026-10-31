@@ -119,8 +119,10 @@
       "enum": [
         "mcp",
         "http",
-        "stdio"
-      ]
+        "stdio",
+        "none"
+      ],
+      "$comment": "DESIGN.md 4: application protocol the action crossed. 'none' (added 0.2.0 with the T7 fixture): the decision was made at the kernel position, below every application protocol."
     },
     "tool": {
       "type": "string",

@@ -383,8 +383,9 @@ def test_run_design_validates_harness_and_design():
         run_mod.run_design("nope", "t0", "x")
     with pytest.raises(ValueError, match="unknown design"):
         run_mod.run_design("pi", "t9", "x")
-    # the t4 pairing is validated before any topology is touched
+    # the pairing validation happens before any topology is touched:
+    # t7 is a known design since 0.2.0 (kernel slot), t8/t9 are not
     with pytest.raises(ValueError, match="unknown design"):
-        run_mod.run_design("pi", "t7", "x")
+        run_mod.run_design("pi", "t8", "x")
     with pytest.raises(ValueError, match="unknown design"):
         run_mod.run_design("openclaw", "t9", "x")

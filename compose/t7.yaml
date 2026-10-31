@@ -1,0 +1,118 @@
+# compose/t7.yaml — deployment design T7: kernel-level enforcement
+# (materialized 0.2.0; DESIGN.md 7). The harness runs in its T0
+# configuration (no intrinsic enforcement, no gateway): the enforcement
+# point of this design is the HOST KERNEL, occupied by the selected
+# kernel control (a privileged service sharing the host pid namespace —
+# the actplane binding is plugins/actplane/overlay/t7.yaml).
+#
+# Outcomes per action class (the kernel position; main.tex §5.2):
+#   stdio_tool_call     bypassed as TOOL CALL (the kernel sees the effect:
+#                       the tool server's file writes/opens, not the call)
+#   http_tool_call      bypassed as TOOL CALL (the kernel sees the connect)
+#   direct_network      checked     (connect events in the harness tree)
+#   process_spawn       checked     (exec events in the harness tree)
+#   file_write          checked     (write events in the harness tree)
+#   credential_access   checked     (secret reads in the harness tree)
+# (Kernel-position records carry no tool/session identity: DESIGN.md 1 —
+# the least-semantic position. The tool-call classes measure as bypassed
+# at their own semantic level; their effects appear as kernel events.)
+#
+# Kernel pin (probe 2026-10-31, targets/actplane/README.md): the exemplar
+# control's engine loads on 6.17.x and fails on 6.8 / 7.0 / <6.2 — grid
+# hosts run 6.17.x and the kernel joins the comparability keys; the env
+# probe (env/probe-server.sh) checks the family.
+#
+# A base alone is not a validatable unit: the harness services depend_on
+# the slot service that only the control-binding overlay provides
+# (compose/slots/t7.yaml). Merged bring-up (base FIRST):
+#   docker compose -f compose/t7.yaml -f plugins/actplane/overlay/t7.yaml up -d
+#   docker compose -f compose/t7.yaml -f plugins/actplane/overlay/t7.yaml --profile sensor up -d tracee
+#
+# The Tracee sensor runs OUTSIDE the deployed topology and IS the
+# ground-truth check for a kernel-interfering control (DESIGN.md 3, 9):
+# bring the topology up FIRST, then the sensor; the run re-checks the
+# sensor health after control provisioning.
+
+name: inspection-t7
+
+services:
+  http-endpoint:
+    build:
+      context: ../targets
+      dockerfile: http-endpoint/Dockerfile
+    image: inspection/http-endpoint
+    container_name: t7-http-endpoint
+    networks: [t7net]
+    volumes:
+      - target-logs:/var/log/targets
+    restart: unless-stopped
+
+  net-peer:
+    build:
+      context: ../targets
+      dockerfile: net-peer/Dockerfile
+    image: inspection/net-peer
+    container_name: t7-net-peer
+    networks: [t7net]
+    volumes:
+      - target-logs:/var/log/targets
+    restart: unless-stopped
+
+  tracee:
+    build:
+      context: ../sensor
+      dockerfile: Dockerfile.tracee
+    image: inspection/tracee
+    container_name: t7-tracee
+    privileged: true
+    pid: host
+    cgroup: host
+    volumes:
+      - /etc/os-release:/etc/os-release-host:ro
+      - /var/run:/var/run:ro
+      - tracee-data:/tmp/tracee
+    profiles: [sensor]
+    restart: unless-stopped
+
+  openclaw:
+    build:
+      context: ..
+      dockerfile: harnesses/openclaw/Dockerfile
+    image: inspection/openclaw
+    container_name: t7-openclaw
+    networks: [t7net]
+    ports:
+      - "127.0.0.1:28790:18789"
+    environment:
+      TARGET_LOG_DIR: /var/log/targets
+      REPLAY_LOG_DIR: /workspace/replay
+    volumes:
+      - target-logs:/var/log/targets
+      - ${GUARDSCOPE_STAGING_DIR:-../runs}/openclaw:/workspace/replay
+      - ../harnesses/openclaw/config/openclaw-t4.json:/opt/inspection-replay/openclaw-t4.json:ro
+    depends_on: [kernel-control]
+    restart: unless-stopped
+
+  pi:
+    build:
+      context: ..
+      dockerfile: harnesses/pi/Dockerfile
+    image: inspection/pi
+    container_name: t7-pi
+    networks: [t7net]
+    environment:
+      TARGET_LOG_DIR: /var/log/targets
+      REPLAY_LOG_DIR: /workspace/replay
+    volumes:
+      - target-logs:/var/log/targets
+      - ${GUARDSCOPE_STAGING_DIR:-../runs}/pi:/workspace/replay
+      - ../harnesses/pi/config/mcp.json:/root/.pi/agent/mcp.json:ro
+    depends_on: [kernel-control]
+    restart: unless-stopped
+
+networks:
+  t7net: {}
+
+volumes:
+  target-logs: {}
+  tracee-data: {}

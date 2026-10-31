@@ -5,7 +5,12 @@
   "description": "The identity/capabilities block shipped inside a plugin package (DESIGN.md 4 'Stamps and versioning'; DESIGN.md 11 'Plugin manifest'). Claims are immutable per version; declaring is not the same as conforming (conformance verdicts live in the registry, not here).",
   "$comment": "DESIGN.md 3 (describe() content), 4, 11. The $id host is a placeholder (DESIGN.md 'Open questions'). Fields are grouped per kind; framework/contracts.py enforces which fields each kind must carry. 'positions' declares the N enforcement-point positions of a multi-position product (DESIGN.md 3 'Multi-position products'); 'hostable_enforcement_points' is the harness-adapter field for T4/T6-style enforcement the harness can host (DESIGN.md 3, 7).",
   "type": "object",
-  "required": ["schema", "id", "version", "kind"],
+  "required": [
+    "schema",
+    "id",
+    "version",
+    "kind"
+  ],
   "additionalProperties": false,
   "properties": {
     "schema": {
@@ -16,17 +21,33 @@
       "type": "string",
       "pattern": "^[a-z0-9][a-z0-9-]*$"
     },
-    "version": {"type": "string", "minLength": 1},
+    "version": {
+      "type": "string",
+      "minLength": 1
+    },
     "kind": {
       "$comment": "DESIGN.md 2: the three plugin kinds that carry capability manifests. Renderers and workload-adjacent packs use their own blocks; workloads have no enforcement points (DESIGN.md 8).",
-      "enum": ["control", "harness-adapter", "workload"]
+      "enum": [
+        "control",
+        "harness-adapter",
+        "workload"
+      ]
     },
     "slot_kinds": {
       "$comment": "DESIGN.md 3 provision(slot): slot kinds supported.",
       "type": "array",
       "minItems": 1,
       "uniqueItems": true,
-      "items": {"enum": ["container", "attached_process", "log_ingest", "embedded"]}
+      "items": {
+        "enum": [
+          "container",
+          "attached_process",
+          "log_ingest",
+          "embedded",
+          "kernel"
+        ],
+        "$comment": "DESIGN.md 3 provision(slot): slot kinds supported. 'kernel' (added 0.2.0 with the T7 fixture): the control enforces from the host kernel (privileged, host pid namespace); a control binding a kernel slot must declare kernel_interference (DESIGN.md 3 'eBPF-enforcing controls')."
+      }
     },
     "positions": {
       "$comment": "DESIGN.md 3 'Multi-position products': one plugin per deployed artifact, N declared positions bound to slots by fixtures. Each position lists the designs it can occupy.",
@@ -34,23 +55,44 @@
       "minItems": 1,
       "items": {
         "type": "object",
-        "required": ["id"],
+        "required": [
+          "id"
+        ],
         "additionalProperties": false,
         "properties": {
-          "id": {"type": "string", "minLength": 1},
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
           "designs": {
             "type": "array",
             "minItems": 1,
             "uniqueItems": true,
-            "items": {"enum": ["t0", "t1", "t2", "t3", "t4", "t5", "t6", "t7"]}
+            "items": {
+              "enum": [
+                "t0",
+                "t1",
+                "t2",
+                "t3",
+                "t4",
+                "t5",
+                "t6",
+                "t7"
+              ]
+            }
           },
-          "note": {"type": "string"}
+          "note": {
+            "type": "string"
+          }
         }
       }
     },
     "record_source": {
       "$comment": "DESIGN.md 3 describe(): native | ingested; ingested means the shim case with mandatory raw_ref provenance (DESIGN.md 3 'Shims are not a separate tier').",
-      "enum": ["native", "ingested"]
+      "enum": [
+        "native",
+        "ingested"
+      ]
     },
     "observable_action_classes": {
       "$comment": "DESIGN.md 3 describe(): the action classes this control can observe (the six-class core taxonomy, DESIGN.md 2).",
@@ -69,7 +111,10 @@
     },
     "can_enforce": {
       "$comment": "DESIGN.md 3 describe(): an observe-only control can never produce 'prevented'.",
-      "enum": ["enforce", "observe"]
+      "enum": [
+        "enforce",
+        "observe"
+      ]
     },
     "emitted_schema_versions": {
       "$comment": "DESIGN.md 4 and 11: which record schema versions the plugin emits; the run manifest records which format versions were used for everything in the run.",
@@ -77,13 +122,19 @@
       "minItems": 1,
       "uniqueItems": true,
       "items": {
-        "enum": ["decision-record/1", "dispatch-record/1"]
+        "enum": [
+          "decision-record/1",
+          "dispatch-record/1"
+        ]
       }
     },
     "correlation": {
       "$comment": "DESIGN.md 3 describe() and 5: capability claims (echoes_meta, echoes_header), verified by the fidelity check, never trusted.",
       "type": "object",
-      "required": ["echoes_meta", "echoes_header"],
+      "required": [
+        "echoes_meta",
+        "echoes_header"
+      ],
       "additionalProperties": false,
       "properties": {
         "echoes_meta": {
@@ -101,18 +152,64 @@
       "type": "array",
       "minItems": 1,
       "uniqueItems": true,
-      "items": {"enum": ["t0", "t1", "t2", "t3", "t4", "t5", "t6", "t7"]}
+      "items": {
+        "enum": [
+          "t0",
+          "t1",
+          "t2",
+          "t3",
+          "t4",
+          "t5",
+          "t6",
+          "t7"
+        ]
+      }
     },
     "hostable_enforcement_points": {
       "$comment": "DESIGN.md 3 (harness describe()) and 7 (T4/T6): the enforcement points the harness can host intrinsically. control:null with t4/t6 requires a non-empty declaration here.",
       "type": "array",
       "minItems": 1,
       "uniqueItems": true,
-      "items": {"type": "string", "minLength": 1}
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
     },
     "notes": {
       "$comment": "Free-text factual notes (e.g. the mock harness's reduced contract form, DESIGN.md 3).",
       "type": "string"
+    },
+    "kernel_interference": {
+      "$comment": "DESIGN.md 3: eBPF-enforcing controls must declare kernel interference (their enforcement shares the kernel with the sensor) and pass pre-/post-provision sensor checks. Declaring is a claim about hook surface; the sensor checks are run-level.",
+      "type": "object",
+      "required": [
+        "declared",
+        "mechanism",
+        "sensor_impact"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "declared": {
+          "const": true
+        },
+        "mechanism": {
+          "type": "string",
+          "minLength": 1,
+          "$comment": "e.g. 'eBPF tracepoints + BPF-LSM'"
+        },
+        "sensor_impact": {
+          "type": "string",
+          "minLength": 1,
+          "$comment": "the declared impact on the runner-managed kernel sensor (hook overlap, event suppression, tampering surface)"
+        },
+        "pinned_kernels": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "$comment": "kernel versions/families the control's eBPF is verified to load on (the probe evidence)"
+        }
+      }
     }
   }
 }

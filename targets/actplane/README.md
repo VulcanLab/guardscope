@@ -23,6 +23,16 @@ current 7.0 kernel — consistent with the 7.0 failure above.
 
 ### Fixture requirements discovered
 
+(The requirements below are IMPLEMENTED as of guardscope 0.2.0: the T7
+kernel slot (compose/slots/t7.yaml + compose/t7.yaml), the actplane
+control plugin (plugins/actplane/: manifest with the kernel-interference
+declaration, binding overlay, fixture policy, entrypoint supervisor with
+config-at-load + singleton teardown, and the match-event shim with
+raw_ref provenance). The live EC2 acceptance run is the remaining
+follow-up: boot a 6.17.x host, bring up the merged fixture with the
+sensor, and run the shakedown-then-acceptance pair exactly like the other
+designs.)
+
 1. Pin kernel 6.17.x. Three distinct, source-level verifier failure
    classes block 6.1, 6.8, and 7.0.
 2. Write-sink rules (read/write/unlink/open) cannot be installed as

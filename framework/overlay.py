@@ -215,6 +215,23 @@ def validate_overlay(design: str, overlay_path,
             problems.append(
                 f"slot service {slot.service!r} defines neither image nor "
                 f"build")
+        # kernel slots (DESIGN.md 3 'eBPF-enforcing controls'; slot kind
+        # introduced with the T7 fixture, 0.2.0): the control enforces
+        # from the HOST KERNEL, so the slot service must be privileged and
+        # share the host pid namespace — anything less cannot reach the
+        # kernel enforcement surface, and the violation is a custom-fixture
+        # problem, not a load error
+        if (slot.doc.get("kind") == "kernel"
+                and not svc.get("privileged")):
+            problems.append(
+                f"kernel slot service {slot.service!r} must set "
+                f"privileged: true (host-kernel enforcement surface)")
+        if (slot.doc.get("kind") == "kernel"
+                and svc.get("pid") != "host"):
+            problems.append(
+                f"kernel slot service {slot.service!r} must set pid: host "
+                f"(it watches the harness containers' host-side process "
+                f"trees)")
 
     # (b)/(c) every other service: auxiliary control-* on the slot's
     # network/netns, or a violation

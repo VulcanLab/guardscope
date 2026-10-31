@@ -50,6 +50,9 @@ GATEWAY_SLOT_DESIGNS = frozenset({"t1", "t2", "t3", "t5"})
 # expression of the T4/T6 configurations").
 HARNESS_INTRINSIC_DESIGNS = frozenset({"t4", "t6"})
 # Designs valid with no selected control and no harness enforcement.
+# t7 stays valid with control:null (the kernel observation row, DESIGN.md 7);
+# a control-bound t7 run composes the kernel slot instead (compose/slots/
+# t7.yaml, materialized 0.2.0).
 NO_CONTROL_DESIGNS = frozenset({"t0", "t7"})
 ALL_DESIGNS = tuple(f"t{i}" for i in range(8))
 
@@ -162,8 +165,8 @@ def _design_conflict_reason(design: str, manifest: dict) -> str:
     if design == "t0":
         return "the bare-harness design selects no control"
     if design == "t7":
-        return "kernel-level enforcement is not a control placement " \
-               "(t7 is the observation row)"
+        return "kernel-level enforcement is the t7 placement (DESIGN.md 7: \
+a kernel slot, materialized 0.2.0); this control does not declare it"
     if design in HARNESS_INTRINSIC_DESIGNS and supported <= GATEWAY_SLOT_DESIGNS:
         return "requires harness-intrinsic enforcement; this control " \
                "occupies gateway slots"
@@ -370,8 +373,10 @@ def resolve(experiment: ResolvedExperiment) -> Plan:
             # structure makes this run a custom fixture (grid placement
             # only; full measurement fidelity either way)
             off_matrix=experiment.off_matrix or bool(problems),
-            # t7: the kernel-level observation row (DESIGN.md 7)
-            observation_only=(design == "t7"),
+            # t7: the kernel-level observation ROW is the control:null
+            # expression (DESIGN.md 7); a control-bound t7 run is a kernel
+            # placement (compose/slots/t7.yaml), measured like any slot
+            observation_only=(design == "t7" and experiment.control is None),
             overlay=overlay,
             overlay_problems=problems,
         ))

@@ -311,7 +311,7 @@ def test_compose_staging_mount_uses_the_env_everywhere():
     relative default, an operator-exported absolute path moves staging into
     the experiments workdir."""
     compose_files = sorted((ROOT / "compose").glob("*.yaml"))
-    assert len(compose_files) == 11
+    assert len(compose_files) == 12
     for f in compose_files:
         doc = yaml.safe_load(f.read_text())
         mounts = []
