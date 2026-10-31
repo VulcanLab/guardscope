@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # M0 environment probe for the inspection-coverage testbed.
 # Run on the Linux server that will host the T0-T7 testbed.
-# Usage:  bash probe-server.sh          (plain report)
-#         bash probe-server.sh --json   (machine-readable report)
+# Usage:  bash check-server.sh          (plain report)
+#         bash check-server.sh --json   (machine-readable report)
 set -uo pipefail
 
 JSON=0

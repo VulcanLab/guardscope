@@ -20,7 +20,7 @@
 # Kernel pin (probe 2026-10-31, targets/actplane/README.md): the exemplar
 # control's engine loads on 6.17.x and fails on 6.8 / 7.0 / <6.2 — grid
 # hosts run 6.17.x and the kernel joins the comparability keys; the env
-# probe (env/probe-server.sh) checks the family.
+# check (env/check-server.sh) checks the family.
 #
 # A base alone is not a validatable unit: the harness services depend_on
 # the slot service that only the control-binding overlay provides

@@ -25,7 +25,7 @@ at what latency and fidelity cost.
 Check a host quickly with the environment probe:
 
 ```sh
-bash env/probe-server.sh
+bash env/check-server.sh
 ```
 
 It reports pass/warn/fail for kernel, BTF, Docker, compose, cgroup v2,

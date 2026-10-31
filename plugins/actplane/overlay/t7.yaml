@@ -19,7 +19,7 @@
 #
 # Kernel facts (probe 2026-10-31, targets/actplane/README.md): the pinned
 # engine loads on 6.17.x and fails on 6.8/7.0/<6.2 — the grid host pins the
-# kernel, and the env probe checks it (env/probe-server.sh).
+# kernel, and the env check verifies it (env/check-server.sh).
 services:
   kernel-control:
     build:

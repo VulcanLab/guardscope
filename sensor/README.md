@@ -8,7 +8,7 @@ from the agent per main.tex assumptions).
 Pinned in `../env/versions.env` (`TRACEE_IMAGE` / `TRACEE_TAG`, currently
 `aquasec/tracee:latest`, observed version v0.24.1 on the original local host). Requires
 Linux >= 5.8 with BTF (`/sys/kernel/btf/vmlinux`), which
-`../env/probe-server.sh` verifies.
+`../env/check-server.sh` verifies.
 
 NOTE: `aquasec/tracee:0.20.0` FAILS on the original local host's kernel (7.1.6 Asahi,
 aarch64): `libbpf: prog 'tracepoint__sched__sched_process_exec': failed to

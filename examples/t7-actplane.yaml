@@ -2,7 +2,7 @@
 # coverage column (0.2.0). The harness runs in its t0 configuration; the
 # control enforces from the host kernel (a kernel slot, compose/slots/
 # t7.yaml). Kernel pin: 6.17.x (probe 2026-10-31; the engine fails on
-# 6.8/7.0/<6.2 — env/probe-server.sh checks the family). Run on a host
+# 6.8/7.0/<6.2 — env/check-server.sh checks the family). Run on a host
 # with kernel privileges; without them, --no-sensor labels the outputs
 # self-reported.
 schema: 1
