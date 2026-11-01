@@ -21,9 +21,18 @@ FROM rust:1-slim
 # fetches the pinned source; the runtime needs none of them (CO-RE eBPF is
 # embedded in the binaries).
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      ca-certificates git make libelf-dev zlib1g-dev pkg-config \
-      python3 docker-cli procps \
+      ca-certificates gnupg wget curl git make libelf-dev zlib1g-dev \
+      pkg-config python3 docker-cli procps \
     && rm -rf /var/lib/apt/lists/*
+# Pin clang-18 (the toolchain the 2026-10-31 probe verified live on 6.17:
+# its codegen produces an object whose every program loads, including the
+# exec_tp_update_prefix the 1M-insn verifiers reject from other builds —
+# the committed prebuilt object AND trixie's clang both fail there).
+# The LLVM apt repo pins the exact version on any Debian base.
+RUN wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | gpg --dearmor > /etc/apt/trusted.gpg.d/llvm.gpg \
+    && echo "deb http://apt.llvm.org/trixie/ llvm-toolchain-trixie-18 main" > /etc/apt/sources.list.d/llvm.list \
+    && apt-get update && apt-get install -y --no-install-recommends clang-18 \
+    && rm -rf /var/lib/apt/lists/* && clang-18 --version | head -1
 # python3: the match-event shim (plugins/actplane/shim) runs in-container.
 # docker.io: the CLI only (the daemon is unused; the supervisor talks to
 #   the HOST daemon over the mounted /var/run/docker.sock to find the
@@ -41,22 +50,13 @@ RUN git clone --recurse-submodules --depth 1 \
 # The CLI from the checkout (one source of truth with the loader).
 RUN cd /src/ActPlane && cargo install --path crates/actplane-cli --root /usr/local
 
-# The config-at-load loader (bpf/process) is a C application (libbpf
-# skeleton). Its BPF object is the COMMITTED PREBUILT engine object
-# (bpf/prebuilt/process.bpf.o — the exact binary the 2026-10-31 probe
-# verified live on 6.17), NOT a fresh clang compile: trixie's clang
-# produces an exec_tp_update_prefix that fails the 6.17 verifier with
-# E2BIG (observed live; the probe's host clang-18 build passed — BPF
-# codegen size is clang-version-sensitive). The build order matters:
-# libbpf + bpftool first, THEN inject the prebuilt .o (touch it newest) so
-# make skips the clang step and generates the skeleton from the pinned
-# object.
-RUN cd /src/ActPlane/bpf && \
-    make "$(pwd)/.output/libbpf.a" && \
-    make "$(pwd)/.output/bpftool/bootstrap/bpftool" && \
-    cp prebuilt/process.bpf.o .output/process.bpf.o && \
-    touch .output/process.bpf.o && \
-    make process && \
+# The config-at-load loader (bpf/process): the CI-identical `make -C bpf`
+# (libbpf + bpftool submodules, the BPF object compiled by the PINNED
+# clang-18 — the exact toolchain the probe's e2e 12+8 passed with on
+# 6.17; the libbpf skeleton loads EVERY program in the object, so the
+# object must be one that verifies whole — the CLI's aya loader is
+# selective, which is why actplane run worked while the skeleton did not).
+RUN cd /src/ActPlane/bpf && CLANG=clang-18 make process && \
     cp process /usr/local/bin/actplane-process
 
 # The control supervisor invokes the loader at /opt/actplane/process.
