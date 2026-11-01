@@ -327,6 +327,15 @@ def compute(spec: dict, decisions: list[dict], parse_problems: list[str],
     # paths exact (the trace's declared targets), spawns by binary basename
     # (the event's comm), connects by port (the event's numeric endpoint).
     if design == "t7":
+        # The t7 fixture pins the target containers' addresses
+        # (compose/t7.yaml): the kernel connect events carry the numeric
+        # IP without a port, so direct_network joins resolve the action's
+        # hostname to the fixture address. Docker's embedded resolver
+        # (127.0.0.11) is measurement plumbing.
+        T7_ADDRS = {"net-peer": "172.28.0.10",
+                    "http-endpoint": "172.28.0.11"}
+        T7_INFRA_ENDPOINTS = {"127.0.0.11"}
+
         def _kernel_match(a: dict, e: dict) -> bool:
             cls, tgt = a["class"], a.get("target") or ""
             # the credential actions carry the file:// scheme prefix
@@ -339,12 +348,23 @@ def compute(spec: dict, decisions: list[dict], parse_problems: list[str],
             if cls == "process_spawn":
                 return os.path.basename(tgt) == (e.get("tool_name") or "")
             if cls == "direct_network":
-                port = tgt.rsplit(":", 1)[-1]
-                return tv.endswith(":" + port)
+                host = tgt.rsplit(":", 1)[0]
+                return (T7_ADDRS.get(host) == tv) or (
+                    tgt.rsplit(":", 1)[-1] and tv == tgt)
+            if cls == "http_tool_call":
+                # the http tool calls' kernel-side connects (expected
+                # extras): resolve the URL's host to the fixture address
+                host = (a.get("target") or "").split("//")[-1]                           .rsplit(":", 1)[0]
+                return T7_ADDRS.get(host) == tv
+            if cls == "stdio_tool_call":
+                # a stdio tool call's file effect (e.g. a001's write_file):
+                # the kernel event's path equals the action's args.path
+                return (a.get("args") or {}).get("path") == tv
             return False
 
         by_action = {}
         expected_extras = []
+        infra = []
         unaccounted = []
         for e in in_scope:
             hits = [a for a in spec["actions"]
@@ -362,6 +382,13 @@ def compute(spec: dict, decisions: list[dict], parse_problems: list[str],
                      "ts": e.get("timestamp"),
                      "target": e.get("target_value")})
                 continue
+            if (e.get("target_value") in T7_INFRA_ENDPOINTS
+                    and e.get("action_class") == "direct_network"):
+                infra.append({"tool_name": e.get("tool_name"),
+                              "ts": e.get("timestamp"),
+                              "target": e.get("target_value"),
+                              "note": "docker embedded DNS"})
+                continue
             unaccounted.append({"tool_name": e.get("tool_name"),
                                  "ts": e.get("timestamp"),
                                  "target": e.get("target_value")})
@@ -369,7 +396,7 @@ def compute(spec: dict, decisions: list[dict], parse_problems: list[str],
         check("C2-accounted", not unaccounted,
               f"{len(in_scope)} in-window kernel decisions, all mapped to "
               f"spec actions ({len(expected_extras)} expected-extras, "
-              f"effects of non-inspected actions)"
+              f"effects of non-inspected actions; {len(infra)} infra)"
               if not unaccounted else
               f"{len(unaccounted)} in-window kernel decision(s) map to no "
               f"declared action instance: {unaccounted}")
