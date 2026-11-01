@@ -1158,16 +1158,31 @@ class Reconciler:
 
     # -- effective counts (R5) ------------------------------------------------
 
+    def _kernel_denied_ids(self) -> set:
+        """t7: the instance-level kernel denials — prevented-class actions
+        whose replay status is error (the engine SIGKILLed the exec'd
+        child; C6 verifies the absence of effect). Class-level designs
+        (t2/t3 egress) return the prevented class's instances only when
+        they actually failed."""
+        if self.design != "t7":
+            return set()
+        return {a["id"] for a in self.actions
+                if a["class"] in self.prevented
+                and self._replay_status.get(a["id"]) == "error"}
+
     def effective_counts(self, per_class: dict) -> dict:
         eff = {}
+        denied = self._kernel_denied_ids()
         for cls in SIX_CLASSES:
             actions = self.by_class[cls]
             if cls in PER_ACTION_CLASSES:
-                eff[cls] = sum(1 for ok, a in zip(per_class[cls]["supported"], actions) if ok)
+                eff[cls] = sum(1 for ok, a in zip(per_class[cls]["supported"], actions)
+                               if ok and a["id"] not in denied)
             elif self.target_logs:
                 # pooled transports: per-action evidence comes from the
                 # served layer (kernel observations are multiplexed)
-                eff[cls] = sum(1 for a in actions if self._served_per_action.get(a["id"]))
+                eff[cls] = sum(1 for a in actions
+                               if self._served_per_action.get(a["id"]))
             else:
                 eff[cls] = len(actions) if not per_class[cls]["problems"] else 0
         return eff
@@ -1199,7 +1214,14 @@ class Reconciler:
                 denied_by_class[a["class"]] = denied_by_class.get(a["class"], 0) + 1
         expected = dict(spec_counts)
         for c in self.prevented:
-            expected[c] = 0
+            if self.design == "t7":
+                # instance-level: subtract the kernel-denied instances; the
+                # allowed twins of the class DO take effect
+                killed = sum(1 for a in self.by_class[c]
+                             if self._replay_status.get(a["id"]) == "error")
+                expected[c] = max(0, spec_counts[c] - killed)
+            else:
+                expected[c] = 0
         for c, n in denied_by_class.items():
             expected[c] = max(0, expected[c] - n)
         r5 = effective == expected
