@@ -82,7 +82,8 @@ def collect(runs_dir: Path) -> dict[str, dict[str, dict[str, float]]]:
             continue
         record = json.loads(f.read_text())
         if (record.get("design") or "t0") not in SIX_CLASSES and \
-                record.get("design") not in ("t0", "t1", "t2", "t3", "t4", "t5", "t6"):
+                record.get("design") not in ("t0", "t1", "t2", "t3", "t4", "t5",
+                                          "t6", "t7"):
             continue
         durs = _durations_ms(d)
         if durs is None:
@@ -114,7 +115,7 @@ def overheads(data: dict[str, dict[str, dict[str, float]]]) -> dict:
             continue
         base = median_map(data["t0"][harness])
         per_design = {}
-        for design in ("t0", "t1", "t2", "t3", "t4", "t5", "t6"):
+        for design in ("t0", "t1", "t2", "t3", "t4", "t5", "t6", "t7"):
             if design not in data or harness not in data[design]:
                 continue
             runs = data[design][harness]

@@ -53,6 +53,10 @@ PREVENTED_CLASSES = {
     "t4": set(),
     "t5": set(),
     "t6": set(),
+    # t7 (0.2.0): the fixture policy's kill arm — secret reads are denied at
+    # the kernel (deny record + verified kernel absence = prevented, C6);
+    # every other mediated class is notified (checked), not prevented
+    "t7": {"credential_access"},
 }
 
 # tool_name -> (method, path). Mirrors targets/mcp-http/server.py TOOL_ROUTES
@@ -83,6 +87,12 @@ INSPECTED_CLASSES = {
     # t6: in-process policy engine — same placement as t4, so the same
     # inspected set; the decisions carry argument-level rule matches
     "t6": {"http_tool_call", "stdio_tool_call"},
+    # t7 (0.2.0): the kernel position mediates the EFFECT classes — exec,
+    # write, connect, and the seeded secret reads — at syscall granularity
+    # (no tool/session identity; the tool-call classes are invisible at
+    # their own level and appear only as kernel-level expected-extras)
+    "t7": {"process_spawn", "file_write", "direct_network",
+           "credential_access"},
     "t0": set(),  # bare harness: no enforcement point at all
 }
 
