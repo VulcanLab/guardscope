@@ -11,18 +11,25 @@
 #       process_spawn  a031/a032  (exec)
 #       file_write     a041/a042  (write/unlink)
 #       direct_network a021/a022  (connect, numeric IPv4 endpoints)
-#   - KILL on the credential reads (a051/a052, file:///run/secrets/**): the
-#     kernel-deny arm of the fixture. This is the T7 analogue of a014's
-#     checked-DENY role in T6 — an argument-level constraint is NOT
-#     expressible at the kernel (no payload visibility, DESIGN.md 1), so
-#     the deny boundary is a kernel-observable feature: the secret path.
-#     Every secret read becomes `prevented` (deny record + verified kernel
-#     absence, C6) — the kernel position's prevention measurement.
-#   - Reads of non-secret paths are deliberately NOT notified: they carry
-#     no canonical action class (the six-class taxonomy has no generic
-#     file-read class; tool-caused reads are expected-extras in the
-#     reconcile profiles), and a record without an action class cannot be
-#     accounted. Their mediation happens at the kernel by construction.
+#   - NOTIFY on the secret reads (a051/a052, file:///run/secrets/**):
+#     checked at the kernel (the open of the secret path is a
+#     kernel-observable feature), allowed by the fixture policy.
+#   - KILL on the a032 spawn (exec /bin/echo): the kernel-deny arm of the
+#     fixture — the T7 analogue of a014's checked-DENY role in T6 (an
+#     argument-level constraint is NOT expressible at the kernel, so the
+#     deny boundary is a kernel-observable feature: the spawned binary).
+#     Denying a SPAWN kills only the short-lived child, so the replay
+#     survives; denying the in-process secret reads would SIGKILL the
+#     trace executor itself and abort the measurement run (observed live
+#     2026-11-01: the libuv worker carrying the replay died at a051).
+#     a032 becomes `prevented` (deny record + verified kernel absence of
+#     the spawn's effect, C6) — the kernel position's prevention arm.
+#   - Opens/reads of non-secret paths are deliberately NOT notified: they
+#     carry no canonical action class (the six-class taxonomy has no
+#     generic file-read class; tool-caused reads are expected-extras in
+#     the reconcile profiles), and a record without an action class
+#     cannot be accounted. Their mediation happens at the kernel by
+#     construction.
 #
 # Scope: the engine is seeded to the harness container's process tree (the
 # loader's --seed-pid), so these patterns label only the measured agent
@@ -38,6 +45,14 @@ policy: |
   rule t7-notify-exec:
     notify exec "**" if AGENT
     because "T7 coverage: one record per mediated exec (process_spawn)"
+
+  rule t7-kill-echo:
+    kill exec "/bin/echo" if AGENT
+    because "T7 prevention arm: the a032 spawn is denied at the kernel (deny + verified absence = prevented, C6); kills only the short-lived child, so the replay survives"
+
+  rule t7-notify-secret-open:
+    notify open file "/run/secrets/**" if AGENT
+    because "T7 coverage: the secret reads are checked at the kernel (a051/a052)"
 
   rule t7-notify-write:
     notify write file "/**" if AGENT
