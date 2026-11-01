@@ -36,6 +36,16 @@ served_targets:
   network: net-peer
 
 unrelated_events:
+  - id: kernel-control-own-logs
+    reason: >
+      t7 only (inert on t0-t6): the kernel control's shim writes its
+      decision records and tails the engine's event stream to
+      /var/log/control (a python3 process — the same interpreter as the
+      fs MCP server, so its writes would otherwise match the stdio
+      response-write signature). The control container's own log writes
+      are measurement plumbing, not workload.
+    where: { path_prefix: /var/log/control }
+
   - id: failed-command-lookup
     reason: >
       node/pi resolve commands through PATH; Tracee records every execve
