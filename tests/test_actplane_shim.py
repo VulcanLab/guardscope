@@ -187,7 +187,8 @@ def test_fixture_policy_wellformed_with_expected_rules():
     assert "notify write file" in body
     assert "notify unlink file" in body
     assert "notify connect endpoint" in body
-    assert "kill read file \"/run/secrets/**\"" in body
+    assert "kill read file" not in body          # v2: reads are notified
+    assert "kill exec \"/bin/echo\"" in body        # v2: the deny arm
 
 
 def test_manifest_declares_kernel_interference():

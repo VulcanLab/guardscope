@@ -53,10 +53,12 @@ PREVENTED_CLASSES = {
     "t4": set(),
     "t5": set(),
     "t6": set(),
-    # t7 (0.2.0): the fixture policy's kill arm — secret reads are denied at
-    # the kernel (deny record + verified kernel absence = prevented, C6);
-    # every other mediated class is notified (checked), not prevented
-    "t7": {"credential_access"},
+    # t7 (0.2.0): the fixture policy's kill arm denies the a032 spawn
+    # (exec /bin/echo) at the kernel — deny record + verified kernel
+    # absence = prevented (C6); every other mediated class is notified
+    # (checked). The runner tolerates a failed replay action whose class
+    # is here (same mechanism as the t2/t3 egress-jail failures).
+    "t7": {"process_spawn"},
 }
 
 # tool_name -> (method, path). Mirrors targets/mcp-http/server.py TOOL_ROUTES

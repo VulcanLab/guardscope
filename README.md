@@ -1,9 +1,88 @@
 # guardscope
 
-guardscope is a measurement framework for runtime controls in LLM-agent
-systems: it measures how much of an agent's action surface an inspection
-layer (gateway, policy engine, sandbox) actually sees and decides on, and
-at what latency and fidelity cost.
+## What guardscope does
+
+guardscope measures how much of an LLM agent's action surface a runtime
+control (an agent gateway, a guardrail engine, an in-process policy
+engine, a kernel monitor) actually inspects. A control can only
+evaluate the actions that cross the point where it is placed, but an
+agent can act through far more paths than the tool-call channel:
+subprocesses, direct network egress, local tool servers, sub-agents,
+scheduled tasks. guardscope makes this measurable: it runs a fixed
+workload on a controlled deployment, records what the control claims to
+have seen, verifies those claims against what the host kernel observed,
+and reports which actions were checked, which were bypassed, and which
+were prevented. The output is a coverage grid you can re-run, compare,
+and cite, not a vendor claim.
+
+### Who it is for
+
+- **You develop a runtime control** (a gateway, a policy engine, a
+  sandbox): find out which of the 15 paths your product actually
+  inspects in a real deployment. The result is a kernel-verified
+  coverage column you can publish as a registry verdict instead of a
+  self-attested claim.
+- **You operate agent infrastructure** (platform, security, or
+  compliance): compare candidate controls on the same fixed workload
+  and fixtures and see, per topology design, which paths each
+  placement checks and which it leaves uncovered, before committing to
+  a deployment.
+- **You build an agent harness**: the harness's own permission chain is
+  a measured component; measure what
+  it actually covers.
+
+The concrete tooling for each role is in "The three user types" below.
+
+### How a measurement works
+
+Every run follows the same procedure:
+
+1. A fixed reference workload, shipped with the framework and identical
+   across all runs, drives a real agent harness by deterministic
+   replay injection (no LLM in the loop), exercising all 15 action
+   paths listed below.
+2. The harness runs on a fixture topology that realizes one topology
+   design: where the enforcement point sits relative to the harness and
+   the host kernel. The repo ships fixtures for the eight designs
+   T0-T7, from a bare harness with no control (T0), through gateways
+   in front of the harness (T1-T3, T5), harness-native permission
+   chains (T4) and in-process policy engines (T6), to kernel-level
+   enforcement (T7); see `docs/DESIGN.md` for the design set.
+3. Every enforcement point in the topology emits decision records per
+   the control contract. Records are claims, not facts.
+4. An eBPF kernel sensor (Tracee) observes what actually happened on
+   the host, regardless of what any component reports. This kernel
+   observation is the ground truth of every run.
+5. A reconciler compares the claims against the kernel observation and
+   classifies each action instance as `checked`, `bypassed`, or
+   `prevented`.
+6. The run emits a path x design coverage grid in which every cell
+   carries an evidence class, plus a dated run manifest that records
+   the hashes of everything that ran, so a third party can re-run the
+   same measurement and compare.
+
+### The 15 action paths
+
+The reference workload exercises the complete set of 15 paths that an
+agent harness can use to produce an external effect:
+
+| Family | Path | Description |
+|---|---|---|
+| In-process | P1 In-process tool execution | The harness executes a function tool inside the harness process with a purely in-memory effect that never affects the external world (e.g., SDK `@function_tool` implementations). |
+| | P2 Direct-origin operations | The harness's in-process tool issues direct OS operations, file or socket (e.g., Claude Code Read/Write/Edit). |
+| Spawned processes | P3 Subprocess execution | The harness launches a subprocess (shell, interpreter, or executable). |
+| | P12 Background processes | A dispatched process continues running or resumes after the invocation returns (`nohup`, `setsid`, shell background jobs), without a new dispatch-time check for its later operations. |
+| Network egress | P4 Direct network egress | The harness or a subprocess opens a connection that is not a tool-server call (`curl`, cloud SDK, raw socket). |
+| | P5 Local-intermediary routing | Agent code contacts a local intermediary (loopback HTTP helper, Unix-socket database) that acts locally or relays onward. |
+| Remote tool-server call | P6 HTTP tool-server call | The harness sends a tool request over HTTP through a gateway (e.g., Streamable-HTTP MCP). |
+| Local-transport tool-server call | P7 Stdio tool-server call | The harness talks the tool protocol to a child tool server over stdin/stdout pipes (e.g., stdio MCP servers). |
+| | P8 Local-IPC tool-server call | The same invocation over another local transport (Unix-domain socket, named pipe). |
+| Nested tool-server call | P9 Wrapped invocation | An in-process tool's implementation itself invokes a tool server over HTTP or a local transport. |
+| Delegation | P10 Agent delegation | The harness delegates to a sub-agent that shares its dispatcher or uses an independent dispatch, either locally or remotely. |
+| Deferred execution | P11 Daemon/scheduler submission | The harness submits a task to a daemon, scheduler, or container runtime (crontab, systemd unit, `docker.sock`). |
+| Non-dispatch channels | P13 Dispatch-free output consumption | The harness consumes model output and produces file, process, or network effects without a corresponding tool-dispatch authorization for those effects (e.g., Aider's response parsing). |
+| | P14 Non-tool protocol operation | A client-initiated protocol operation other than a tool call (e.g., MCP `resources/read`, `prompts/get`) crosses a transport also used for tool calls. |
+| | P15 Reverse protocol interaction | A tool server initiates a request back into the harness (server-initiated sampling, elicitation). |
 
 ## Requirements
 
@@ -78,7 +157,7 @@ Outputs land in the workdir: `runs/<run-id>/` (run outputs, plus the
 execution manifest `runs/<experiment-id>/execution.json`) and
 `cache/compile/` (compiled traces). The first run also pays one-time
 warmup costs: the compose images build on first `up`, and the first run
-per harness compiles the canonical trace into `cache/compile/` (reused
+per harness compiles the reference trace into `cache/compile/` (reused
 afterwards). The repo stays read-only source.
 
 The first run of a design also pays a warmup run: warmup run IDs
