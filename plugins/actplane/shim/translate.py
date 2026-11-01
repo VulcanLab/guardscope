@@ -1,45 +1,47 @@
 #!/usr/bin/env python3
 """ActPlane match-event shim (plugins/actplane/shim/translate.py).
 
-Translates the pinned ActPlane engine's match-event stream (the config-at-
-load loader's stdout on the T7 control service) into decision-record/1
-(DESIGN.md 3 "Shims are not a separate tier": record_source ingested,
-mandatory raw_ref provenance per record).
+Translates the pinned ActPlane config-at-load loader's match-event stream
+(decision-record/1 is emitted by the control supervisor from this) into
+decision-record/1 (DESIGN.md 3 "Shims are not a separate tier":
+record_source ingested, mandatory raw_ref provenance per record).
 
-Event grammar (the 2026-10-31 probe's live capture — KILLED and BLOCKED
-are verbatim samples from results/actplane-probe-20261031/ in the
-wider-control project; the notify header spelling follows the engine's
-event writer and is re-verified at the live acceptance run):
+The loader emits ONE JSON OBJECT PER LINE (verified live 2026-11-01 on the
+T7 acceptance host; samples below are verbatim captures):
 
-    <flag> KILLED: process 'touch' (pid 1089, ppid 1086) — /usr/bin/touch
-       effect: kill
-       reason: probe: kernel-level kill test
-       provenance: pid 1089 exec touch -> label COMMAND
-    <flag> BLOCKED: process 'bash' (pid 8403, ppid 8401) — /usr/bin/touch
-       effect: block
-       ...
-    <flag> NOTIFY: process 'X' (pid N, ppid M) — <path-or-endpoint>
-       effect: notify
-       ...
+    {"timestamp":436729180567,"event":"TAINT_VIOLATION","effect":"kill",
+     "blocked":false,"killed":true,"comm":"cat","pid":5234,"ppid":5228,
+     "op":1,"domain_id":0,"session_root":1213,
+     "target":"/run/secrets/token","rule_id":4,"taint_label":1,
+     "matched_label":1,"matched_labels":1,
+     "provenance":{"label":1,"timestamp_ns":436728691714,"pid":5234,
+                   "op":0,"ip":0,"target":"cat"}}
 
-The `effect:` line is the authoritative decision; the `provenance:` line
-(`pid N <op> <rest>`) completes the block and selects the action class:
+    {"timestamp":436729592475,"event":"TAINT_VIOLATION","effect":"notify",
+     "blocked":false,"killed":false,"comm":"containerd-shim","pid":1213,
+     ...,"op":2,"target":"/proc/self/fd/28","rule_id":1,...}
 
-    exec                     -> process_spawn
-    write | unlink | rename  -> file_write
-    read of /run/secrets/**  -> credential_access
-    connect (numeric IPv4)    -> direct_network
+Field semantics (bpf/taint.h enum taint_op, and the event writer in
+bpf/process.c):
+  effect: kill | notify | block (the emit-time decision of the rule)
+  op:  0 TOP_EXEC    -> process_spawn
+       1 TOP_OPEN   -> credential_access under /run/secrets/** only
+                       (the taxonomy has no generic file-read class;
+                       other opens are expected-extras, skipped)
+       2 TOP_WRITE  -> file_write (write/unlink/rename)
+       3 TOP_CONNECT-> direct_network
+  comm: the acting process name (the kernel position has no tool identity;
+        DESIGN.md 1: it identifies actors, not tools)
 
-`tool` carries the acting process name (the kernel position has no tool
-identity; DESIGN.md 1: the least-semantic position identifies actors, not
-tools). Events mapping to no six-class class (non-secret reads, plain
-opens) are SKIPPED with a stderr note: the taxonomy has no class for them
-(they are expected-extras at reconcile time) and a record without an
-action class cannot be accounted (C3). Their mediation still happens at
-the kernel by construction.
+Infrastructure-noise skip rule (a measurement-scope choice of the SHIM,
+recorded here and in the fixture notes): the seeded scope is the harness
+container's SHIM process (docker-exec'd harness processes are its
+children, not the container init's), so the shim's own bookkeeping
+(containerd-shim, runc) appears in the stream. Those events are the
+measurement plumbing, not agent behavior, and are skipped.
 
-Streaming: records are emitted as blocks complete (the control supervisor
-pipes `tail -f` into this process; stdin never EOFs during a run).
+Streaming: records are emitted as event lines arrive (the control
+supervisor pipes `tail -f` into this process; stdin never EOFs mid-run).
 
 Usage:
     translate.py [--stream-id ID] [--run-id ID] [--plugin P]
@@ -57,44 +59,20 @@ import time
 import uuid
 from datetime import datetime, timezone
 
-# --- the event grammar --------------------------------------------------------
-
-_HEADER = re.compile(
-    r"(?:.*?)(?:KILLED|BLOCKED|NOTIFY)\s*:\s*process\s*'(?P<proc>[^']*)'"
-    r"\s*\(pid\s*(?P<pid>\d+),\s*ppid\s*(?P<ppid>\d+)\)\s*[—-]\s*(?P<target>.+)$")
-_EFFECT = re.compile(
-    r"^\s*effect:\s*(?P<effect>kill|block|notify|allow|error)\s*$")
-_REASON = re.compile(r"^\s*reason:\s*(?P<reason>.+)$")
-_PROVENANCE = re.compile(
-    r"^\s*provenance:\s*pid\s*(?P<pid>\d+)\s+"
-    r"(?P<op>exec|read|write|open|unlink|rename|connect|recv)"
-    r"(?:\s+(?P<rest>[^->]*?))?\s*(?:->\s*(?P<label>.+))?$")
-
-EFFECT_TO_DECISION = {
-    "kill": "deny",
-    "block": "deny",
-    "notify": "observe",
-    "allow": "allow",
-    "error": "error",
-}
+TOP_EXEC = 0
+TOP_OPEN = 1
+TOP_WRITE = 2
+TOP_CONNECT = 3
 
 SECRET_PREFIX = "/run/secrets/"
 
-# ActPlane's provenance line carries the vendor's op keyword for file
-# ops ("read file /path", "write file /path") and bare argv/endpoint
-# otherwise ("exec touch", "connect 10.0.2.11:9000"): normalize before
-# classification.
-_FILE_KEYWORD = re.compile(r"^file\s+")
-
-
-def _normalize_rest(op: str, rest: str) -> str:
-    return _FILE_KEYWORD.sub("", rest).strip()
+# measurement plumbing inside the seeded scope (module docstring)
+INFRA_COMM = frozenset({"containerd-shim", "runc"})
 
 _CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 
 
 def _ulid() -> str:
-    """A ULID: 48-bit timestamp + 80-bit randomness, Crockford base32."""
     t = int(time.time() * 1000)
     rand = int.from_bytes(uuid.uuid4().bytes[:10], "big")
     chars = []
@@ -110,119 +88,128 @@ def _now_ms() -> str:
             .strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z")
 
 
-def _classify(op: str, rest: str) -> str | None:
-    if op == "exec":
+def _classify(op: int, target: str) -> str | None:
+    if op == TOP_EXEC:
         return "process_spawn"
-    if op in ("write", "unlink", "rename"):
-        return "file_write"
-    if op == "connect":
-        return "direct_network"
-    if op in ("read", "open"):
-        if (rest or "").startswith(SECRET_PREFIX):
+    if op == TOP_OPEN:
+        if (target or "").startswith(SECRET_PREFIX):
             return "credential_access"
         return None
+    if op == TOP_WRITE:
+        return "file_write"
+    if op == TOP_CONNECT:
+        return "direct_network"
     return None
+
+
+def _decision(effect: str, blocked: bool, killed: bool) -> str:
+    if effect == "kill" and killed:
+        return "deny"
+    if effect == "block" and blocked:
+        return "deny"
+    if effect == "notify":
+        return "observe"
+    if effect == "kill" or effect == "block":
+        # the effect was decided but did not land: the control's own
+        # accounting question — an error-class record, never silently
+        # treated as an allow
+        return "error"
+    return "error"
 
 
 def iter_records(lines, *, stream_id: str, run_id: str, plugin: str,
                  plugin_version: str):
-    """Yield one decision record per parsed match event (streaming:
-    yields as each provenance line completes a block)."""
+    """Yield one decision record per match event (streaming)."""
     seq = 0
-    header = effect = reason = None
-    block_start = 0
     for lineno, raw in enumerate(lines, start=1):
-        line = raw.rstrip("\n")
-        m = _HEADER.match(line)
-        if m:
-            header, effect, reason = m, None, None
-            block_start = lineno
+        raw = raw.strip()
+        if not raw or not raw.startswith("{"):
+            # loader banners and non-JSON lines are never events
             continue
-        m = _EFFECT.match(line)
-        if m:
-            effect = m.group("effect")
+        try:
+            ev = json.loads(raw)
+        except json.JSONDecodeError:
+            print(f"translate: line {lineno}: unparseable event skipped",
+                  file=sys.stderr)
             continue
-        m = _REASON.match(line)
-        if m:
-            reason = m.group("reason").strip()
+        if ev.get("event") != "TAINT_VIOLATION":
             continue
-        m = _PROVENANCE.match(line)
-        if m and header is not None:
-            prov, hdr = m, header
-            eff, rsn = effect, reason
-            header = effect = reason = None
-            op = prov.group("op")
-            rest = _normalize_rest(op, (prov.group("rest") or "").strip())
-            action_class = _classify(op, rest)
-            if action_class is None:
-                print(f"translate: line {lineno}: skipped event "
-                      f"(op={op!r} has no canonical action class; "
-                      f"expected-extra at reconcile)", file=sys.stderr)
-                continue
-            if eff is None:
-                print(f"translate: line {lineno}: skipped event "
-                      f"(block without an effect line)", file=sys.stderr)
-                continue
-            seq += 1
-            target_value = hdr.group("target").strip()
-            digest = hashlib.sha256(
-                f"{hdr.group('pid')}|{op}|{rest}|{target_value}"
-                .encode()).hexdigest()[:16]
-            yield {
-                "schema": 1,
-                "record_id": _ulid(),
-                "run_id": run_id,
-                "stream_id": stream_id,
-                "seq": seq,
-                "ts": _now_ms(),
-                "enforcement_point": {
-                    "slot_id": "kernel-control",
-                    "product": "actplane",
-                    "product_version": plugin_version,
-                },
-                "producer": {
-                    "plugin": plugin,
-                    "plugin_version": plugin_version,
-                    "record_source": "ingested",
-                },
-                "action_class": action_class,
-                # DESIGN.md 4: the kernel position carries no application
-                # protocol (schema enum 'none', added with the T7 fixture)
-                "protocol": "none",
-                # no tool identity below the tool layer: the acting process
-                "tool": hdr.group("proc"),
-                "target": {
-                    "kind": "kernel_path_or_endpoint",
-                    "value": target_value,
-                    "note": f"kernel op={op}",
-                },
-                "parameters_digest": digest,
-                "action_id": None,
-                "attempt": 0,
-                "correlation_transport": "none",
-                "decision": EFFECT_TO_DECISION.get(eff, "error"),
-                "policy": {
-                    "policy_id": "t7-fixture",
-                    "policy_version": "1",
-                    # the deployed policy artifact's hash; the runner
-                    # overwrites this with the manifest hash of the
-                    # enforcement_config it captured for the run
-                    "policy_hash": "t7.ap.yaml#runner-hashed",
-                    "rule_id": rsn,
-                },
-                "evidence": [
-                    # DESIGN.md 3 shims: mandatory raw_ref provenance —
-                    # the source stream line the record was translated from
-                    {"kind": "vendor_event",
-                     "locator": {"source": "actplane-events.log",
-                                 "line": block_start}},
-                ],
-            }
+        op = ev.get("op")
+        target = (ev.get("target") or "").strip()
+        action_class = _classify(op, target)
+        if action_class is None:
+            print(f"translate: line {lineno}: skipped event "
+                  f"(op={op!r} target={target[:40]!r} has no canonical "
+                  f"action class; expected-extra at reconcile)",
+                  file=sys.stderr)
+            continue
+        comm = ev.get("comm") or ""
+        if comm in INFRA_COMM:
+            print(f"translate: line {lineno}: skipped event "
+                  f"(measurement plumbing: comm={comm!r})",
+                  file=sys.stderr)
+            continue
+        seq += 1
+        effect = str(ev.get("effect") or "error")
+        blocked = bool(ev.get("blocked"))
+        killed = bool(ev.get("killed"))
+        digest = hashlib.sha256(
+            f"{ev.get('pid')}|{op}|{target}|{comm}".encode()).hexdigest()[:16]
+        yield {
+            "schema": 1,
+            "record_id": _ulid(),
+            "run_id": run_id,
+            "stream_id": stream_id,
+            "seq": seq,
+            "ts": _now_ms(),
+            "enforcement_point": {
+                "slot_id": "kernel-control",
+                "product": "actplane",
+                "product_version": plugin_version,
+            },
+            "producer": {
+                "plugin": plugin,
+                "plugin_version": plugin_version,
+                "record_source": "ingested",
+            },
+            "action_class": action_class,
+            # DESIGN.md 4: the kernel position carries no application
+            # protocol (schema enum 'none', added with the T7 fixture)
+            "protocol": "none",
+            # no tool identity below the tool layer: the acting process
+            "tool": comm or "unknown",
+            "target": {
+                "kind": "kernel_path_or_endpoint",
+                "value": target,
+                "note": f"kernel op={op} comm={comm}",
+            },
+            "parameters_digest": digest,
+            "action_id": None,
+            "attempt": 0,
+            "correlation_transport": "none",
+            "decision": _decision(effect, blocked, killed),
+            "policy": {
+                "policy_id": "t7-fixture",
+                "policy_version": "1",
+                # the deployed policy artifact's hash; the runner
+                # overwrites this with the manifest hash of the
+                # enforcement_config it captured for the run
+                "policy_hash": "t7.ap.yaml#runner-hashed",
+                "rule_id": f"rule-{ev.get('rule_id')}",
+            },
+            "evidence": [
+                # DESIGN.md 3 shims: mandatory raw_ref provenance — the
+                # source stream line the record was translated from
+                {"kind": "vendor_event",
+                 "locator": {"source": "actplane-events.log",
+                             "line": lineno}},
+            ],
+        }
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(
-        description="Translate ActPlane match events into "
+        description="Translate ActPlane loader events (JSON-lines) into "
                     "decision-record/1 (streaming).")
     ap.add_argument("--stream-id", default="kernel-control")
     ap.add_argument("--run-id", default="unknown-run")

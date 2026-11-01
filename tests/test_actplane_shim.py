@@ -1,27 +1,25 @@
 """ActPlane shim tests (plugins/actplane/shim/translate.py).
 
-The event samples are the 2026-10-31 probe's LIVE capture (KILLED and
-BLOCKED verbatim from results/actplane-probe-20261031/ in the wider-control
-project — the first live T7-class enforcement ever observed in this
-research line); the notify/write/connect samples follow the same grammar
-and are re-verified at the live acceptance run.
+The event samples are VERBATIM captures from the 2026-11-01 live T7
+acceptance session (the loader's JSON event stream on the kernel-control
+service): the kill sample is the first live kernel-level credential-read
+denial through the fixture; the notify sample is the seeded shim's own
+bookkeeping write (the documented infrastructure-noise skip).
 
 Covers:
-  - the event grammar: header/effect/reason/provenance blocks, one record
-    per completed block, banner lines ignored;
-  - the class mapping: exec -> process_spawn, write/unlink/rename ->
-    file_write, connect -> direct_network, secret reads ->
-    credential_access; non-secret reads SKIPPED (no canonical class);
-  - the decision mapping: kill/block -> deny, notify -> observe;
+  - the JSON event grammar: TAINT_VIOLATION objects, banners ignored;
+  - the class mapping (taint.h enum taint_op): 0 exec -> process_spawn,
+    1 open -> credential_access under /run/secrets/** only (other opens
+    skipped: no canonical class), 2 write -> file_write,
+    3 connect -> direct_network;
+  - the decision mapping: effect kill/killed -> deny, block/blocked ->
+    deny, notify -> observe, decided-but-unlanded -> error;
+  - the infrastructure-noise skip (containerd-shim, runc);
   - schema validity: every emitted record validates against
-    decision-record/1 (including the ingested raw_ref evidence and the
-    kernel 'none' protocol);
-  - streaming: records are yielded as blocks complete (a generator, not
-    a batch — the supervisor pipes `tail -f` into it);
-  - the fixture policy's compile story: the DSL the t7 fixture deploys
-    parses under the pinned ActPlane CLI is a LIVE check (no binary on
-    this host); the offline check is the policy file's YAML well-formedness
-    and the expected rule inventory.
+    decision-record/1 (ingested raw_ref evidence; kernel 'none' protocol);
+  - streaming: records are yielded as event lines arrive (a generator —
+    the supervisor pipes `tail -f` into it and stdin never EOFs mid-run);
+  - the fixture policy and the manifest's kernel-interference declaration.
 
 Run from the repo root:  python3 -m pytest tests/test_actplane_shim.py -v
 """
@@ -36,47 +34,68 @@ import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
 SPEC = importlib.util.spec_from_file_location(
     "actplane_shim", ROOT / "plugins" / "actplane" / "shim" / "translate.py")
 shim = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(shim)
 
 SCHEMA = json.loads((ROOT / "framework" / "schemas" / "decision-record"
-        / "1.schema.json").read_text())
+                     / "1.schema.json").read_text())
 
-# The probe's verbatim kill sample (kill-prebuilt.log, 2026-10-31):
-KILL_BLOCK = [
-    "ActPlane: running pid 8410 under COMMAND label 0x1; feedback /run/f.txt",
-    "🚫 KILLED: process 'touch' (pid 8412, ppid 8410) — /usr/bin/touch",
-    "   effect: kill",
-    "   reason: T7 prevention arm: credential reads are denied at the kernel",
-    "   provenance: pid 8412 read file /run/secrets/token -> label AGENT",
-]
-# The probe's verbatim block sample (block.log, 2026-10-31):
-BLOCK_BLOCK = [
-    "🚫 BLOCKED: process 'bash' (pid 8403, ppid 8401) — /usr/bin/touch",
-    "   effect: block",
-    "   reason: probe: BPF-LSM pre-commit block test",
-    "   provenance: pid 8401 exec bash -> label COMMAND",
-]
-NOTIFY_WRITE = [
-    "⚠ NOTIFY: process 'tee' (pid 7001, ppid 7000) — /workspace/out/b.txt",
-    "   effect: notify",
-    "   reason: T7 coverage: one record per mediated write (file_write)",
-    "   provenance: pid 7001 write file /workspace/out/b.txt -> label AGENT",
-]
-NOTIFY_CONNECT = [
-    "⚠ NOTIFY: process 'curl' (pid 6001, ppid 6000) — 10.0.2.11:9000",
-    "   effect: notify",
-    "   reason: T7 coverage: one record per mediated connect",
-    "   provenance: pid 6001 connect 10.0.2.11:9000 -> label AGENT",
-]
-NONSECRET_READ = [
-    "⚠ NOTIFY: process 'cat' (pid 8001, ppid 8000) — /workspace/out/a.txt",
-    "   effect: notify",
-    "   reason: tool-caused read",
-    "   provenance: pid 8001 read file /workspace/out/a.txt -> label AGENT",
-]
+# VERBATIM: the live credential-read kill through the T7 fixture
+# (2026-11-01, t7-actplane acceptance host; the docker-exec'd `cat`
+# reading /run/secrets/token is SIGKILLed by the kernel engine).
+KILL_EVENT = (
+    '{"timestamp":436729180567,"event":"TAINT_VIOLATION","effect":"kill",'
+    '"blocked":false,"killed":true,"comm":"cat","pid":5234,"ppid":5228,'
+    '"op":1,"domain_id":0,"session_root":1213,'
+    '"target":"/run/secrets/token","rule_id":4,"taint_label":1,'
+    '"matched_label":1,"matched_labels":1,'
+    '"provenance":{"label":1,"timestamp_ns":436728691714,"pid":5234,'
+    '"op":0,"ip":0,"target":"cat"}}')
+
+# VERBATIM: the seeded shim's own bookkeeping write (infrastructure noise)
+SHIM_WRITE_EVENT = (
+    '{"timestamp":436729592475,"event":"TAINT_VIOLATION","effect":"notify",'
+    '"blocked":false,"killed":false,"comm":"containerd-shim","pid":1213,'
+    '"ppid":1,"op":2,"domain_id":0,"session_root":1213,'
+    '"target":"/proc/self/fd/28","rule_id":1,"taint_label":1,'
+    '"matched_label":1,"matched_labels":1,'
+    '"provenance":{"label":1,"timestamp_ns":427999922851,"pid":5106,'
+    '"op":0,"ip":0,"target":"runc"}}')
+
+# same grammar, an agent file write (synthetic; grammar verified live)
+WRITE_EVENT = (
+    '{"timestamp":436730000000,"event":"TAINT_VIOLATION","effect":"notify",'
+    '"blocked":false,"killed":false,"comm":"pi","pid":5300,"ppid":5299,'
+    '"op":2,"domain_id":0,"session_root":1213,'
+    '"target":"/workspace/out/b.txt","rule_id":2,"taint_label":1,'
+    '"matched_label":1,"matched_labels":1,'
+    '"provenance":{"label":1,"timestamp_ns":436729000000,"pid":5300,'
+    '"op":0,"ip":0,"target":"pi"}}')
+
+# same grammar, a direct network connect (synthetic; grammar verified live)
+CONNECT_EVENT = (
+    '{"timestamp":436731000000,"event":"TAINT_VIOLATION","effect":"notify",'
+    '"blocked":false,"killed":false,"comm":"node","pid":5400,"ppid":5299,'
+    '"op":3,"domain_id":0,"session_root":1213,'
+    '"target":"10.0.2.11:9000","rule_id":3,"taint_label":1,'
+    '"matched_label":1,"matched_labels":1,'
+    '"provenance":{"label":1,"timestamp_ns":436730900000,"pid":5400,'
+    '"op":0,"ip":0,"target":"node"}}')
+
+# same grammar, a non-secret open (skipped: no canonical class)
+PLAIN_OPEN_EVENT = (
+    '{"timestamp":436732000000,"event":"TAINT_VIOLATION","effect":"notify",'
+    '"blocked":false,"killed":false,"comm":"node","pid":5500,"ppid":5299,'
+    '"op":1,"domain_id":0,"session_root":1213,'
+    '"target":"/workspace/out/a.txt","rule_id":5,"taint_label":1,'
+    '"matched_label":1,"matched_labels":1,'
+    '"provenance":{"label":1,"timestamp_ns":436731900000,"pid":5500,'
+    '"op":0,"ip":0,"target":"node"}}')
+
+BANNER = "ActPlane: 1 updates, 5 rules"
 
 
 def records(lines):
@@ -85,50 +104,54 @@ def records(lines):
         plugin="actplane", plugin_version="0.1.8"))
 
 
-def test_kill_block_translates_to_credential_access_deny():
-    recs = records(KILL_BLOCK)
+def test_kill_event_translates_to_credential_access_deny():
+    recs = records([BANNER, KILL_EVENT])
     assert len(recs) == 1
     r = recs[0]
     assert r["action_class"] == "credential_access"
     assert r["decision"] == "deny"
-    assert r["tool"] == "touch"
-    assert r["target"]["value"] == "/usr/bin/touch"
+    assert r["tool"] == "cat"
+    assert r["target"]["value"] == "/run/secrets/token"
     assert r["evidence"][0]["locator"]["source"] == "actplane-events.log"
     assert r["evidence"][0]["locator"]["line"] == 2
 
 
-def test_block_translates_to_process_spawn_deny():
-    recs = records(BLOCK_BLOCK)
-    assert len(recs) == 1
-    assert recs[0]["action_class"] == "process_spawn"
-    assert recs[0]["decision"] == "deny"
+def test_shim_bookkeeping_is_infrastructure_noise():
+    assert records([SHIM_WRITE_EVENT]) == []
 
 
-def test_notify_write_and_connect_observe():
-    recs = records(NOTIFY_WRITE + NOTIFY_CONNECT)
-    assert [r["action_class"] for r in recs] == ["file_write", "direct_network"]
+def test_write_connect_classify_and_observe():
+    recs = records([WRITE_EVENT, CONNECT_EVENT])
+    assert [r["action_class"] for r in recs] == ["file_write",
+                                                 "direct_network"]
     assert all(r["decision"] == "observe" for r in recs)
 
 
-def test_nonsecret_reads_skipped():
-    recs = records(NONSECRET_READ)
-    assert recs == []
+def test_plain_open_skipped():
+    assert records([PLAIN_OPEN_EVENT]) == []
+
+
+def test_decided_but_unlanded_is_error_not_allow():
+    ev = json.loads(KILL_EVENT)
+    ev["killed"] = False          # decided kill, did not land
+    recs = records([json.dumps(ev)])
+    assert recs[0]["decision"] == "error"
 
 
 def test_records_validate_against_decision_record_1():
     validator = jsonschema.Draft202012Validator(SCHEMA)
-    recs = records(KILL_BLOCK + BLOCK_BLOCK + NOTIFY_WRITE + NOTIFY_CONNECT)
-    assert len(recs) == 4
+    recs = records([BANNER, KILL_EVENT, WRITE_EVENT, CONNECT_EVENT])
+    assert len(recs) == 3
     for r in recs:
         errs = list(validator.iter_errors(r))
         assert errs == [], [e.message for e in errs]
 
 
-def test_streaming_yield_per_block():
-    """Records are yielded as blocks complete: feeding the generator
-    line-by-line, the first record arrives exactly when its block's
-    provenance line is consumed — BEFORE any later block — so a `tail -f`
-    pipe emits incrementally (stdin never EOFs during a run)."""
+def test_streaming_yield_per_event():
+    """Records are yielded as event lines arrive: consuming the generator
+    one next() at a time, the first record arrives exactly when its event
+    line is consumed — before any later line (a `tail -f` pipe never
+    EOFs mid-run)."""
     consumed = {"n": 0}
 
     def counting(lines):
@@ -136,21 +159,19 @@ def test_streaming_yield_per_block():
             consumed["n"] += 1
             yield line
 
-    source = counting(KILL_BLOCK + BLOCK_BLOCK)
+    source = counting([BANNER, KILL_EVENT, WRITE_EVENT])
     gen = shim.iter_records(source, stream_id="s", run_id="r",
                             plugin="actplane", plugin_version="0.1.8")
     first = next(gen)
-    # the record arrived with the KILL block's provenance line consumed
-    # and nothing after it (BLOCK_BLOCK untouched)
-    assert consumed["n"] == len(KILL_BLOCK)
+    assert consumed["n"] == 2          # banner + the kill event line
     assert first["action_class"] == "credential_access"
     second = next(gen)
-    assert consumed["n"] == len(KILL_BLOCK) + len(BLOCK_BLOCK)
-    assert second["action_class"] == "process_spawn"
+    assert consumed["n"] == 3
+    assert second["action_class"] == "file_write"
 
 
 def test_seq_monotonic_per_stream():
-    recs = records(KILL_BLOCK + BLOCK_BLOCK + NOTIFY_WRITE)
+    recs = records([KILL_EVENT, WRITE_EVENT, CONNECT_EVENT])
     assert [r["seq"] for r in recs] == [1, 2, 3]
 
 
@@ -175,8 +196,6 @@ def test_manifest_declares_kernel_interference():
     assert m["supported_designs"] == ["t7"]
     assert m["record_source"] == "ingested"
     assert m["kernel_interference"]["declared"] is True
-    # the contract loader enforces the declaration (framework/contracts)
-    sys.path.insert(0, str(ROOT))
     from framework.contracts import load_capabilities
     loaded = load_capabilities("actplane")
     assert loaded["kernel_interference"]["declared"] is True
