@@ -116,3 +116,7 @@ networks:
 volumes:
   target-logs: {}
   tracee-data: {}
+  # the kernel slot's decision-log volume (compose/slots/t7.yaml): the
+  # overlay's control service writes decisions.jsonl + the vendor event
+  # stream here (base+overlay rule: the base owns all top-level structure)
+  control-logs: {}
