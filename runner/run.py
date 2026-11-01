@@ -173,7 +173,7 @@ DESIGNS = {
     # harness itself runs in T0 mode (no intrinsic enforcement).
     "t7": {"prefix": "t7", "compose": "t7.yaml", "gateway": True,
            "enforcement_record": "control",
-           "record_container": "kernel-control",
+           "record_container": "t7-kernel-control",
            "record_dir": "/var/log/control"},
 }
 
