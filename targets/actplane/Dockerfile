@@ -52,8 +52,8 @@ RUN cd /src/ActPlane && cargo install --path crates/actplane-cli --root /usr/loc
 # make skips the clang step and generates the skeleton from the pinned
 # object.
 RUN cd /src/ActPlane/bpf && \
-    make .output/libbpf.a && \
-    make .output/bpftool/bootstrap/bpftool && \
+    make "$(pwd)/.output/libbpf.a" && \
+    make "$(pwd)/.output/bpftool/bootstrap/bpftool" && \
     cp prebuilt/process.bpf.o .output/process.bpf.o && \
     touch .output/process.bpf.o && \
     make process && \
