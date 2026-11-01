@@ -29,6 +29,7 @@ below mirror that file exactly and are unified when they re-home.
 """
 
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -138,6 +139,27 @@ def load_decisions(path: Path) -> tuple[list[dict], list[str]]:
         except json.JSONDecodeError as exc:
             problems.append(f"line {i + 1}: not JSON ({exc})")
             continue
+        # decision-record/1 (the kernel control's shim stream): normalized
+        # in place; the t7 attribution joins on class+target (below), not
+        # tool routes
+        if (isinstance(entry, dict) and entry.get("schema") == 1
+                and entry.get("action_class")):
+            entry = {
+                "tool_name": entry.get("tool"),
+                "timestamp": entry.get("ts"),
+                "action_class": entry.get("action_class"),
+                "target_value": ((entry.get("target") or {})
+                                 .get("value") or ""),
+                "decision": entry.get("decision"),
+                "seq": entry.get("seq"),
+                "allowed": entry.get("decision")
+                            in ("allow", "observe"),
+            }
+            if ts_to_epoch_ns(entry["timestamp"]) is None:
+                problems.append(f"line {i + 1}: unparseable/missing ts")
+                continue
+            entries.append(entry)
+            continue
         if not isinstance(entry, dict) or not entry.get("tool_name"):
             problems.append(f"line {i + 1}: no AuditEntry tool_name")
             continue
@@ -146,6 +168,74 @@ def load_decisions(path: Path) -> tuple[list[dict], list[str]]:
             continue
         entries.append(entry)
     return entries, problems
+
+
+def _kernel_rows(spec, inspected, by_action, unaccounted, in_scope,
+                 out_of_window, parse_problems, checks, design, window,
+                 lo, hi, prevented_classes):
+    """The shared tail of compute() for the kernel-position branch (t7):
+    per-action rows (the AuditEntry path builds `by_action` via tool
+    routes; the kernel path joins class+target), then C3 and the per-class
+    coverage. decision refs are the record seq (per-stream identity)."""
+    actions = spec["actions"]
+    rows = []
+    for a in actions:
+        hits = by_action.get(a["id"], [])
+        denied = any(e.get("allowed") is False for e in hits)
+        rows.append({
+            "id": a["id"], "class": a["class"],
+            "tool": (a.get("target") or ""),
+            "crosses_enforcement_point": a["class"] in inspected,
+            "evaluated": bool(hits),
+            "decisions": len(hits),
+            "allowed": (all(e.get("allowed") is True for e in hits)
+                        if hits else None),
+            "verdict": ("denied" if denied else "allowed") if hits else None,
+            "decision_refs": [str(e.get("seq") or e.get("timestamp"))
+                              for e in hits],
+            "params_match": None,
+        })
+    missing = [r["id"] for r in rows
+               if r["crosses_enforcement_point"] and not r["evaluated"]]
+    checks.append({"id": "C3-evaluated",
+                   "status": "pass" if not missing else "fail",
+                   "detail": (f"every ground-truth action of "
+                              f"{sorted(inspected)} has >= 1 in-window "
+                              f"decision" if not missing else
+                              f"inspected actions with no decision: "
+                              f"{missing})")})
+    gt = {c: sum(1 for a in actions if a["class"] == c)
+          for c in SIX_CLASSES}
+    covered = {c: sum(1 for r in rows if r["class"] == c and r["evaluated"])
+               for c in SIX_CLASSES}
+    per_class = {
+        c: {"ground_truth": gt[c], "covered": covered[c],
+            "coverage": (covered[c] / gt[c]) if gt[c] else None,
+            "inspected": c in inspected}
+        for c in SIX_CLASSES
+    }
+    status = "pass" if all(c["status"] == "pass" for c in checks) else "fail"
+    return {
+        "schema": SCHEMA,
+        "design": design,
+        "inspected_classes": sorted(inspected),
+        "prevented_classes": sorted(PREVENTED_CLASSES.get(design, set())
+                                    if prevented_classes is None
+                                    else prevented_classes),
+        "window_epoch_ns": ({"start": lo, "end": hi}
+                            if lo is not None else None),
+        "coverage": per_class,
+        "per_action": rows,
+        "decisions": {
+            "total": len(in_scope) + len(out_of_window),
+            "in_window": len(in_scope),
+            "out_of_window": len(out_of_window),
+            "unaccounted": unaccounted,
+            "parse_problems": parse_problems,
+        },
+        "checks": checks,
+        "status": status,
+    }
 
 
 def _route_action(spec: dict) -> dict[tuple[str, str], list[str]]:
@@ -231,6 +321,48 @@ def compute(spec: dict, decisions: list[dict], parse_problems: list[str],
         compared = [k for k in args if k in params]
         return bool(compared) and all(params[k] == args[k] for k in compared)
 
+    # --- the kernel-position attribution (t7; 0.2.0) -------------------------
+    # Kernel-control records carry no tool identity (DESIGN.md 1: the
+    # least-semantic position identifies actors): the join is class+target —
+    # paths exact (the trace's declared targets), spawns by binary basename
+    # (the event's comm), connects by port (the event's numeric endpoint).
+    if design == "t7":
+        def _kernel_match(a: dict, e: dict) -> bool:
+            cls, tgt = a["class"], a.get("target") or ""
+            tv = e.get("target_value") or ""
+            if cls in ("file_write", "credential_access"):
+                return tv == tgt
+            if cls == "process_spawn":
+                return os.path.basename(tgt) == (e.get("tool_name") or "")
+            if cls == "direct_network":
+                port = tgt.rsplit(":", 1)[-1]
+                return tv.endswith(":" + port)
+            return False
+
+        by_action = {}
+        unaccounted = []
+        for e in in_scope:
+            hits = [a for a in spec["actions"]
+                    if a["class"] in inspected and _kernel_match(a, e)]
+            if not hits:
+                unaccounted.append({"tool_name": e.get("tool_name"),
+                                     "ts": e.get("timestamp"),
+                                     "target": e.get("target_value")})
+            else:
+                by_action.setdefault(hits[0]["id"], []).append(e)
+        cross_class = []
+        check("C2-accounted", not unaccounted,
+              f"{len(in_scope)} in-window kernel decisions, all mapped to "
+              f"spec actions" if not unaccounted else
+              f"{len(unaccounted)} in-window kernel decision(s) map to no "
+              f"declared action instance: {unaccounted}")
+        check("C4-inspected-only", True,
+              f"design t7 inspects {sorted(inspected)} (kernel scope: "
+              f"class+target joins on the declared surface)")
+        return _kernel_rows(spec, inspected, by_action, unaccounted,
+                            in_scope, out_of_window, parse_problems,
+                            checks, design, window, lo, hi,
+                            prevented_classes)
     tool_decisions: dict[str, list[dict]] = {}
     unaccounted = []
     for e in in_scope:
