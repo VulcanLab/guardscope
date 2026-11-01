@@ -42,7 +42,11 @@ services:
       dockerfile: http-endpoint/Dockerfile
     image: inspection/http-endpoint
     container_name: t7-http-endpoint
-    networks: [t7net]
+    networks:
+      t7net:
+        # FIXED address (same reason as net-peer; the http tool calls'
+        # kernel-side connects land as expected-extras, not direct_network)
+        ipv4_address: 172.28.0.11
     volumes:
       - target-logs:/var/log/targets
     restart: unless-stopped
@@ -53,7 +57,12 @@ services:
       dockerfile: net-peer/Dockerfile
     image: inspection/net-peer
     container_name: t7-net-peer
-    networks: [t7net]
+    networks:
+      t7net:
+        # FIXED address: the kernel control's connect events carry the
+        # numeric IP without a port, so the t7 attribution joins
+        # direct_network actions by IP (framework/reconcile.py t7 branch)
+        ipv4_address: 172.28.0.10
     volumes:
       - target-logs:/var/log/targets
     restart: unless-stopped
@@ -111,7 +120,13 @@ services:
     restart: unless-stopped
 
 networks:
-  t7net: {}
+  # the fixed-address subnet (see net-peer/http-endpoint): the t7 kernel
+  # attribution resolves container names to these addresses
+  t7net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/24
 
 volumes:
   target-logs: {}
