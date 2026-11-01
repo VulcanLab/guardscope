@@ -31,7 +31,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # procps: pgrep/pkill for the supervisor's teardown.
 
 # Pinned source ref (probe-verified commit; matches crates.io 0.1.8).
-ARG ACTPLANE_REF=bb89c77
+ARG ACTPLANE_REF=bb89c77bcb29cfa81ba1fb212b5634c353c7352b
 RUN git clone --recurse-submodules --depth 1 \
       https://github.com/eunomia-bpf/ActPlane /src/ActPlane && \
     cd /src/ActPlane && \
