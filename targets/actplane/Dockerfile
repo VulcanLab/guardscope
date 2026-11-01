@@ -22,7 +22,7 @@ FROM rust:1-slim
 # embedded in the binaries).
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates git make libelf-dev zlib1g-dev pkg-config \
-      python3 docker.io procps clang \
+      python3 docker-cli procps clang \
     && rm -rf /var/lib/apt/lists/*
 # python3: the match-event shim (plugins/actplane/shim) runs in-container.
 # docker.io: the CLI only (the daemon is unused; the supervisor talks to
