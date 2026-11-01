@@ -421,19 +421,34 @@ class Reconciler:
                 # classifier; the served layer (R2) requires absence of effect.
                 continue
             if a["class"] in self.prevented:
-                # prevented (design t2): the network layer must refuse the
-                # attempt. tcp: expect the refusal errno (an `ok` tcp connect
-                # would mean the action took effect — a bypass, i.e. the
-                # egress policy is NOT in force). udp: `ok` is expected (the
-                # send succeeds locally; unconnected sockets do not surface
-                # the icmp reject) — the served layer adjudicates effect.
-                refused = status == "error" and _REFUSAL_RE.search(r.get("error") or "")
-                if a["op"] == "tcp_connect" and not refused:
-                    problems.append(f"{a['id']}: tcp connect {status} but egress "
-                                    f"is forced ({r.get('error')}?) — prevention broken")
-                elif a["op"] != "tcp_connect" and status == "error" and not refused:
-                    problems.append(f"{a['id']}: status {status} is not a "
-                                    f"network-layer refusal ({r.get('error')})")
+                if self.design == "t7":
+                    # prevented (t7): the kernel control denies the action —
+                    # an exec'd child is SIGKILLed by the engine (exit 137)
+                    # or a future block rule returns EPERM. The replay's
+                    # command failure IS the control denial; the C6 side
+                    # (framework/c6.py) verifies the absence of the effect.
+                    if status != "error":
+                        problems.append(
+                            f"{a['id']}: kernel-denied action must fail "
+                            f"(got {status}) — prevention broken")
+                else:
+                    # prevented (design t2/t3): the network layer must
+                    # refuse the attempt. tcp: expect the refusal errno
+                    # (an `ok` tcp connect would mean the action took
+                    # effect — a bypass, i.e. the egress policy is NOT in
+                    # force). udp: `ok` is expected (the send succeeds
+                    # locally; unconnected sockets do not surface the icmp
+                    # reject) — the served layer adjudicates effect.
+                    refused = status == "error" and _REFUSAL_RE.search(r.get("error") or "")
+                    if a["op"] == "tcp_connect" and not refused:
+                        problems.append(f"{a['id']}: tcp connect {status} "
+                                        f"but egress is forced "
+                                        f"({r.get('error')}?) — prevention "
+                                        f"broken")
+                    elif a["op"] != "tcp_connect" and status == "error" and not refused:
+                        problems.append(f"{a['id']}: status {status} is not "
+                                        f"a network-layer refusal "
+                                        f"({r.get('error')})")
             else:
                 if status != "ok":
                     problems.append(f"{a['id']}: status {status} ({r.get('error')})")
@@ -951,7 +966,17 @@ class Reconciler:
         n = len(actions)
         problems = []
         if cls == "stdio_tool_call":
-            if self.design in ("t4", "t5", "t6"):
+            if self.design == "t7":
+                # t7: the harness MCP config holds BOTH stdio servers
+                # (toy-mcp-fs and the mcp-http-stdio bridge): the fs
+                # responses (n) + the bridge's handshake and the http tool
+                # calls' MCP-wire responses land in the window. Observed
+                # live 2026-11-01: 6 for n=3.
+                if not n <= len(recs) <= n + 3:
+                    problems.append(f"{len(recs)} stdio writes outside "
+                                    f"[{n}, {n + 3}] (responses + bridge/"
+                                    f"handshake writes)")
+            elif self.design in ("t4", "t5", "t6"):
                 # T4: pi's MCP config clients hold the connections — the fs
                 # server's initialize + tools/list responses may land inside
                 # the window (the command marks the window before the agent
