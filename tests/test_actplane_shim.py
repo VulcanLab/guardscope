@@ -183,12 +183,15 @@ def test_fixture_policy_wellformed_with_expected_rules():
         (ROOT / "plugins" / "actplane" / "policy" / "t7.ap.yaml").read_text())
     assert doc["version"] == 1
     body = doc["policy"]
-    assert "notify exec" in body
     assert "notify write file" in body
     assert "notify unlink file" in body
     assert "notify connect endpoint" in body
-    assert "kill read file" not in body          # v2: reads are notified
-    assert "kill exec \"/bin/echo\"" in body        # v2: the deny arm
+    assert "notify open file \"/run/secrets/**\"" in body
+    assert "kill read file" not in body          # reads are notified (v2)
+    # v4: the spawn class is the deny arm (both instances; the class-level
+    # outcome model needs the whole class denied, like t2's egress)
+    assert 'kill exec "/bin/sh"' in body
+    assert 'kill exec "/bin/echo"' in body
 
 
 def test_manifest_declares_kernel_interference():
