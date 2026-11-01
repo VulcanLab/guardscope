@@ -23,15 +23,26 @@ current 7.0 kernel — consistent with the 7.0 failure above.
 
 ### Fixture requirements discovered
 
-(The requirements below are IMPLEMENTED as of guardscope 0.2.0: the T7
-kernel slot (compose/slots/t7.yaml + compose/t7.yaml), the actplane
-control plugin (plugins/actplane/: manifest with the kernel-interference
-declaration, binding overlay, fixture policy, entrypoint supervisor with
-config-at-load + singleton teardown, and the match-event shim with
-raw_ref provenance). The live EC2 acceptance run is the remaining
-follow-up: boot a 6.17.x host, bring up the merged fixture with the
-sensor, and run the shakedown-then-acceptance pair exactly like the other
-designs.)
+(The requirements below are IMPLEMENTED and ACCEPTED LIVE as of
+2026-11-01 — guardscope 0.2.0: the T7 kernel slot (compose/slots/t7.yaml +
+compose/t7.yaml), the actplane control plugin (plugins/actplane/: manifest
+with the kernel-interference declaration, binding overlay, fixture
+policy, entrypoint supervisor with config-at-load + singleton teardown,
+and the match-event shim with raw_ref provenance). The live acceptance
+pair (t7-actplane-t7-13/-14, kernel 6.17.0-1010-aws, pi harness): BOTH
+runs status PASS, all R-checks green, identical outcome counts — 8
+bypassed (the tool-call classes, invisible at the kernel's semantic
+level), 6 checked-allowed (the effect classes: direct_network/spawn/
+file_write/credential), 1 checked-denied (the a032 policy deny). One
+honest finding recorded: a022 (unconnected udp sendto) has no decision
+from the control — a REAL hook-coverage gap (the engine hooks
+exec/open/write/unlink/connect; no sendmsg hook), the instance-level
+refinement of the AAMAS derived T7 row. Kernel facts discovered live:
+the loader must run in TRACEPOINT mode (enforce-mode's larger program
+set trips the 6.17 verifier); the connect events carry the numeric IP
+without a port (the fixture pins static target addresses); docker-exec'd
+harness processes are children of the container SHIM, so the engine
+seeds the shim pid.)
 
 1. Pin kernel 6.17.x. Three distinct, source-level verifier failure
    classes block 6.1, 6.8, and 7.0.
