@@ -77,7 +77,7 @@ log "ready: engine loaded with the fixture config, watching pid $PID tree"
 
 # --- collect: shim the event stream into decision-record/1 ----------------
 log "collect: shim streaming $EVENTS -> $RECORDS"
-tail -f -n +1 "$EVENTS" | "$SHIM" \
+tail -f -n +1 "$EVENTS" | python3 "$SHIM" \
   --stream-id "$CONTROL_STREAM_ID" --run-id "$CONTROL_RUN_ID" \
   --plugin actplane --plugin-version 0.1.8 \
   >> "$RECORDS" &
