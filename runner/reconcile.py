@@ -422,15 +422,15 @@ class Reconciler:
                 continue
             if a["class"] in self.prevented:
                 if self.design == "t7":
-                    # prevented (t7): the kernel control denies the action —
-                    # an exec'd child is SIGKILLed by the engine (exit 137)
-                    # or a future block rule returns EPERM. The replay's
-                    # command failure IS the control denial; the C6 side
-                    # (framework/c6.py) verifies the absence of the effect.
-                    if status != "error":
-                        problems.append(
-                            f"{a['id']}: kernel-denied action must fail "
-                            f"(got {status}) — prevention broken")
+                    # prevented (t7) is INSTANCE-level: the kernel position
+                    # denies the specific spawn the fixture policy names
+                    # (a032; the class's allowed twin a031 succeeds —
+                    # /bin/sh is also harness plumbing). Both terminal
+                    # states are valid here: status error = the denied
+                    # instance (the C6 side verifies absence of effect);
+                    # status ok = the allowed instance. The outcome
+                    # classifier + C6 adjudicate; R1 does not.
+                    continue
                 else:
                     # prevented (design t2/t3): the network layer must
                     # refuse the attempt. tcp: expect the refusal errno

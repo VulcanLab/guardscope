@@ -16,16 +16,18 @@
 #       file_write     a041/a042  (write/unlink under /workspace/out/)
 #       direct_network a021/a022  (connect *:9000, *:9001 — numeric IPv4)
 #       credential_access a051/a052 (open under /run/secrets/)
-#   - KILL on the spawn class (a031 exec /bin/sh + a032 exec /bin/echo):
-#     the kernel-deny arm — the T7 analogue of a014's checked-DENY role in
-#     T6 (an argument-level constraint is NOT expressible at the kernel,
-#     so the deny boundary is a kernel-observable feature: the spawned
-#     binary). The class-level outcome model treats a prevented class as
-#     fully denied (like t2's egress on direct_network), so both spawn
-#     instances are denied; kills only short-lived children, so the replay
-#     survives (denying the in-process secret reads would SIGKILL the
-#     trace executor itself — observed live 2026-11-01). Both spawns
-#     become `prevented` (deny record + verified kernel absence, C6).
+#   - KILL on the a032 spawn INSTANCE (exec /bin/echo): the kernel-deny
+#     arm — the T7 analogue of a014's checked-DENY role in T6 (an
+#     argument-level constraint is NOT expressible at the kernel, so the
+#     deny boundary is a kernel-observable feature: the spawned binary).
+#     The denial is INSTANCE-level: a031 (/bin/sh) stays allowed because
+#     /bin/sh is also harness plumbing (pi launches its MCP servers
+#     through it — observed live 2026-11-01: denying it starves the fs
+#     server), and the in-process classes cannot be denied without
+#     SIGKILLing the trace executor itself (observed: the libuv worker
+#     died at a051). a032 becomes `prevented` (deny record + verified
+#     kernel absence, C6); the kernel position's denial granularity is a
+#     MEASURED property of the design, not a fixture limitation.
 #
 # Scope: the engine is seeded to the harness container's SHIM process (the
 # docker-exec'd harness processes are its children, not the container
@@ -39,13 +41,17 @@ version: 1
 policy: |
   source AGENT = exec "**"
 
-  rule t7-kill-spawns:
-    kill exec "/bin/sh" if AGENT
-    because "T7 prevention arm (a031): the spawn class is denied at the kernel — deny record + verified absence = prevented (C6)"
+  rule t7-notify-sh:
+    notify exec "/bin/sh" if AGENT
+    because "T7 coverage: a031 (exec /bin/sh) — allowed twin of the denied a032; /bin/sh is ALSO harness plumbing (pi launches MCP servers through it), so the deny arm cannot target the class, only the instance"
+
+  rule t7-notify-echo:
+    notify exec "/bin/echo" if AGENT
+    because "T7 coverage: a032 — the denied instance's checked evaluation"
 
   rule t7-kill-echo:
     kill exec "/bin/echo" if AGENT
-    because "T7 prevention arm (a032): the spawn class is denied at the kernel — the class-level model (the whole prevented class is denied, like t2's egress) so the replay and the outcome model agree; kills only short-lived children, so the replay survives"
+    because "T7 prevention arm: the a032 spawn instance is denied at the kernel (deny + verified absence = prevented, C6); kills only the short-lived child, so the replay survives"
 
   rule t7-notify-secret-open:
     notify open file "/run/secrets/**" if AGENT
