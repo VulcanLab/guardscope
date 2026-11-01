@@ -59,7 +59,15 @@ done
 if [ -z "${PID:-}" ] || [ "$PID" = "0" ]; then
   log "FATAL: harness container $HARNESS_CONTAINER never started"; exit 2
 fi
-log "provision: seeding engine on $HARNESS_CONTAINER (pid $PID)"
+# Seed the container's SHIM pid (the init's parent), not the init itself:
+# the harness executes the trace in a docker-exec'd process, which is a
+# child of the container's shim, NOT of the container init — seeding the
+# shim watches the container's ENTIRE host-side process tree (init + every
+# future exec), which is the kernel-position scope (DESIGN.md 7: the
+# measured agent tree).
+SEED=$(awk '/^PPid:/{print $2}' /proc/$PID/status)
+log "provision: seeding engine on $HARNESS_CONTAINER shim (container init $PID, seed $SEED)"
+PID="$SEED"
 
 : > /run/loader.out
 /opt/actplane/process --config "$BLOB" --seed-pid "$PID" \
