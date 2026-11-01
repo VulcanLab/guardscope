@@ -22,7 +22,7 @@ FROM rust:1-slim
 # embedded in the binaries).
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates git make libelf-dev zlib1g-dev pkg-config \
-      python3 docker.io procps \
+      python3 docker.io procps clang \
     && rm -rf /var/lib/apt/lists/*
 # python3: the match-event shim (plugins/actplane/shim) runs in-container.
 # docker.io: the CLI only (the daemon is unused; the supervisor talks to
@@ -41,12 +41,12 @@ RUN git clone --recurse-submodules --depth 1 \
 # The CLI from the checkout (one source of truth with the loader).
 RUN cd /src/ActPlane && cargo install --path crates/actplane-cli --root /usr/local
 
-# The config-at-load loader: the ebpf-ifc-engine crate under bpf/ (its
-# embedded prebuilt object is the probe-verified binary; NO clang rebuild).
-# The bin lands in bpf/target/release/process (bpf/ is its own cargo
-# workspace root).
-RUN cd /src/ActPlane/bpf && cargo build --release && \
-    cp /src/ActPlane/target/release/process /usr/local/bin/actplane-process
+# The config-at-load loader (bpf/process) is a C application built by
+# the CI-identical path: `make -C bpf` (libbpf + bpftool submodules, the
+# BPF object compiled by clang — the from-source build the probe verified
+# live on 6.17). The shim-relevant event format is the loader's stdout.
+RUN cd /src/ActPlane && make -C bpf && \
+    cp bpf/process /usr/local/bin/actplane-process
 
 # The control supervisor invokes the loader at /opt/actplane/process.
 RUN mkdir -p /opt/actplane && \
