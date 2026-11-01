@@ -22,7 +22,7 @@ FROM rust:1-slim
 # embedded in the binaries).
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates git make libelf-dev zlib1g-dev pkg-config \
-      python3 docker-cli procps clang \
+      python3 docker-cli procps \
     && rm -rf /var/lib/apt/lists/*
 # python3: the match-event shim (plugins/actplane/shim) runs in-container.
 # docker.io: the CLI only (the daemon is unused; the supervisor talks to
@@ -41,12 +41,23 @@ RUN git clone --recurse-submodules --depth 1 \
 # The CLI from the checkout (one source of truth with the loader).
 RUN cd /src/ActPlane && cargo install --path crates/actplane-cli --root /usr/local
 
-# The config-at-load loader (bpf/process) is a C application built by
-# the CI-identical path: `make -C bpf` (libbpf + bpftool submodules, the
-# BPF object compiled by clang — the from-source build the probe verified
-# live on 6.17). The shim-relevant event format is the loader's stdout.
-RUN cd /src/ActPlane && make -C bpf && \
-    cp bpf/process /usr/local/bin/actplane-process
+# The config-at-load loader (bpf/process) is a C application (libbpf
+# skeleton). Its BPF object is the COMMITTED PREBUILT engine object
+# (bpf/prebuilt/process.bpf.o — the exact binary the 2026-10-31 probe
+# verified live on 6.17), NOT a fresh clang compile: trixie's clang
+# produces an exec_tp_update_prefix that fails the 6.17 verifier with
+# E2BIG (observed live; the probe's host clang-18 build passed — BPF
+# codegen size is clang-version-sensitive). The build order matters:
+# libbpf + bpftool first, THEN inject the prebuilt .o (touch it newest) so
+# make skips the clang step and generates the skeleton from the pinned
+# object.
+RUN cd /src/ActPlane/bpf && \
+    make .output/libbpf.a && \
+    make .output/bpftool/bootstrap/bpftool && \
+    cp prebuilt/process.bpf.o .output/process.bpf.o && \
+    touch .output/process.bpf.o && \
+    make process && \
+    cp process /usr/local/bin/actplane-process
 
 # The control supervisor invokes the loader at /opt/actplane/process.
 RUN mkdir -p /opt/actplane && \
