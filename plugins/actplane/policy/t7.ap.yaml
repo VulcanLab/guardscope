@@ -65,7 +65,3 @@ policy: |
   rule t7-notify-connect:
     notify connect endpoint "*" if AGENT
     because "T7 coverage: one record per mediated connect (direct_network; numeric IPv4 endpoints)"
-
-  rule t7-kill-secret-read:
-    kill read file "/run/secrets/**" if AGENT
-    because "T7 prevention arm: credential reads are denied at the kernel (a051/a052); deny + verified absence = prevented (C6)"
