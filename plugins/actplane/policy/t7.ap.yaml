@@ -62,10 +62,6 @@ policy: |
     notify unlink file "/workspace/out/**" if AGENT
     because "T7 coverage: unlink mediation on the declared surface"
 
-  rule t7-notify-connect-9000:
-    notify connect endpoint "*:9000" if AGENT
-    because "T7 coverage: a021 (tcp_connect net-peer:9000)"
-
-  rule t7-notify-connect-9001:
-    notify connect endpoint "*:9001" if AGENT
-    because "T7 coverage: a022 (udp_send net-peer:9001)"
+  rule t7-notify-connect:
+    notify connect endpoint "*" if AGENT
+    because "T7 coverage: connect mediation (a021/a022; numeric IPv4 endpoints — the http tool calls' port-8080 connects land as expected-extras at reconcile)"

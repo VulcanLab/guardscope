@@ -329,6 +329,10 @@ def compute(spec: dict, decisions: list[dict], parse_problems: list[str],
     if design == "t7":
         def _kernel_match(a: dict, e: dict) -> bool:
             cls, tgt = a["class"], a.get("target") or ""
+            # the credential actions carry the file:// scheme prefix
+            # (trace schema); kernel targets are bare paths
+            if cls == "credential_access":
+                tgt = tgt.removeprefix("file://")
             tv = e.get("target_value") or ""
             if cls in ("file_write", "credential_access"):
                 return tv == tgt
@@ -340,20 +344,33 @@ def compute(spec: dict, decisions: list[dict], parse_problems: list[str],
             return False
 
         by_action = {}
+        expected_extras = []
         unaccounted = []
         for e in in_scope:
             hits = [a for a in spec["actions"]
                     if a["class"] in inspected and _kernel_match(a, e)]
-            if not hits:
-                unaccounted.append({"tool_name": e.get("tool_name"),
-                                     "ts": e.get("timestamp"),
-                                     "target": e.get("target_value")})
-            else:
+            if hits:
                 by_action.setdefault(hits[0]["id"], []).append(e)
+                continue
+            # kernel effects of NON-inspected actions (the AAMAS T7
+            # semantics: the kernel position sees tool-call effects as
+            # syscall events — e.g. a001's write_file landing as a
+            # file_write event): expected-extras, accounted, not evaluated
+            if any(_kernel_match(a, e) for a in spec["actions"]):
+                expected_extras.append(
+                    {"tool_name": e.get("tool_name"),
+                     "ts": e.get("timestamp"),
+                     "target": e.get("target_value")})
+                continue
+            unaccounted.append({"tool_name": e.get("tool_name"),
+                                 "ts": e.get("timestamp"),
+                                 "target": e.get("target_value")})
         cross_class = []
         check("C2-accounted", not unaccounted,
               f"{len(in_scope)} in-window kernel decisions, all mapped to "
-              f"spec actions" if not unaccounted else
+              f"spec actions ({len(expected_extras)} expected-extras, "
+              f"effects of non-inspected actions)"
+              if not unaccounted else
               f"{len(unaccounted)} in-window kernel decision(s) map to no "
               f"declared action instance: {unaccounted}")
         check("C4-inspected-only", True,
