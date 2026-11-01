@@ -46,7 +46,7 @@ RUN cd /src/ActPlane && cargo install --path crates/actplane-cli --root /usr/loc
 # The bin lands in bpf/target/release/process (bpf/ is its own cargo
 # workspace root).
 RUN cd /src/ActPlane/bpf && cargo build --release && \
-    find . target -maxdepth 3 -name process -type f -exec cp {} /usr/local/bin/actplane-process \;
+    cp /src/ActPlane/target/release/process /usr/local/bin/actplane-process
 
 # The control supervisor invokes the loader at /opt/actplane/process.
 RUN mkdir -p /opt/actplane && \
