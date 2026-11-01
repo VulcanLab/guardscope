@@ -97,6 +97,10 @@ PREVENTED_CLASSES = {
     # in-process policy; the process-level actions bypass (invisible by
     # construction), nothing prevented
     "t6": set(),
+    # t7 (0.2.0): the fixture policy's kill arm denies the credential reads
+    # at the kernel (deny record + verified kernel absence = prevented, C6);
+    # the other mediated classes are notified (checked), not prevented
+    "t7": {"credential_access"},
 }
 
 # designs in which ALL tool calls share one pooled origin (gateway:8090): the
