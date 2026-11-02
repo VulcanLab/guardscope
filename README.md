@@ -37,29 +37,30 @@ The concrete tooling for each role is in "The three user types" below.
 
 Every run follows the same procedure:
 
-1. A fixed reference workload, shipped with the framework and identical
-   across all runs, drives a real agent harness by deterministic
+1. A fixed reference workload drives a real agent harness by deterministic
    replay injection (no LLM in the loop), exercising all 15 action
    paths listed below.
-2. The harness runs on a fixture topology that realizes one topology
-   design: where the enforcement point sits relative to the harness and
-   the host kernel. The repo ships fixtures for the eight designs
+2. The harness runs on an environment that realizes one topology
+   design. The repo contains fixtures for the eight designs
    T0-T7, from a bare harness with no control (T0), through gateways
    in front of the harness (T1-T3, T5), harness-native permission
    chains (T4) and in-process policy engines (T6), to kernel-level
    enforcement (T7); see `docs/DESIGN.md` for the design set.
-3. Every enforcement point in the topology emits decision records per
-   the control contract. Records are claims, not facts.
+3. Each control in the topology records every decision it makes (an
+   arriving tool call, an allow or deny), in a common record format the
+   framework defines.
 4. An eBPF kernel sensor (Tracee) observes what actually happened on
    the host, regardless of what any component reports. This kernel
    observation is the ground truth of every run.
-5. A reconciler compares the claims against the kernel observation and
-   classifies each action instance as `checked`, `bypassed`, or
-   `prevented`.
-6. The run emits a path x design coverage grid in which every cell
-   carries an evidence class, plus a dated run manifest that records
-   the hashes of everything that ran, so a third party can re-run the
-   same measurement and compare.
+5. The framework compares the controls' records against the kernel
+   observation and classifies each action instance as `checked` (the
+   action crossed the control and was evaluated there), `bypassed`
+   (it took effect without ever crossing the control), or
+   `prevented` (it was blocked by a mechanism outside the control,
+   such as a network egress filter, so it never took effect).
+6. The result is a table: one row per action path (the 15 below), one
+   column per topology design, and each cell says `checked`,
+   `bypassed`, or `prevented`.
 
 ### The 15 action paths
 
