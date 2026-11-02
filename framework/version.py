@@ -28,5 +28,12 @@ keys), which change on their own schedules.
 # semantics unchanged. Schema notes: capabilities-manifest/1 gains
 # the kernel slot kind + the kernel_interference declaration;
 # decision-record/1 gains protocol "none" (kernel-position records).
-__version__ = "0.2.0"
-FRAMEWORK_LINE = "0.2"
+# 0.3.0: the delegation record layer (delegation-record/1 +
+# framework/delegation.py): hand-off records with came-from chains,
+# acceptance events, the which-machine label, and the trace-back rules
+# (exact echo first; actor-window fallback with exactly one live
+# candidate; ambiguity REFUSED, never nearest-timestamp). Additive: no
+# existing schema or outcome changed; the single-agent designs never
+# emit these records.
+__version__ = "0.3.0"
+FRAMEWORK_LINE = "0.3"

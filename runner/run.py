@@ -561,6 +561,16 @@ def pull_harness_log(out_dir: Path, harness: str,
     src = src_dir / "decisions.jsonl"
     text = src.read_text() if src.is_file() else ""
     (d / "decisions.jsonl").write_text(text)
+    # the delegation record layer (delegation-record/1, the delegation
+    # study): the fixtures write delegation-records.jsonl on the same
+    # mounted replay volume — the storage that outlives the parent
+    # process (the study's outlives-parent scenario reads it after the
+    # parent exits). Captured per run whenever present; absent for the
+    # single-agent fixtures.
+    for aux in ("delegation-records.jsonl",):
+        src_aux = src_dir / aux
+        (d / aux).write_text(
+            src_aux.read_text() if src_aux.is_file() else "")
     if policy_container_path:
         container = f"t6-{harness}"
         proc = docker_exec(container, f"cat {policy_container_path} 2>/dev/null", check=False)

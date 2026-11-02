@@ -147,7 +147,7 @@ Sibling schema sharing the identity fields with `decision-record/1`: `run_id`, `
 - Full identity (type + namespace + version) lives only in the JSON Schema `$id` (e.g. `https://<framework-host>/schemas/decision-record/1`) and in the run manifest, which records which format versions were used for everything in the run.
 - Versioning is additive-only within `/1`; unknown-field tolerance is mandatory in every consumer and is kit-tested. Breaking changes go to `/2`. Fixtures are pinned per major.
 - v0 `AuditEntry` (the gateway `decisions.jsonl` format) remains a valid input via a declared reader-side mapping; existing data remains readable.
-- The user-facing schema set: `experiment/1`, `decision-record/1`, `dispatch-record/1`, `capabilities-manifest/1` (a small identity/capabilities block inside the plugin package: id, version, positions, emitted schema versions). The grid-plan and composition schema families are dropped (§6, §10).
+- The user-facing schema set: `experiment/1`, `decision-record/1`, `dispatch-record/1`, `delegation-record/1` (0.3.0: the delegation study's record layer — one record per agent hand-off or acceptance, from the harness/fixture side, never from controls; carries the came-from pointer chain, the which-machine label, and the carrier that says how the id travelled), `capabilities-manifest/1` (a small identity/capabilities block inside the plugin package: id, version, positions, emitted schema versions). The grid-plan and composition schema families are dropped (§6, §10).
 
 ## 5. Correlation
 
