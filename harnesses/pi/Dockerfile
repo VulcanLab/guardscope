@@ -38,6 +38,11 @@ RUN chmod +x /opt/inspection/*.sh
 # Replay adapter: loaded by the driver with pi -e /opt/inspection/adapter/replay.ts
 COPY harnesses/pi/adapter /opt/inspection/adapter
 
+# F2 delegation fixture: the child program the adapter spawns for the
+# child-performed actions (trace/traces/baseline-f2*.yaml). Same python3 as
+# the toy MCP server; no new packages.
+COPY harnesses/pi/f2-helper.py /opt/inspection/f2-helper.py
+
 COPY harnesses/pi/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 # The container stays up; the driver execs one pi RPC process per replay run

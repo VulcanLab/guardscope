@@ -68,13 +68,15 @@ def run_replay(compiled_path: Path, replay_dir: Path, container: str, timeout_s:
     # Stale artifacts are root-owned (written by the root container); clean
     # them from inside the container instead of failing on host permissions.
     # dispatch-records.jsonl (M2a) joins the cleanup list so a run never
-    # reconciles the previous run's dispatch stream.
+    # reconciles the previous run's dispatch stream; delegation-records.jsonl
+    # (the F2 fixture's hand-off stream) joins for the same reason.
     subprocess.run(["docker", "exec", container, "sh", "-c",
                     f"rm -f {CONTAINER_REPLAY_DIR}/replay-result.json "
                     f"{CONTAINER_REPLAY_DIR}/replay-log.jsonl "
                     f"{CONTAINER_REPLAY_DIR}/compiled.json "
                     f"{CONTAINER_REPLAY_DIR}/decisions.jsonl "
-                    f"{CONTAINER_REPLAY_DIR}/dispatch-records.jsonl"], check=False)
+                    f"{CONTAINER_REPLAY_DIR}/dispatch-records.jsonl "
+                    f"{CONTAINER_REPLAY_DIR}/delegation-records.jsonl"], check=False)
     shutil.copyfile(compiled_path, staged)
 
     two_phase = design in ("t4", "t5", "t6")

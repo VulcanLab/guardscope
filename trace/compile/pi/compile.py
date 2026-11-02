@@ -71,6 +71,13 @@ def compile_action(a: dict) -> dict:
         rec["path"] = a["target"].removeprefix("file://")
     else:
         raise ValueError(f"{a['id']}: unknown class {cls!r}")
+    # F2 delegation fixture: the child-performed marking travels into the
+    # compiled plan unchanged (absent = the harness process performs the
+    # action itself — every existing trace). The adapter branches on this
+    # field; the execution plan (kind + arguments) is otherwise identical,
+    # so the child performs THE SAME effect action the spec declares.
+    if a.get("performed_by"):
+        rec["performed_by"] = a["performed_by"]
     return rec
 
 
@@ -90,7 +97,8 @@ def compile_spec(spec_path: Path) -> dict:
 
 def diff_compiled(spec_path: Path, compiled: dict) -> list[str]:
     """C2 acceptance: compiled trace diffs clean against the spec (id/class/
-    target/op must match 1:1; execution plan keys present)."""
+    target/op must match 1:1; execution plan keys present; performed_by, the
+    F2 child-performed marking, matches 1:1 when present)."""
     spec = yaml.safe_load(spec_path.read_text())
     problems = []
     spec_actions = {a["id"]: a for a in spec["actions"]}
@@ -102,9 +110,12 @@ def diff_compiled(spec_path: Path, compiled: dict) -> list[str]:
         if not sa:
             problems.append(f"{rec['id']}: not in spec")
             continue
-        for field in ("class", "target", "op"):
-            if rec.get(field) != sa[field]:
-                problems.append(f"{rec['id']}: {field} {rec.get(field)!r} != {sa[field]!r}")
+        # performed_by is OPTIONAL: a marking present on one side only is a
+        # normal corruption finding (both sides read with .get — a missing
+        # field on either side must report, never raise)
+        for field in ("class", "target", "op", "performed_by"):
+            if rec.get(field) != sa.get(field):
+                problems.append(f"{rec['id']}: {field} {rec.get(field)!r} != {sa.get(field)!r}")
         if rec.get("kind") is None:
             problems.append(f"{rec['id']}: missing execution kind")
     if compiled["meta"]["spec_sha256"] != spec_sha256(spec_path):

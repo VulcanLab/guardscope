@@ -56,7 +56,11 @@
         },
         "target": { "type": "string", "minLength": 1 },
         "op": { "type": "string", "minLength": 1 },
-        "args": { "type": "object" }
+        "args": { "type": "object" },
+        "performed_by": {
+          "description": "F2 delegation fixture (additive, optional): the process that performs this action's effect. Absent = the harness process itself (every existing fixture — the field changes nothing for them). 'child' = the adapter hands the action to a spawned child process (one hand-off, hop 1); 'grandchild' = the child hands it one level further down (hop 2, one more hand-off in the chain). The action's id, class, target and op are unchanged — the child performs THE SAME effect action the spec declares, so coverage accounting does not move.",
+          "enum": ["child", "grandchild"]
+        }
       },
       "allOf": [
         {

@@ -56,6 +56,7 @@ from framework.records import (  # noqa: E402
     V0_DEFAULT_PLUGIN, V0_DEFAULT_PRODUCT, map_audit_entries,
     now_rfc3339_ms,
 )
+from framework import delegation as delegation_lib  # noqa: E402
 from framework.overlay import MOCK_HARNESS_ID, overlay_abs_path  # noqa: E402
 from framework import reconcile as reconcile_lib  # noqa: E402
 from framework.workdir import resolve_workdir  # noqa: E402
@@ -155,9 +156,13 @@ class RunSummary:
     c5: dict | None = None
     c6: dict | None = None
     outcome_counts: dict | None = None
+    # The F2 delegation section (per-action trace-back results over the
+    # run's hand-off records); None = the run wrote no delegation records
+    # (every existing single-agent fixture) and the manifest key is absent.
+    delegation: dict | None = None
 
     def to_dict(self) -> dict:
-        return {
+        out = {
             "run_id": self.run_id,
             "design": self.design,
             "fixture": self.fixture,
@@ -185,6 +190,9 @@ class RunSummary:
             "c6": self.c6,
             "outcome_counts": self.outcome_counts,
         }
+        if self.delegation is not None:
+            out["delegation"] = self.delegation
+        return out
 
 
 @dataclass
@@ -441,6 +449,12 @@ def default_run_executor(descriptor: RunDescriptor, run_id: str,
         "dispatch_records": (str(out_dir / "dispatch-records.jsonl")
                               if (out_dir / "dispatch-records.jsonl").is_file()
                               else None),
+        # the F2 delegation fixture's hand-off stream (delegation-record/1;
+        # collected per run from the replay volume for every design — the
+        # execution manifest's delegation section reads it)
+        "delegation_records": (str(out_dir / "delegation-records.jsonl")
+                                if (out_dir / "delegation-records.jsonl")
+                                .is_file() else None),
         "native_decision_records": (str(out_dir / "gateway" /
                                          "decision-records.jsonl")
                                      if (out_dir / "gateway" /
@@ -613,6 +627,183 @@ def _c6_report(outcome: dict, run_id: str, window, tolerance: int,
                   window_tolerance_ns=tolerance, run_id=run_id)
 
 
+# --- the F2 delegation section (per-action trace-back results) -------------
+
+# Where a run's collected delegation-records.jsonl may live: the runner
+# copies the replay volume's stream next to the run's artifacts for every
+# design (runner/run.py run_one, like the dispatch records), and the
+# harness-record designs additionally pull it under gateway/ (pull_harness_log).
+_DELEGATION_RECORD_CANDIDATES = (
+    "delegation-records.jsonl",
+    "gateway/delegation-records.jsonl",
+)
+
+
+def _delegation_records_path(outcome: dict, out_dir: Path) -> Path | None:
+    """The run's collected delegation record stream, or None when the run
+    wrote none (every existing single-agent fixture). The first non-empty
+    copy wins; an explicitly hinted path (the executor contract) is
+    checked first."""
+    candidates: list[Path] = []
+    hinted = outcome.get("delegation_records")
+    if hinted:
+        candidates.append(Path(hinted))
+    candidates += [out_dir / rel for rel in _DELEGATION_RECORD_CANDIDATES]
+    for path in candidates:
+        if path.is_file() and path.read_text(encoding="utf-8").strip():
+            return path
+    return None
+
+
+def _replay_result_rows(out_dir: Path) -> tuple[dict, list[str]]:
+    """The run's per-action replay rows ({action id: row}, problems) — the
+    fixture-side effect evidence for the trace-back. EVERY row is evidence:
+    an action whose child failed mid-work still carries the helper's
+    report (and its delegation_id echo) in its row, and the trace-back
+    must answer for it, not skip it."""
+    path = out_dir / "replay-result.json"
+    if not path.is_file():
+        return {}, []
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        return {}, [f"replay-result.json: {exc}"]
+    rows = {r.get("id"): r for r in doc.get("results") or []}
+    return rows, []
+
+
+def _delegated_action_ids(out_dir: Path) -> set:
+    """The actions this run's compiled trace marks child-performed
+    (performed_by: child | grandchild). The run's compiled trace is retained
+    under compiled-trace/ (runner/run.py); an absent or unreadable one means
+    no delegated actions are known — reported as such, never guessed."""
+    delegated: set = set()
+    for compiled in sorted((out_dir / "compiled-trace").glob("*.json")):
+        try:
+            doc = json.loads(compiled.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            continue
+        delegated |= {a.get("id") for a in doc.get("actions") or []
+                      if a.get("performed_by")}
+    return delegated
+
+
+def _effect_observed(row: dict) -> str:
+    """What the effect evidence SHOWS for one action: true | false |
+    unknown — never more than it shows. A missing row is unknown (no
+    evidence at all does not establish the effect did not happen); an
+    error row without per-effect results is unknown too (the child may
+    have performed the effect before it failed). This is the
+    effect-observed question, kept strictly separate from the trace-back
+    status: an effect that traces back cleanly may still be a claim the
+    kernel never confirmed, and an untraceable action may have really
+    happened."""
+    if not row:
+        return "unknown"
+    detail = row.get("detail")
+    results = detail.get("results") if isinstance(detail, dict) else None
+    if isinstance(results, list) and results:
+        # the helper's report carries one result row per handed action —
+        # the per-effect claim, read in preference to the replay row's
+        # own status (a failed effect inside a completed report is a
+        # claim about that effect, not silence)
+        return ("true" if any(isinstance(r, dict) and r.get("status") == "ok"
+                               for r in results) else "false")
+    if row.get("status") == "ok":
+        return "true"    # the replay row's own claim: the effect happened
+    return "unknown"     # an error with no per-effect result says nothing
+
+
+def _delegation_section(outcome: dict, out_dir: Path,
+                        spec: dict) -> dict | None:
+    """The run's per-action delegation trace-back (the F2 fixture's added
+    measurement; framework/delegation.py does the work, this assembles).
+
+    Per spec action id: the trace-back result — exactly the contract's
+    three statuses (attributed / ambiguous / unresolved) — plus the
+    chain of hand-off ids it traced through, the method used, and the
+    separate effect_observed field (true | false | unknown: what the
+    run's effect evidence shows, never asserted beyond it). Evidence is
+    the run's replay rows, ALL of them: an action whose child performed
+    a real effect and then exited with an error still carries the
+    helper's report (the delegation_id echo rides detail regardless of
+    the row's status), so it traces back through its echo like any
+    other. Whether the effect happened is the effect_observed question
+    and never conflated with the trace-back status.
+
+    Chain problems (a cycle in the came-from chain, inconsistent hops)
+    are DATA here, never exceptions: the per-action trace-back is
+    guarded, an action whose chain cannot be walked reports unresolved
+    with the problem noted in its entry, and the manifest assembly
+    never raises on record content. Problems (unparseable/unusable
+    records, chain inconsistencies) are kept in the section, never
+    dropped.
+
+    None when the run wrote no delegation records: the section is absent
+    from the manifest, and every existing single-agent fixture is unchanged.
+    """
+    path = _delegation_records_path(outcome, out_dir)
+    if path is None:
+        return None
+    records, problems = delegation_lib.load_delegation_records(path)
+    if not records and not problems:
+        return None
+    table = delegation_lib.build_chains(records)
+    rows, row_problems = _replay_result_rows(out_dir)
+    delegated = _delegated_action_ids(out_dir)
+
+    # every replay row is one effect record for the trace-back — a row
+    # whose detail carries the helper's report keeps its echo; a row
+    # without an echo still gets an honest trace-back attempt
+    effects: dict = {}   # action id -> effect record
+    for action in spec.get("actions", []):
+        aid = action.get("id")
+        row = rows.get(aid) or {}
+        if not row:
+            continue   # no evidence at all: nothing to hand trace_back
+        effect: dict = {"action_id": aid,
+                        "ts_epoch_ns": row.get("started_epoch_ns") or 0}
+        detail = row.get("detail")
+        echo = detail.get("delegation_id") if isinstance(detail, dict) else None
+        if echo:
+            effect["delegation_id"] = echo
+        effects[aid] = effect
+
+    per_action: dict = {}
+    for action in spec.get("actions", []):
+        aid = action.get("id")
+        entry: dict = {
+            "delegated": aid in delegated,
+            "effect_observed": _effect_observed(rows.get(aid) or {}),
+            "status": delegation_lib.UNRESOLVED,
+            "method": None,
+            "chain": [],
+            "candidates": [],
+        }
+        effect = effects.get(aid)
+        if effect is not None:
+            try:
+                res = delegation_lib.trace_back([effect], table)[0]
+                entry["status"] = res["status"]
+                entry["method"] = res["method"]
+                entry["chain"] = res["chain"]
+                entry["candidates"] = res["candidates"]
+            except delegation_lib.DelegationError as exc:
+                # a chain that cannot be walked (a cycle, a broken
+                # came-from pointer) is reported, never raised: the
+                # action stays unresolved with the problem in its entry
+                entry["status"] = delegation_lib.UNRESOLVED
+                entry["note"] = str(exc)
+        per_action[aid] = entry
+    return {
+        "records": len(records),
+        "record_problems": problems,
+        "chain_problems": table.problems,
+        "evidence_problems": row_problems,
+        "per_action": per_action,
+    }
+
+
 def _outcome_counts(outcome: dict, out_dir: Path,
                     sensor_present: bool) -> dict | None:
     """The run's instance-level outcome counts (runner outcomes.json), with
@@ -733,6 +924,11 @@ def _assemble_run_summary(descriptor: RunDescriptor, outcome: dict,
     # entry is marked an unverified claim
     outcome_counts = _outcome_counts(outcome, out_dir, sensor_present)
 
+    # the F2 delegation section: per-action trace-back results over the
+    # run's hand-off records (None — section absent — for every existing
+    # single-agent fixture: zero behavior change)
+    delegation = _delegation_section(outcome, out_dir, spec)
+
     return RunSummary(
         run_id=run_id,
         design=descriptor.design,
@@ -769,6 +965,7 @@ def _assemble_run_summary(descriptor: RunDescriptor, outcome: dict,
         c5=c5,
         c6=c6,
         outcome_counts=outcome_counts,
+        delegation=delegation,
     )
 
 

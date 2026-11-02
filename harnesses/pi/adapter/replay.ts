@@ -40,6 +40,7 @@ import { promises as fs, createWriteStream, readFileSync, appendFileSync } from 
 import { dirname } from "node:path";
 import net from "node:net";
 import dgram from "node:dgram";
+import crypto from "node:crypto";
 
 const REPLAY_LOG_DIR = process.env.REPLAY_LOG_DIR || "/workspace/replay";
 const MCP_CMD = JSON.parse(process.env.MCP_SERVER_CMD ||
@@ -184,6 +185,176 @@ function writeDispatchRecord(actionId: string, carrierUsed: string,
         : { result: result ?? {} }),
     }) + "\n");
   } catch { /* never fail a replay on record emission */ }
+}
+
+// --- F2 delegation: child-performed actions (the delegation fixture) -------
+//
+// A compiled action may carry performed_by ("child" | "grandchild", from
+// trace/traces/baseline-f2*.yaml via the compiler): the effect is NOT
+// performed in this process — the adapter hands the action to a spawned
+// child process (harnesses/pi/f2-helper.py), the way real sub-agents work.
+// The hand-off is recorded per side: THIS adapter writes the "sent"
+// delegation-record/1 line (delegation-records.jsonl on the replay volume,
+// collected per run by the runner) BEFORE the spawn; the child writes its
+// own "accepted" line, performs the effect, and for performed_by
+// "grandchild" performs one more hand-off (it spawns itself with the chain
+// ids passed down and relays the report). The delegation ids travel to the
+// child via ENV (carrier "env"); the job itself (the action plan + the
+// relay flag) travels on the child's stdin. Existing traces carry no
+// performed_by field, so this branch never runs for them — byte-identical
+// behavior for every existing fixture.
+const F2_HELPER_CMD = JSON.parse(process.env.F2_HELPER_CMD ||
+  '["python3","-u","/opt/inspection/f2-helper.py"]');
+let f2Seq = 0;   // per-stream monotonic (this adapter process = one stream)
+
+// record_id (delegation-record/1): a ULID — 48-bit ms timestamp + 80
+// random bits, Crockford base32, 26 chars.
+const F2_CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+function ulid(): string {
+  let rnd = 0n;
+  for (const b of crypto.getRandomValues(new Uint8Array(10))) {
+    rnd = (rnd << 8n) | BigInt(b);
+  }
+  const val = (BigInt(Date.now()) << 80n) | rnd;
+  let out = "";
+  for (let i = 25; i >= 0; i--) {
+    out += F2_CROCKFORD[Number((val >> BigInt(5 * i)) & 31n)];
+  }
+  return out;
+}
+
+// Opaque and unique is the only requirement; timestamp + random hex is
+// enough (the study never depends on the id's shape).
+function f2DelegationId(): string {
+  return `d-${Date.now().toString(16)}-${crypto.randomBytes(6).toString("hex")}`;
+}
+
+// A digest of the handed task (the action ids, no payloads) — computed
+// identically by the child (harnesses/pi/f2-helper.py task_digest) so the
+// two sides' records join on it.
+function f2TaskDigest(actionIds: string[]): string {
+  return crypto.createHash("sha256")
+    .update(JSON.stringify([...actionIds].sort()))
+    .digest("hex").slice(0, 16);
+}
+
+// One delegation-record/1 line per hand-off event. Emission must never
+// fail the replay (the same policy as the dispatch records).
+function writeDelegationRecord(rec: Record<string, unknown>): void {
+  try {
+    appendFileSync(`${REPLAY_LOG_DIR}/delegation-records.jsonl`,
+                   JSON.stringify(rec) + "\n");
+  } catch { /* never fail a replay on record emission */ }
+}
+
+async function delegateToChild(action: any): Promise<unknown> {
+  // The giver's side: generate the id, write the "sent" record (the root
+  // hand-off: no parent, hop 1), then spawn the helper with the ids in its
+  // env. The report comes back on stdout and becomes the action's detail —
+  // its delegation_id is the exact echo the run's trace-back joins on.
+  const delegationId = f2DelegationId();
+  writeDelegationRecord({
+    schema: 1,
+    record_id: ulid(),
+    run_id: INSPECTION_RUN_ID,
+    stream_id: "pi-root",
+    seq: f2Seq++,
+    ts: new Date().toISOString(),
+    event: "sent",
+    channel: "child",
+    delegation_id: delegationId,
+    parent_delegation_id: null,
+    root_delegation_id: delegationId,
+    hop: 1,
+    from_actor: "pi-root",
+    to_actor: "f2-child",
+    task_digest: f2TaskDigest([action.id]),
+    protocol: "stdio",
+    machine: "origin",
+    carrier: "env",
+    actor_pid: process.pid,
+  });
+  // performed_by "grandchild": the child relays one hand-off further down
+  // (hop 2, one more link in the chain) instead of performing the effect
+  const relay = action.performed_by === "grandchild";
+  const job = JSON.stringify({ run_id: INSPECTION_RUN_ID, relay,
+                               actions: [action] });
+  const env = { ...process.env,
+    F2_DELEGATION_ID: delegationId,
+    F2_PARENT_DELEGATION_ID: "",
+    F2_ROOT_DELEGATION_ID: delegationId,
+    F2_HOP: "1" };
+  // The child runs as its own process-group leader (detached) so a
+  // timeout can reach the WHOLE tree with one signal: the helper may
+  // itself have spawned the grandchild (the hop-2 relay), and an
+  // abandoned child must never keep performing effects or writing
+  // records after the action is over. Limitation, stated honestly:
+  // signaling the group reaches every member that stayed in it, but a
+  // grandchild that called setsid or joined another group is out of
+  // reach from this process — node has no portable way to walk an
+  // arbitrary descendant tree, so the process group is what we can reach.
+  return await new Promise<unknown>((resolve, reject) => {
+    const child = spawn(F2_HELPER_CMD[0], F2_HELPER_CMD.slice(1),
+                        { env, stdio: ["pipe", "pipe", "pipe"],
+                          detached: true });
+    let out = "", err = "";
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const killTree = () => {
+      if (child.pid) {
+        try { process.kill(-child.pid, "SIGKILL"); } catch { /* group gone */ }
+      }
+      try { child.kill("SIGKILL"); } catch { /* already gone */ }
+    };
+    // The helper's report (and with it the delegation_id echo) rides on
+    // the error even when the child failed: the replay row keeps it as
+    // its detail, so an action whose child errored mid-work still traces
+    // back through its echo — a failed hand-off is not a lost one.
+    const fail = (message: string, report?: any) => {
+      clearTimeout(timer);
+      const e: any = new Error(message);
+      e.f2Report = report ?? { status: "error",
+                               delegation_id: delegationId, results: [] };
+      reject(e);
+    };
+    timer = setTimeout(() => {
+      // Kill the tree FIRST, then reject: a rejected promise with a live
+      // child lets effects and records land after the action finished.
+      killTree();
+      fail("f2-helper timeout");
+    }, ACTION_TIMEOUT_MS + 5000);
+    child.stdout!.setEncoding("utf8");
+    child.stdout!.on("data", (d) => { out += d; });
+    child.stderr!.setEncoding("utf8");
+    child.stderr!.on("data", (d) => { err += d; });
+    child.on("error", (e) => {
+      // the child never started: no report, no echo to keep
+      clearTimeout(timer);
+      reject(new Error(`f2-helper spawn failed: ${(e as Error).message}`));
+    });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      if (code !== 0) {
+        // a nonzero exit may have left grandchildren behind: the group
+        // is private to this child, so draining it is safe
+        killTree();
+        fail(`f2-helper exited ${code}: ${err.trim().slice(0, 300)}`);
+        return;
+      }
+      let report: any;
+      try { report = JSON.parse(out); }
+      catch (e) {
+        fail(`f2-helper: unreadable report (${e})`);
+        return;
+      }
+      if (report.status !== "ok") {
+        fail(`f2-helper (delegation ${report.delegation_id ?? delegationId}): ${report.error}`, report);
+        return;
+      }
+      resolve(report);
+    });
+    child.stdin!.write(job);
+    child.stdin!.end();
+  });
 }
 
 // T3 (compose/t3.yaml sets GATEWAY_FS=1): the stdio tool calls are proxied
@@ -337,6 +508,12 @@ class McpSession {
 // --- per-class executors -----------------------------------------------------
 
 async function execAction(action: any): Promise<unknown> {
+  // F2: a child-performed action never executes here — the effect moves
+  // into the spawned helper (a trace without performed_by is unchanged).
+  // Applies to every executor path (the t0 replay loop and the t4/t6
+  // process-level phase alike): the child spawns inside this container,
+  // so every design's process-tree view stays the one it already watches.
+  if (action.performed_by) return await delegateToChild(action);
   switch (action.kind) {
     case "mcp": {
       // carriers (DESIGN.md 5): _meta on every tools/call this adapter builds
@@ -490,6 +667,10 @@ async function runReplay(trace: any) {
       } catch (exc) {
         status = "error";
         error = String((exc && (exc as Error).message) || exc);
+        // a child that failed mid-work still leaves its report (with the
+        // delegation_id echo) — keep it in the row: the error path is
+        // evidence too, not silence
+        if ((exc as any)?.f2Report) detail = (exc as any).f2Report;
         if (CSB_EVIDENCE_DIR) {
           const e: any = exc;
           errorDetail = { code: e?.code || e?.cause?.code || null, errno: e?.errno ?? e?.cause?.errno ?? null,
@@ -634,6 +815,9 @@ async function t4CommandPhase(trace: any, ctx: any): Promise<void> {
     } catch (exc) {
       status = "error";
       error = String((exc && (exc as Error).message) || exc);
+      // same as the t0 loop: a failed child's report (with the echo) is
+      // evidence, kept in the row
+      if ((exc as any)?.f2Report) detail = (exc as any).f2Report;
     }
     const rec = { id: action.id, class: action.class, op: action.op,
                   started_ns: t0, ended_ns: ns(), started_epoch_ns: epochNs(),

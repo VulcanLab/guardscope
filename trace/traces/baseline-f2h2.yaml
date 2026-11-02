@@ -1,0 +1,136 @@
+# F2 delegation fixture, hop 2 (the two-hop variant): identical to
+# baseline-f2.yaml except the six process-level effect actions are marked
+# performed_by: grandchild — the adapter hands each one to a spawned child
+# (hop 1), and the child does NOT perform it: the child hands it one level
+# further down to a grandchild (hop 2, one more hand-off in the chain) and
+# relays the grandchild's report back up. The child is a pure intermediary;
+# the grandchild is the same helper program with hop + 1
+# (harnesses/pi/f2-helper.py).
+#
+# Why two spec files (baseline-f2.yaml, baseline-f2h2.yaml) instead of one
+# spec + a compile flag: each variant is a first-class, hashable workload
+# document — the canonical-hash sidecar machinery (trace/hash_spec.py) and
+# the compiled-trace --check diff both pin a FILE, the runner stages the
+# compiled trace by name, and a compile flag would hide the hop depth from
+# every one of those pinned identities (two runs that differ only by a
+# flag would share a spec hash). The same argument the repo already makes
+# for spec versioning: identity lives in the document, not in the command
+# line.
+#
+# Everything else is identical to baseline-f2.yaml (same ids, classes,
+# targets, ops, window marks; the taxonomy is untouched).
+meta:
+  name: baseline-f2h2
+  version: 1
+  description: >-
+    F2 child-process delegation workload (hop 2, the two-hand-off chain). The
+    baseline action surface with the six process-level effect actions marked
+    performed_by: grandchild: the adapter hands each to a spawned child (hop
+    1), the child hands it to a grandchild (hop 2) and relays the report —
+    one more hand-off in the chain for the tracing-back measurement
+    (framework/delegation.py first_break_hop reads exactly this).
+  window:
+    start: mark-start
+    end: mark-end
+
+actions:
+  # --- stdio_tool_call (MCP over stdio) — parent-performed ---
+  - id: a001
+    class: stdio_tool_call
+    target: mcp://fs@local
+    op: write_file
+    args: { path: /workspace/out/a.txt, data: "hello from mcp fs" }
+
+  - id: a002
+    class: stdio_tool_call
+    target: mcp://fs@local
+    op: read_file
+    args: { path: /workspace/out/a.txt }
+
+  - id: a003
+    class: stdio_tool_call
+    target: mcp://fs@local
+    op: list_directory
+    args: { path: /workspace/out }
+
+  # --- http_tool_call — parent-performed ---
+  - id: a011
+    class: http_tool_call
+    target: http://http-endpoint:8080
+    op: POST
+    args: { path: /hook, body: "tool-call payload" }
+
+  - id: a012
+    class: http_tool_call
+    target: http://http-endpoint:8080
+    op: GET
+    args: { path: /health }
+
+  - id: a013
+    class: http_tool_call
+    target: http://http-endpoint:8080
+    op: PUT
+    args: { path: /state, body: "k=v" }
+
+  # a014: the checked-DENY case (same as baseline v2) — parent-performed.
+  - id: a014
+    class: http_tool_call
+    target: http://http-endpoint:8080
+    op: POST
+    args: { path: /hook, body: "policy-deny case" }
+
+  # --- direct_network — GRANDCHILD-performed (child relays one hop down) ---
+  - id: a021
+    class: direct_network
+    target: net-peer:9000
+    op: tcp_connect
+    args: { payload: "direct tcp" }
+    performed_by: grandchild
+
+  - id: a022
+    class: direct_network
+    target: net-peer:9001
+    op: udp_send
+    args: { payload: "direct udp" }
+    performed_by: grandchild
+
+  # --- process_spawn — GRANDCHILD-performed ---
+  - id: a031
+    class: process_spawn
+    target: /bin/sh
+    op: exec
+    args: { cmd: "echo hi" }
+    performed_by: grandchild
+
+  - id: a032
+    class: process_spawn
+    target: /bin/echo
+    op: exec
+    args: { cmd: "spawned directly" }
+    performed_by: grandchild
+
+  # --- file_write — GRANDCHILD-performed ---
+  - id: a041
+    class: file_write
+    target: /workspace/out/b.txt
+    op: write
+    args: { data: "direct write" }
+    performed_by: grandchild
+
+  - id: a042
+    class: file_write
+    target: /workspace/out/c.log
+    op: append
+    args: { data: "appended line\n" }
+    performed_by: grandchild
+
+  # --- credential_access — parent-performed (see baseline-f2.yaml header) ---
+  - id: a051
+    class: credential_access
+    target: file:///run/secrets/token
+    op: read
+
+  - id: a052
+    class: credential_access
+    target: file:///run/secrets/db_password
+    op: read

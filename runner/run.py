@@ -449,12 +449,14 @@ def trigger_replay(harness: str, run_id: str, timeout_s: float,
     import trigger_openclaw as to
     # clean the previous run's replay log AND the enforcement-point record
     # (the t4/t6 hook appends decisions.jsonl; stale entries would pollute);
-    # the dispatch records (M2a) join the cleanup list for the same reason
+    # the dispatch records (M2a) and the delegation records (the F2
+    # fixture's hand-off stream) join the cleanup list for the same reason
     docker_exec(cfg["container"],
                 f"rm -f {cfg['replay_mount']}/replay-log.jsonl "
                 f"{cfg['replay_mount']}/replay-result.json "
                 f"{cfg['replay_mount']}/decisions.jsonl "
-                f"{cfg['replay_mount']}/dispatch-records.jsonl", check=False)
+                f"{cfg['replay_mount']}/dispatch-records.jsonl "
+                f"{cfg['replay_mount']}/delegation-records.jsonl", check=False)
     # M2a: stage the run identity for the adapter's dispatch records. The
     # long-lived OpenClaw gateway process cannot receive per-run env, so the
     # driver stages it as a file on the mounted replay volume; the adapters
@@ -844,6 +846,15 @@ def run_one(harness: str, run_id: str, runs_dir: Path, timeout_s: float | None =
     dispatch_src = Path(replay_log_src).parent / "dispatch-records.jsonl"
     if dispatch_src.is_file():
         shutil.copyfile(dispatch_src, out_dir / "dispatch-records.jsonl")
+    # the delegation record stream (the F2 fixture, delegation-record/1):
+    # collected for EVERY design whenever the fixture wrote one — the F2
+    # fixture runs under t0 too (no enforcement-point pull happens there),
+    # and the execution manifest's delegation section reads this copy
+    # (framework/execute.py). The harness-record designs additionally keep
+    # their copy under gateway/ via pull_harness_log; same volume, same run.
+    delegation_src = Path(replay_log_src).parent / "delegation-records.jsonl"
+    if delegation_src.is_file():
+        shutil.copyfile(delegation_src, out_dir / "delegation-records.jsonl")
     if harness == "mock-harness":
         # the driver's own run manifest (trace/plan pins, window, digest) is
         # retained as the mock-run provenance artifact (named to avoid
