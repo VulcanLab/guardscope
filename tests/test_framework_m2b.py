@@ -125,10 +125,10 @@ def test_c6_effective_deny_confirmed(tmp_path):
     assert rep["status"] == "pass"
     assert rep["findings"] == []
     (entry,) = rep["per_deny"]
-    assert entry["verdict"] == "prevented-confirmed"
+    assert entry["verdict"] == "denial-confirmed"
     assert entry["attribution_method"] == "id"
     assert entry["evidence"] == []
-    assert rep["denies"]["prevented_confirmed"] == 1
+    assert rep["denies"]["denials_confirmed"] == 1
 
 
 def test_c6_ineffective_deny_is_the_key_finding(tmp_path):
@@ -181,7 +181,7 @@ def test_c6_deny_without_action_id_resolves_by_target_identity(tmp_path):
     (entry,) = rep["per_deny"]
     assert entry["action_id"] == "a014"
     assert entry["attribution_method"] == "target_identity"
-    assert entry["verdict"] == "prevented-confirmed"
+    assert entry["verdict"] == "denial-confirmed"
     # the same-route a011 resolves with its own body
     v0_deny_a011 = deny_record(
         action_id=None, tool="post_hook", method="POST", path="/hook",
@@ -200,7 +200,7 @@ def test_c6_window_scoping(tmp_path):
     ])
     rep = run_c6(tmp_path, [deny_record(action_id="a021")],
                  window=WINDOW, window_tolerance_ns=10**9, run_id="r1")
-    assert rep["per_deny"][0]["verdict"] == "prevented-confirmed"
+    assert rep["per_deny"][0]["verdict"] == "denial-confirmed"
 
 
 def test_c6_effect_classes_use_the_manifest_signatures(tmp_path):
@@ -236,7 +236,7 @@ def test_c6_effect_classes_use_the_manifest_signatures(tmp_path):
         deny_record(action_id="a021"),
     ], window=WINDOW, run_id="r1")
     assert rep2["status"] == "pass"
-    assert rep2["denies"]["prevented_confirmed"] == 3
+    assert rep2["denies"]["denials_confirmed"] == 3
 
 
 def test_c6_stdio_write_effect_via_manifest_attribute(tmp_path):
@@ -251,7 +251,7 @@ def test_c6_stdio_write_effect_via_manifest_attribute(tmp_path):
         deny_record(action_id="a001", action_class="stdio_tool_call"),
     ], window=WINDOW, run_id="r1")
     assert rep["status"] == "pass"
-    assert rep["per_deny"][0]["verdict"] == "prevented-confirmed"
+    assert rep["per_deny"][0]["verdict"] == "denial-confirmed"
     # the write-mode open makes the denial ineffective
     write_mapped(tmp_path, [
         mapped("file_write", "security_file_open", WINDOW[0] + 100,
@@ -425,9 +425,9 @@ def test_execute_c6_confirms_effective_deny(tmp_path):
                                 out_root=tmp_path)
     run = result.runs[0]
     # the v0-mapped deny resolves a014 by target identity; its endpoint
-    # connect is absent -> prevented-confirmed, no finding
+    # connect is absent -> denial-confirmed, no finding
     assert run.c6["status"] == "pass"
-    assert run.c6["denies"]["prevented_confirmed"] == 1
+    assert run.c6["denies"]["denials_confirmed"] == 1
     (entry,) = run.c6["per_deny"]
     assert entry["action_id"] == "a014"
     assert entry["attribution_method"] == "target_identity"
@@ -480,9 +480,10 @@ def test_sensor_absent_labels_the_run_self_reported(tmp_path):
 
 
 def test_sensor_absent_prevented_outcomes_are_marked_claims(tmp_path):
-    # DESIGN.md 9: prevented requires kernel verification; without the
-    # sensor the outcome counts are claimed-only (verified: false) and
-    # every prevented entry carries a per-action unverified-claim note
+    # DESIGN.md 9: prevented requires kernel verification of the effect
+    # absence; without the sensor the outcome counts are claimed-only
+    # (verified: false) and every prevented entry carries a per-action
+    # unverified-claim note
     p = write_experiment(tmp_path, {"schema": 1, "control": "agt-gateway",
                                     "designs": ["t1"]})
     result = execute_experiment(

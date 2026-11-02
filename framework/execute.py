@@ -33,7 +33,9 @@ Degraded no-eBPF mode (DESIGN.md 9: the default path for users without
 kernel privileges): sensor=False skips the runner's sensor entirely; every
 output of such a run is labeled self-reported / unverified, C6 is skipped
 with a note (never a finding), and `prevented` outcome entries are marked
-as unverified claims (claims never self-upgrade).
+as unverified claims: prevented is an outside-the-policy block whose
+effect-absence half needs the sensor to verify (claims never
+self-upgrade).
 
 The execution path assumes the Linux testbed host (Docker, compose, arm64);
 unit tests inject a fake run_executor so nothing here calls Docker.
@@ -618,8 +620,10 @@ def _outcome_counts(outcome: dict, out_dir: Path,
     verified only when kernel corroboration exists (the sensor produced
     evidence); in a sensor-less run they are claimed-only (`verified:
     false`), and every `prevented` entry carries a per-action note that it
-    is an unverified claim — prevented requires deny + verified absence of
-    the kernel signature, and claims never self-upgrade."""
+    is an unverified claim — prevented is blocking outside the policy with
+    no decision record, and its kernel-verified half (the absence of the
+    action's effect) cannot be verified without the sensor; claims never
+    self-upgrade."""
     hinted = outcome.get("outcomes")
     path = Path(hinted) if hinted else out_dir / "outcomes.json"
     if not path.is_file():
@@ -644,8 +648,8 @@ def _outcome_counts(outcome: dict, out_dir: Path,
             {"id": row.get("id"), "class": row.get("class"),
              "note": ("unverified claim: no kernel sensor ran in this run "
                       "(degraded no-eBPF mode); prevented requires kernel "
-                      "verification (DESIGN.md 9) and claims never "
-                      "self-upgrade")}
+                      "verification of the action's effect absence "
+                      "(DESIGN.md 9) and claims never self-upgrade")}
             for row in rows if row.get("outcome") == "prevented"]
     return counts
 

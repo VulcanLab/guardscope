@@ -53,7 +53,10 @@ class ControlContract(Protocol):
         ingested; correlation capability claims (echoes_meta, echoes_header,
         verified by the fidelity check, never trusted); observable action
         classes; can_enforce: enforce | observe (an observe-only control can
-        never produce 'prevented'); supported schema versions.
+        never issue a deny, so it can never yield a checked-denied outcome;
+        'prevented' never originates from a control record — it is blocking
+        outside the policy with no decision record at all); supported
+        schema versions.
 
     provision(slot)
         Slot-typed: 'container' (image + compose service), 'attached_process'

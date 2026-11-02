@@ -48,7 +48,7 @@ The mock harness is a policy-blind stand-in that performs the canonical actions 
 
 | Operation | Meaning |
 |---|---|
-| `describe()` | Static manifest: slot kinds supported; `record_source: native \| ingested`; correlation capability claims (`echoes_meta`, `echoes_header`, verified by the fidelity check, never trusted); observable action classes; `can_enforce: enforce \| observe` (an observe-only control can never produce `prevented`); supported schema versions |
+| `describe()` | Static manifest: slot kinds supported; `record_source: native \| ingested`; correlation capability claims (`echoes_meta`, `echoes_header`, verified by the fidelity check, never trusted); observable action classes; `can_enforce: enforce \| observe` (an observe-only control can never issue a deny, so it can never yield a `checked-denied` outcome; `prevented` never originates from a control record — it is blocking outside the policy with no decision record at all); supported schema versions |
 | `provision(slot)` | Slot-typed: `container` (image + compose service), `attached_process` (configure an existing host/process), `log_ingest` (register a vendor log source; the shim case). Returns `{handle, attach}`; the attach descriptor is per-slot and carries the runner-assigned `stream_id` plus typed env (`GATEWAY_URL`, `MCP_GATEWAY_URL`, `GATEWAY_TOOL_ROUTES`, `GATEWAY_FS`). No global singleton env |
 | `configure(policy_descriptor)` | Idempotent, reversible; returns a policy fingerprint that must match `policy.policy_hash` in emitted records |
 | `ready()` | Readiness must prove that enforcement works, not just that the container is running: it passes only when a runner-issued test action (one the loaded policy must deny) produces its decision record. A started container is not ready; opening the capture window too early silently produces false `bypassed` results |
@@ -304,18 +304,18 @@ Hard properties: per-process determinism with interleaving-independent classific
 | C3 | Per-point 1:1 accounting (no missing, duplicated, or unmatched decisions within a stream) |
 | C4 | No unmatched inspected-class events (unmatched kernel events in inspected classes are findings, not unrelated events) |
 | C5 | Id consistency: echoed ids match the carriers the harness dispatched; fabrication, duplication, and stripping are detected |
-| C6 | Denial effectiveness: `prevented` = deny record + verified absence of the action's kernel signature; the expected per-class kernel signature is derived from mock-harness baseline runs |
+| C6 | Denial effectiveness: a `checked-denied` instance's denial held = deny record + verified absence of the action's kernel signature (a deny record with the kernel signature present is the C6-ineffective finding: the control denied the call but the effect happened); the expected per-class kernel signature is derived from mock-harness baseline runs |
 
 **Proxy-egress attribution rule:** a gateway proxying a tool call performs the `connect()` itself; kernel events from control processes must be attributed to the inspected action via slot cgroup scope, not to the direct-network escape class, or inspected designs accumulate false bypasses.
 
 **Output.** Per action instance per enforcement point:
 
-- `outcome: checked | prevented | bypassed | enforcement_failure | not_observed` (reconciler-only).
+- `outcome: checked-allowed | checked-denied | bypassed | prevented | indeterminate` (reconciler-only; `checked` splits into `checked-allowed` and `checked-denied`, and a denial whose effect still happened is `indeterminate`: enforcement did not hold).
 - `claimed[]` (decision records + attribution methods) and `verified` (kernel match) as **separate, never-merged structures**.
 - `attribution_method`; `evidence class: harness-run | mock-run | self-reported | derived`; `degraded: [reasons]`; structured C1-C6 findings.
 - Per-run unmatched counters: unmatched kernel events, unmatched decisions, unmatched expected actions; organic-traffic volume per stream.
 
-The primary reported numbers come from verified results only. Harness-run and mock-run cells are reported separately, never aggregated. Stated limit: `prevented` is the only fully kernel-verifiable outcome (deny record + verified absence of the action's kernel signature); `checked` confidence is limited by conformance, determinism, and record plausibility: a fabricated allow-record for an action that did occur passes both the id check and the kernel-presence check.
+The primary reported numbers come from verified results only. Harness-run and mock-run cells are reported separately, never aggregated. Stated limit: the kernel verifies absence-of-effect claims — that a `checked-denied` instance's denial held (C6), and that a `prevented` instance never took effect — and only with a sensor inside its observation window; `prevented`'s no-decision property is a topology attribute (the blocking mechanism sits outside the policy), not something the kernel verifies. `checked` confidence is limited by conformance, determinism, and record plausibility: a fabricated allow-record for an action that did occur passes both the id check and the kernel-presence check.
 
 **Degraded no-eBPF mode** (the default path for users without kernel privileges, the main obstacle for new users): every output it produces is labeled `self-reported` / unverified. The claimed-vs-verified distinction is preserved even without the sensor.
 

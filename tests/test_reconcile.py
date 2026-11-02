@@ -762,3 +762,45 @@ def test_t6_denied_prevented_class_fails():
     assert report["status"] == "fail"
     assert any(c["id"] == "R1-replay-layer" and c["status"] == "fail"
                for c in report["checks"])
+
+
+# --- T7: the kernel kill arm's denial is a policy denial (checked-denied) ----
+
+
+def _t7_replay(status_by_id):
+    replay = replay_result()
+    for r in replay["results"]:
+        status = status_by_id.get(r["id"])
+        if status:
+            r["status"] = status
+            r["error"] = "child killed (SIGKILL)" if status == "error" else None
+    return replay
+
+
+def test_t7_kernel_denied_instance_r1_passes():
+    # a032 (exec /bin/echo) is killed by the fixture policy at the kernel:
+    # the replay sees the SIGKILLed child as an execution error, tolerated
+    # BY ID (T7_KERNEL_DENIED_INSTANCES), never by class membership
+    rec = rc.Reconciler(SPEC, rc.load_profile(PROFILE_DIR / "pi.yaml"),
+                        _t7_replay({"a032": "error"}), [], [], None,
+                        design="t7")
+    r1 = rec.reconcile_replay()
+    assert not r1["problems"]
+
+
+def test_t7_allowed_twin_must_still_succeed():
+    # a031 (exec /bin/sh) shares the class with the denied a032: its failure
+    # is NOT tolerated (the tolerance is keyed on the deny instance id)
+    rec = rc.Reconciler(SPEC, rc.load_profile(PROFILE_DIR / "pi.yaml"),
+                        _t7_replay({"a031": "error"}), [], [], None,
+                        design="t7")
+    r1 = rec.reconcile_replay()
+    assert any("a031" in p for p in r1["problems"])
+
+
+def test_t7_prevented_classes_empty():
+    # the kernel position mediates through a POLICY: its denials are
+    # checked-denied, not prevented; prevented stays reserved for the
+    # silent outside-the-policy mechanisms (t2/t3 egress jail)
+    assert rc.PREVENTED_CLASSES["t7"] == set()
+    assert rc.T7_KERNEL_DENIED_INSTANCES == frozenset({"a032"})

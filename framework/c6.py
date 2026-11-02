@@ -1,20 +1,24 @@
-"""C6: denial effectiveness (DESIGN.md 9, "Denial effectiveness: `prevented`
-= deny record + verified absence of the action's kernel signature; the
-expected per-class kernel signature is derived from mock harness baseline
-runs").
+"""C6: denial effectiveness (DESIGN.md 9, "Denial effectiveness: a
+`checked-denied` instance's denial held = deny record + verified absence
+of the action's kernel signature; the expected per-class kernel signature
+is derived from mock harness baseline runs").
 
 C6 turns every DENY decision record (native or v0-mapped) into a verifiable
-claim: the control claims it prevented the action, so the kernel evidence of
-the run must NOT contain the action's expected signature. Three outcomes:
+claim: the control claims it denied the action — a checked-denied
+instance under the outcome taxonomy (checked/bypassed/prevented, the
+paper's definitions; a policy denial is checked, never prevented) — so
+the kernel evidence of the run must NOT contain the action's expected
+signature. Three outcomes:
 
-  prevented-confirmed  the deny is recorded and the action's expected
+  denial-confirmed     the deny is recorded and the action's expected
                        kernel signature is absent from the run's kernel
-                       evidence inside the measurement window — the claim is
-                       corroborated (this is the only fully kernel-verifiable
-                       outcome, DESIGN.md 9 "Stated limit")
+                       evidence inside the measurement window — the
+                       denial held (the only fully kernel-verifiable
+                       claim, DESIGN.md 9 "Stated limit")
   C6-ineffective       the deny is recorded AND the action's expected kernel
                        signature IS present in-window — the key finding: the
-                       control claimed prevention but the effect happened
+                       control denied the call but the effect happened (the
+                       instance is indeterminate: enforcement did not hold)
   unverifiable         the action's class has no per-action attributable
                        kernel signature (multiplexed transport evidence,
                        reads colliding with unrelated events) — recorded with a note, never
@@ -337,8 +341,9 @@ def run_c6(run_dir, decision_records, *, window,
                 "note": ("no kernel evidence (mapped-actions.jsonl absent "
                          "or empty in the run dir): C6 not run (a skip "
                          "with a note, never a finding; DESIGN.md 9 — "
-                         "prevented requires kernel verification, and "
-                         "claims cannot self-upgrade)"),
+                         "a checked-denied instance's denial-hold requires "
+                         "kernel verification, and claims cannot "
+                         "self-upgrade)"),
                 "denies": {"records": 0}, "per_deny": [], "findings": []}
 
     if spec is None:
@@ -403,7 +408,7 @@ def run_c6(run_dir, decision_records, *, window,
         evidence = ([_ref(r) for r in in_window
                      if any(_record_matches(r, p) for p in sig["predicates"])]
                     if sig["predicates"] else [])
-        verdict = "C6-ineffective" if evidence else "prevented-confirmed"
+        verdict = "C6-ineffective" if evidence else "denial-confirmed"
         if not sig["predicates"]:
             verdict = "unverifiable"
         entry = {"action_id": action["id"],
@@ -424,15 +429,16 @@ def run_c6(run_dir, decision_records, *, window,
                            f"({action['class']}) is followed by the "
                            f"action's expected kernel signature in-window: "
                            f"{[e['event'] for e in evidence]} — the control "
-                           f"claimed prevention but the effect happened "
-                           f"(DESIGN.md 9: prevented = deny record + "
-                           f"verified absence of the kernel signature)"),
+                           f"denied the call but the effect happened "
+                           f"(DESIGN.md 9: a checked-denied instance's "
+                           f"denial held = deny record + verified absence "
+                           f"of the kernel signature)"),
             })
 
     counts = {"records": n_denies,
               "unique": len(seen),
-              "prevented_confirmed": sum(1 for e in seen.values()
-                                         if e["verdict"] == "prevented-confirmed"),
+              "denials_confirmed": sum(1 for e in seen.values()
+                                        if e["verdict"] == "denial-confirmed"),
               "ineffective": len(findings),
               "unverifiable": sum(1 for e in seen.values()
                                   if e["verdict"] == "unverifiable"),

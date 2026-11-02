@@ -166,3 +166,41 @@ def test_t0_all_bypassed():
     assert all(v == "bypassed" for v in got.values())
     assert report["counts"]["bypassed"] == 15
     assert report["status"] == "pass"
+
+
+# --- T7: kernel position — the kill arm's deny is checked-denied --------------
+
+
+def test_t7_kernel_kill_is_checked_denied():
+    """T7's fixture policy kills exactly one spawn instance (a032) at the
+    kernel: a policy verdict at the kernel enforcement point, so the
+    instance classifies as checked-denied (never prevented); the allowed
+    twin a031 takes effect. The coverage rows mirror the live acceptance
+    pair (targets/actplane/README.md): the effect classes are mediated,
+    a022's unconnected udp sendto has no kernel hook (evaluated: false),
+    and the tool-call classes are invisible at the kernel's semantic level.
+    """
+    effect_ids = {a["id"] for a in SPEC["actions"]
+                  if a["class"] in ("process_spawn", "file_write",
+                                    "direct_network", "credential_access")}
+    effect_ids.discard("a022")   # no sendmsg hook: a REAL hook-coverage gap
+    rows = {aid: cov_row(aid, aid in effect_ids, "allowed") for aid in BY_ID}
+    rows["a032"] = cov_row("a032", True, "denied")
+    replay = replay_result({"a032": "error"})  # the SIGKILLed child
+    report = oc.compute(SPEC, replay, coverage(rows), "t7")
+    got = by_outcome(report)
+    assert got["a032"] == "checked-denied"
+    assert got["a031"] == "checked-allowed"
+    assert got["a022"] == "bypassed"
+    assert report["counts"] == {"checked-allowed": 6, "checked-denied": 1,
+                                "bypassed": 8, "prevented": 0,
+                                "indeterminate": 0}
+    assert report["status"] == "pass"
+
+
+def test_t7_denial_never_prevented_and_prevented_classes_empty():
+    """Pin the taxonomy: a policy denial is checked-denied, never
+    prevented; PREVENTED_CLASSES reserves prevented for silent
+    outside-the-policy mechanisms (the t2/t3 egress jail)."""
+    assert rec_mod.PREVENTED_CLASSES["t7"] == set()
+    assert "a032" in rec_mod.T7_KERNEL_DENIED_INSTANCES

@@ -630,9 +630,9 @@ def assemble_sensorless(spec_path: Path, profile: dict, replay: dict,
     decision-log coverage (C1-C4, kernel-free), and the instance-level
     outcome classification from the replay statuses. `prevented` entries
     are replay-status claims without kernel corroboration: each is
-    annotated as an unverified claim (prevented = deny record + verified
-    absence of the kernel signature; without the sensor there is nothing
-    to verify absence against).
+    annotated as an unverified claim (prevented = an outside-the-policy
+    block with no decision record; without the sensor there is nothing
+    to verify the absence of the action's effect against).
 
     Returns (run_record, manifest, report) with the same shape as
     rr_mod.assemble so run_one's tail is shared; report.status is
@@ -671,7 +671,8 @@ def assemble_sensorless(spec_path: Path, profile: dict, replay: dict,
         if row["outcome"] == "prevented":
             row["note"] = ("unverified claim: no kernel sensor ran in this "
                            "run (degraded no-eBPF mode); prevented requires "
-                           "kernel verification (DESIGN.md 9)")
+                           "kernel verification of the action's effect "
+                           "absence (DESIGN.md 9)")
 
     sys.path.insert(0, str(HERE / "trace"))
     from hash_spec import canonical_hash as ch, raw_hash as rh  # noqa: E402
@@ -796,12 +797,19 @@ def run_one(harness: str, run_id: str, runs_dir: Path, timeout_s: float | None =
     result, replay_log_src = trigger_replay(harness, run_id, timeout_s, cfg)  # noqa: E501
     if not result.get("ok"):
         # design-aware: failures are only tolerated for PREVENTED actions
-        # (design t2: refused by the egress policy with a refusal errno) and
-        # for DENIED tool calls (checked-DENY: the enforcement point refused
-        # the call — a valid terminal state for t1+ designs; a spurious
-        # denial, i.e. no backed decision, fails coverage/outcomes). Any
-        # other failure aborts the run before reconciliation.
+        # (design t2/t3: refused by the egress policy with a refusal errno),
+        # for the t7 kernel-denied instances (the fixture policy's kill arm
+        # denies them at the kernel — the harness replay sees the SIGKILLed
+        # child as an execution error; the deny decision record + C6 verify
+        # the denial downstream, this gate only decides abort-vs-continue),
+        # and for DENIED tool calls (checked-DENY: the enforcement point
+        # refused the call — a valid terminal state for t1+ designs; a
+        # spurious denial, i.e. no backed decision, fails
+        # coverage/outcomes). Any other failure aborts the run before
+        # reconciliation.
         prevented = rec_mod.PREVENTED_CLASSES.get(design, set())
+        kernel_denied = (rec_mod.T7_KERNEL_DENIED_INSTANCES
+                         if design == "t7" else frozenset())
         spec = rec_mod.load_spec(BASELINE)
         spec_class = {a["id"]: a["class"] for a in spec["actions"]}
 
@@ -812,6 +820,10 @@ def run_one(harness: str, run_id: str, runs_dir: Path, timeout_s: float | None =
                 # deny) is a failure; t1+ denials are corroborated downstream
                 return design == "t0"
             if status == "ok":
+                return False
+            if r.get("id") in kernel_denied and status == "error":
+                # the t7 kill arm denied this instance at the kernel; the
+                # deny record + C6 corroborate downstream
                 return False
             return not (spec_class.get(r.get("id")) in prevented
                         and status == "error")

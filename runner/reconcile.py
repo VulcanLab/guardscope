@@ -97,13 +97,26 @@ PREVENTED_CLASSES = {
     # in-process policy; the process-level actions bypass (invisible by
     # construction), nothing prevented
     "t6": set(),
-    # t7 (0.2.0): the fixture policy's kill arm denies the a032 spawn
-    # (exec /bin/echo) at the kernel — deny record + verified kernel
-    # absence = prevented (C6); every other mediated class is notified
-    # (checked). The runner tolerates a failed replay action whose class
-    # is here (same mechanism as the t2/t3 egress-jail failures).
-    "t7": {"process_spawn"},
+    # t7 (0.2.0): nothing prevented. The kernel position mediates through
+    # a POLICY (the actplane engine), so its kill arm's denial is a policy
+    # decision — the denied instance (a032) crosses the kernel enforcement
+    # point and classifies as checked-denied, not prevented; every
+    # mediated class is notified (checked). Prevented stays reserved for
+    # silent outside-the-policy mechanisms (the t2/t3 egress jail).
+    "t7": set(),
 }
+
+# The t7 fixture policy's kill arm (plugins/actplane/policy/t7.ap.yaml:
+# `kill exec "/bin/echo"`) denies exactly one declared instance: a032.
+# The denial is a policy verdict at the kernel enforcement point, so the
+# instance's outcome is checked-denied (the deny decision record is
+# attributed by the coverage layer, and C6 verifies the denial held).
+# The harness replay sees the SIGKILLed child as an execution error (the
+# enforcement sits below the dispatch layer), so the replay-layer checks
+# (R1, and run.py's replay gate) tolerate exactly this instance BY ID, not
+# by class: the allowed twin a031 (exec /bin/sh) must still succeed, and
+# this set never feeds classification — the deny record does.
+T7_KERNEL_DENIED_INSTANCES = frozenset({"a032"})
 
 # designs in which ALL tool calls share one pooled origin (gateway:8090): the
 # kernel cannot attribute connects to the stdio vs http class — the gateway
@@ -420,35 +433,32 @@ class Reconciler:
                 # is cross-checked in coverage (C2) and the outcome
                 # classifier; the served layer (R2) requires absence of effect.
                 continue
+            if self.design == "t7" and a["id"] in T7_KERNEL_DENIED_INSTANCES:
+                # the kernel policy denied this instance (checked-denied:
+                # the deny decision record is attributed by the coverage
+                # layer and C6 verifies the denial held). The harness sees
+                # the SIGKILLed child as status error; the allowed twins of
+                # the class (a031) must still succeed. The outcome classifier
+                # + C6 adjudicate; R1 does not.
+                continue
             if a["class"] in self.prevented:
-                if self.design == "t7":
-                    # prevented (t7) is INSTANCE-level: the kernel position
-                    # denies the specific spawn the fixture policy names
-                    # (a032; the class's allowed twin a031 succeeds —
-                    # /bin/sh is also harness plumbing). Both terminal
-                    # states are valid here: status error = the denied
-                    # instance (the C6 side verifies absence of effect);
-                    # status ok = the allowed instance. The outcome
-                    # classifier + C6 adjudicate; R1 does not.
-                    continue
-                else:
-                    # prevented (design t2/t3): the network layer must
-                    # refuse the attempt. tcp: expect the refusal errno
-                    # (an `ok` tcp connect would mean the action took
-                    # effect — a bypass, i.e. the egress policy is NOT in
-                    # force). udp: `ok` is expected (the send succeeds
-                    # locally; unconnected sockets do not surface the icmp
-                    # reject) — the served layer adjudicates effect.
-                    refused = status == "error" and _REFUSAL_RE.search(r.get("error") or "")
-                    if a["op"] == "tcp_connect" and not refused:
-                        problems.append(f"{a['id']}: tcp connect {status} "
-                                        f"but egress is forced "
-                                        f"({r.get('error')}?) — prevention "
-                                        f"broken")
-                    elif a["op"] != "tcp_connect" and status == "error" and not refused:
-                        problems.append(f"{a['id']}: status {status} is not "
-                                        f"a network-layer refusal "
-                                        f"({r.get('error')})")
+                # prevented (design t2/t3): the network layer must
+                # refuse the attempt. tcp: expect the refusal errno
+                # (an `ok` tcp connect would mean the action took
+                # effect — a bypass, i.e. the egress policy is NOT in
+                # force). udp: `ok` is expected (the send succeeds
+                # locally; unconnected sockets do not surface the icmp
+                # reject) — the served layer adjudicates effect.
+                refused = status == "error" and _REFUSAL_RE.search(r.get("error") or "")
+                if a["op"] == "tcp_connect" and not refused:
+                    problems.append(f"{a['id']}: tcp connect {status} "
+                                    f"but egress is forced "
+                                    f"({r.get('error')}?) — prevention "
+                                    f"broken")
+                elif a["op"] != "tcp_connect" and status == "error" and not refused:
+                    problems.append(f"{a['id']}: status {status} is not "
+                                    f"a network-layer refusal "
+                                    f"({r.get('error')})")
             else:
                 if status != "ok":
                     problems.append(f"{a['id']}: status {status} ({r.get('error')})")
@@ -1159,15 +1169,16 @@ class Reconciler:
     # -- effective counts (R5) ------------------------------------------------
 
     def _kernel_denied_ids(self) -> set:
-        """t7: the instance-level kernel denials — prevented-class actions
-        whose replay status is error (the engine SIGKILLed the exec'd
-        child; C6 verifies the absence of effect). Class-level designs
-        (t2/t3 egress) return the prevented class's instances only when
-        they actually failed."""
+        """t7: the instance-level kernel denials — the fixture policy's
+        kill arm denies these instances (checked-denied: the engine
+        SIGKILLed the exec'd child, so the replay status is error; the
+        deny decision record is attributed by the coverage layer and C6
+        verifies the denial held). Keyed on the declared deny instances,
+        never on class: the allowed twins of the class take effect."""
         if self.design != "t7":
             return set()
         return {a["id"] for a in self.actions
-                if a["class"] in self.prevented
+                if a["id"] in T7_KERNEL_DENIED_INSTANCES
                 and self._replay_status.get(a["id"]) == "error"}
 
     def effective_counts(self, per_class: dict) -> dict:
@@ -1203,36 +1214,38 @@ class Reconciler:
 
         spec_counts = {c: len(self.by_class[c]) for c in SIX_CLASSES}
         # expected effective counts: spec ground truth minus the classes the
-        # design's network-layer policy prevents (design t2: direct_network
-        # must NOT take effect; their effective count is 0 by construction —
-        # the served layer adjudicates effect and R2 requires absence) and
-        # minus the instances the enforcement point denied (checked-DENY:
-        # evaluated but not effective — R2 requires absence per instance)
+        # design's network-layer policy prevents (design t2/t3:
+        # direct_network must NOT take effect; their effective count is 0 by
+        # construction — the served layer adjudicates effect and R2 requires
+        # absence) and minus the instances the enforcement point denied
+        # (checked-DENY: evaluated but not effective — R2 requires absence
+        # per instance; includes the t7 kernel-denied instances, whose
+        # replay status is error, not "denied")
         denied_by_class: dict[str, int] = {}
         for a in self.actions:
             if self._replay_status.get(a["id"]) == "denied":
                 denied_by_class[a["class"]] = denied_by_class.get(a["class"], 0) + 1
         expected = dict(spec_counts)
         for c in self.prevented:
-            if self.design == "t7":
-                # instance-level: subtract the kernel-denied instances; the
-                # allowed twins of the class DO take effect
-                killed = sum(1 for a in self.by_class[c]
-                             if self._replay_status.get(a["id"]) == "error")
-                expected[c] = max(0, spec_counts[c] - killed)
-            else:
-                expected[c] = 0
+            expected[c] = 0
         for c, n in denied_by_class.items():
             expected[c] = max(0, expected[c] - n)
+        kernel_denied = self._kernel_denied_ids()
+        cls_by_id = {a["id"]: a["class"] for a in self.actions}
+        for aid in kernel_denied:
+            c = cls_by_id[aid]
+            expected[c] = max(0, expected[c] - 1)
         r5 = effective == expected
         self.check("R5-effective-counts", r5,
                    f"effective counts match spec minus prevented "
                    f"{sorted(self.prevented)} minus denied "
-                   f"{sorted(denied_by_class)} "
+                   f"{sorted(denied_by_class)} minus kernel-denied "
+                   f"{sorted(kernel_denied)} "
                    f"({sum(expected.values())} effective actions)" if r5 else
                    f"mismatch: effective {effective} vs expected {expected} "
                    f"(spec {spec_counts}, prevented {sorted(self.prevented)}, "
-                   f"denied {denied_by_class})")
+                   f"denied {denied_by_class}, kernel-denied "
+                   f"{sorted(kernel_denied)})")
         self.check("R4-leftovers", not self.leftovers,
                    f"{len(account)} in-scope records fully accounted "
                    f"({len(unrelated)} unrelated events allowlisted)" if not self.leftovers

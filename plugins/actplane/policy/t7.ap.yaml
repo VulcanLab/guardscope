@@ -25,9 +25,12 @@
 #     through it — observed live 2026-11-01: denying it starves the fs
 #     server), and the in-process classes cannot be denied without
 #     SIGKILLing the trace executor itself (observed: the libuv worker
-#     died at a051). a032 becomes `prevented` (deny record + verified
-#     kernel absence, C6); the kernel position's denial granularity is a
-#     MEASURED property of the design, not a fixture limitation.
+#     died at a051). a032 becomes `checked-denied` (the deny record
+#     crosses the kernel enforcement point — a policy verdict, never
+#     `prevented`, which is reserved for blocking outside the policy;
+#     C6 verifies the denial held); the kernel position's denial
+#     granularity is a MEASURED property of the design, not a fixture
+#     limitation.
 #
 # Scope: the engine is seeded to the harness container's SHIM process (the
 # docker-exec'd harness processes are its children, not the container
@@ -51,7 +54,7 @@ policy: |
 
   rule t7-kill-echo:
     kill exec "/bin/echo" if AGENT
-    because "T7 prevention arm: the a032 spawn instance is denied at the kernel (deny + verified absence = prevented, C6); kills only the short-lived child, so the replay survives"
+    because "T7 kill arm: the a032 spawn instance is denied at the kernel (a checked-denied instance — a policy verdict at the kernel enforcement point; C6 verifies the denial held); kills only the short-lived child, so the replay survives"
 
   rule t7-notify-secret-open:
     notify open file "/run/secrets/**" if AGENT
