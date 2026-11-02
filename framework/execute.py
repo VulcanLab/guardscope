@@ -64,9 +64,9 @@ from framework.workdir import resolve_workdir  # noqa: E402
 REPO_ROOT = Path(__file__).resolve().parent.parent
 COMPOSE_DIR = REPO_ROOT / "compose"
 VERSIONS_ENV = REPO_ROOT / "env" / "versions.env"
-# baseline-15 is the only registered workload pack this pass (DESIGN.md 8);
-# the canonical trace spec is its content and the denominator of every
-# coverage number.
+# The canonical trace spec of the prepared default workload pack
+# (baseline-15); the delegation-fixture workloads resolve to their trace
+# variants through the same mapping (framework/workloads.py).
 BASELINE_SPEC = REPO_ROOT / "trace" / "traces" / "baseline.yaml"
 
 # DESIGN.md 9: evidence class of a run driven through the real harness.
@@ -382,7 +382,8 @@ def default_run_executor(descriptor: RunDescriptor, run_id: str,
 
     summary = run_mod.run_design(descriptor.harness, descriptor.design,
                                  run_id, runs_dir=Path(out_root),
-                                 sensor=sensor, workdir=workdir)
+                                 sensor=sensor, workdir=workdir,
+                                 workload=descriptor.workload)
     out_dir = Path(summary["out_dir"])
     run_record_path = out_dir / "run-record.json"
     run_record = (json.loads(run_record_path.read_text(encoding="utf-8"))
@@ -466,10 +467,15 @@ def default_run_executor(descriptor: RunDescriptor, run_id: str,
 # --- per-run assembly: mapping, recomputed coverage, findings ---------------------
 
 
-def _load_spec(path: Path = BASELINE_SPEC) -> dict:
-    """The canonical trace spec of the resolved workload (baseline-15, the
-    only registered pack this pass; DESIGN.md 8)."""
-    return yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+def _load_spec(path: Path | None = None) -> dict:
+    """The canonical trace spec of the run's workload. The default is the
+    prepared default pack's spec (baseline-15 -> baseline.yaml); a
+    delegation-fixture workload resolves through the same mapping
+    (framework/workloads.py) to its trace variant."""
+    from framework.workloads import trace_spec_path
+    return yaml.safe_load(Path(path if path is not None
+                               else trace_spec_path()).read_text(
+                                   encoding="utf-8"))
 
 
 def _coverage_projection(report: dict) -> dict:
@@ -627,7 +633,12 @@ def _c6_report(outcome: dict, run_id: str, window, tolerance: int,
                   window_tolerance_ns=tolerance, run_id=run_id)
 
 
-# --- the F2 delegation section (per-action trace-back results) -------------
+# --- the delegation fixtures' section (per-action trace-back results) ---
+#
+# All the delegation fixtures (F2 and the F1/F3/F7/F9 variants) flow
+# through this one assembly: they all write the same delegation-record/1
+# stream through the same layer (framework/delegation.py, used — never
+# reimplemented), so the section answers for every channel class.
 
 # Where a run's collected delegation-records.jsonl may live: the runner
 # copies the replay volume's stream next to the run's artifacts for every
@@ -688,7 +699,7 @@ def _delegated_action_ids(out_dir: Path) -> set:
     return delegated
 
 
-def _effect_observed(row: dict) -> str:
+def _effect_observed(row: dict, out_dir: Path | None = None) -> str:
     """What the effect evidence SHOWS for one action: true | false |
     unknown — never more than it shows. A missing row is unknown (no
     evidence at all does not establish the effect did not happen); an
@@ -697,9 +708,19 @@ def _effect_observed(row: dict) -> str:
     effect-observed question, kept strictly separate from the trace-back
     status: an effect that traces back cleanly may still be a claim the
     kernel never confirmed, and an untraceable action may have really
-    happened."""
+    happened.
+
+    F9 (work that outlives its parent): a row with the terminal status
+    "submitted" says the work was handed to a detached child that
+    outlives the parent — the row itself says nothing about the effect.
+    The child's report (f9-report-<delegation id>.json, collected from
+    the replay volume after the window) is the effect evidence: read
+    when present (its results carry the per-effect claim), unknown
+    while it has not landed."""
     if not row:
         return "unknown"
+    if row.get("status") == "submitted":
+        return _detached_report_effect(row, out_dir)
     detail = row.get("detail")
     results = detail.get("results") if isinstance(detail, dict) else None
     if isinstance(results, list) and results:
@@ -714,10 +735,40 @@ def _effect_observed(row: dict) -> str:
     return "unknown"     # an error with no per-effect result says nothing
 
 
+def _detached_report_effect(row: dict, out_dir: Path | None) -> str:
+    """F9: the detached child's post-window report as effect evidence
+    (the row's echo names the report file). Absent or unreadable is
+    unknown — a report that never landed asserts nothing, and neither
+    does one whose shape is not a report (a syntactically valid but
+    malformed file, e.g. a bare list, is unusable evidence, never a
+    crash)."""
+    detail = row.get("detail")
+    echo = detail.get("delegation_id") if isinstance(detail, dict) else None
+    if not echo or out_dir is None:
+        return "unknown"
+    path = Path(out_dir) / f"f9-report-{echo}.json"
+    if not path.is_file():
+        return "unknown"
+    try:
+        report = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return "unknown"
+    if not isinstance(report, dict):
+        # a report that is not a report (a bare list, a string, ...): it
+        # asserts nothing — effect_observed: unknown, never an exception
+        return "unknown"
+    results = report.get("results")
+    if isinstance(results, list) and results:
+        return ("true" if any(isinstance(r, dict) and r.get("status") == "ok"
+                               for r in results) else "false")
+    return "unknown"
+
+
 def _delegation_section(outcome: dict, out_dir: Path,
                         spec: dict) -> dict | None:
-    """The run's per-action delegation trace-back (the F2 fixture's added
-    measurement; framework/delegation.py does the work, this assembles).
+    """The run's per-action delegation trace-back (the delegation fixtures'
+    added measurement — F2's hand-off stream and the F1/F3/F7/F9 variants'
+    alike; framework/delegation.py does the work, this assembles).
 
     Per spec action id: the trace-back result — exactly the contract's
     three statuses (attributed / ambiguous / unresolved) — plus the
@@ -774,7 +825,7 @@ def _delegation_section(outcome: dict, out_dir: Path,
         aid = action.get("id")
         entry: dict = {
             "delegated": aid in delegated,
-            "effect_observed": _effect_observed(rows.get(aid) or {}),
+            "effect_observed": _effect_observed(rows.get(aid) or {}, out_dir),
             "status": delegation_lib.UNRESOLVED,
             "method": None,
             "chain": [],
@@ -1124,7 +1175,11 @@ def execute_experiment(experiment_path, *, run_executor=None,
     out_root = Path(out_root)
     experiment_id = experiment_path.stem
 
-    spec = _load_spec()
+    # the workload selection: the experiment's workload names the trace
+    # spec every run's assembly reconciles against (baseline-15 -> the
+    # baseline; the delegation fixtures -> their variants)
+    from framework.workloads import trace_spec_path
+    spec = _load_spec(trace_spec_path(experiment.workload))
     run_summaries: list[RunSummary] = []
     for descriptor in plan.runs:
         run_id = _fresh_run_id(out_root, f"{experiment_id}-{descriptor.design}")

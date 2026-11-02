@@ -31,6 +31,12 @@ COPY targets/common.py /opt/inspection/mcp-fs/common.py
 COPY targets/mcp-stdio/server.py /opt/inspection/mcp-fs/server.py
 COPY targets/mcp-http-stdio/server.py /opt/inspection/mcp-http-stdio/server.py
 COPY targets/common.py /opt/inspection/mcp-http-stdio/common.py
+# The F3 delegation fixture's target-side addition (an agent hiding inside a
+# local tool): a SIBLING server, additive — the toy-mcp-fs server above is
+# untouched and the existing baseline runs never spawn this one. The
+# replay adapter opens it only for the F3 fixture's tool-agent-performed
+# actions (F3_SERVER_CMD env, default below).
+COPY targets/mcp-agent/server.py /opt/inspection/mcp-agent/server.py
 COPY targets/credentials/seed.sh /opt/inspection/seed-credentials.sh
 COPY targets/fs/setup.sh /opt/inspection/setup-fs.sh
 RUN chmod +x /opt/inspection/*.sh

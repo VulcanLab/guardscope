@@ -19,17 +19,21 @@ and embeds the inspection-coverage section in the run record (T1-4).
 
 Subcommands:
   compile    compile the canonical spec for the harness(es); --check diff
+             (--workload names the trace: baseline-15 = the baseline,
+             baseline-f1/-f2/-f2h2/-f3/-f7/-f9 = the delegation fixtures)
   run        one full run for one harness (compile -> replay -> record)
   rerun      N consecutive runs for one harness + reproducibility verdict
              (identical effective per-class counts across runs, T0 criterion 2)
   reconcile  re-run reconciliation + run-record assembly from retained
-             artifacts (no replay) — debugging/re-mapping entry point
+             artifacts (no replay) — debugging/re-mapping entry point; the
+             run's own spec (the retained record's workload) is the spec,
+             --workload overrides it explicitly
   report     summary table (per harness x per class counts) + done-criteria
              checklist over the run records of one design
 
 Usage:
-  python3 runner/run.py compile [--harness pi|openclaw|all] [--workdir DIR]
-  python3 runner/run.py run --harness pi --run-id pi-m7-1 [--design t0|t1] [--workdir DIR]
+  python3 runner/run.py compile [--harness pi|openclaw|all] [--workload WORKLOAD] [--workdir DIR]
+  python3 runner/run.py run --harness pi --run-id pi-m7-1 [--design t0|t1] [--workload WORKLOAD] [--workdir DIR]
   python3 runner/run.py rerun --harness pi --runs 2 --label t1 [--design t1] [--workdir DIR]
   python3 runner/run.py reconcile --harness pi --run-dir runs/pi-m7-1 [--design t1]
   python3 runner/run.py report [--design t0|t1] [--runs-dir runs] [--out runs/report.json]
@@ -60,10 +64,16 @@ import outcomes as out_mod  # noqa: E402
 from framework.workdir import (  # noqa: E402
     resolve_workdir, staging_dir, compile_cache,
 )
+from framework.workloads import (  # noqa: E402
+    DEFAULT_WORKLOAD, trace_spec_path,
+)
 
 SIX_CLASSES = rec_mod.SIX_CLASSES
-BASELINE = HERE / "trace" / "traces" / "baseline.yaml"
-HASH_SIDECAR = HERE / "trace" / "traces" / "baseline.yaml.sha256"
+# The workload selection (framework/workloads.py): the experiment file's
+# workload field names the trace the run compiles and replays. The default
+# is the prepared default pack (baseline-15 -> the canonical baseline.yaml);
+# the delegation fixtures' names select their trace variants.
+BASELINE = trace_spec_path(DEFAULT_WORKLOAD)
 RULES = HERE / "sensor" / "mapping" / "rules.yaml"
 MAP_EVENTS = HERE / "sensor" / "mapping" / "map_events.py"
 VERSIONS = HERE / "env" / "versions.env"
@@ -84,6 +94,10 @@ MOCK_DRIVER_TRACE = "trace/traces/baseline.yaml"   # resolved against /repo
 # no longer written).
 STAGING_SUBDIRS = {"pi": "pi", "openclaw": "openclaw",
                    "mock-harness": "mock"}
+# The compiled-trace cache is per spec: one cache file per workload name
+# (baseline-15 -> baseline.compiled.json, the delegation variants ->
+# baseline-f*.compiled.json), so two workloads never share a compiled
+# trace and the staged plan always matches the run's spec.
 COMPILED_TRACE_NAME = "baseline.compiled.json"
 
 HARNESSES = {
@@ -246,6 +260,11 @@ TARGET_LOGS = {
 # defensive re-capture when the first snapshot missed the window entirely.
 TRACEE_FLUSH_GRACE_S = 3.0
 TRACEE_RECAPTURE_WAIT_S = 10.0
+# F9 (work that outlives its parent): how long the runner waits (bounded)
+# after the replay for the detached children's report files to land on the
+# replay volume before collecting them — the children outlive the parent
+# process, so their artifacts arrive late but they do arrive.
+F9_REPORT_WAIT_S = 15.0
 
 
 # --- shell helpers ---------------------------------------------------------------
@@ -297,26 +316,41 @@ def in_window_mapped(mapped_path: Path, window: dict, container_id: str | None,
 # --- pipeline stages -------------------------------------------------------------
 
 
-def check_spec_hash() -> None:
+def compiled_trace_path(workdir: Path | None, harness: str,
+                        spec: Path) -> Path:
+    """The compiled-trace cache path of one spec under the workdir's
+    compile cache (<workdir>/cache/compile/<harness>/<spec-stem>.
+    compiled.json). Per spec, so every workload compiles to its own cache
+    file and the staged plan always matches the run's spec."""
+    return (compile_cache(resolve_workdir(workdir)) / harness /
+            f"{Path(spec).stem}.compiled.json")
+
+
+def check_spec_hash(spec: Path = BASELINE) -> None:
+    """The spec's canonical hash must match its sidecar (the workload's
+    identity is the hash; a changed spec is a changed workload and must
+    be re-hashed deliberately, trace/hash_spec.py --write-sidecar)."""
+    sidecar = Path(str(spec) + ".sha256")
     proc = sh([sys.executable, str(HERE / "trace" / "hash_spec.py"),
-               "--check", str(HASH_SIDECAR), str(BASELINE)])
+               "--check", str(sidecar), str(spec)])
     if proc.returncode != 0:
-        raise RuntimeError("canonical spec hash does not match its sidecar — "
-                           "the spec changed; re-run trace/hash_spec.py --write-sidecar "
-                           "and review the change")
+        raise RuntimeError(f"canonical spec hash does not match its sidecar "
+                           f"({sidecar.name}) — the spec changed; re-run "
+                           f"trace/hash_spec.py --write-sidecar "
+                           f"and review the change")
 
 
-def compile_harness(harness: str, workdir: Path | None = None) -> Path:
-    """Compile the canonical spec; --check must diff clean against it. The
-    compiled trace is a cache artifact under the workdir
-    (<workdir>/cache/compile/<harness>/; framework/workdir.py), never under
-    the source tree."""
+def compile_harness(harness: str, workdir: Path | None = None,
+                     spec: Path = BASELINE) -> Path:
+    """Compile a canonical trace spec; --check must diff clean against
+    it. The compiled trace is a cache artifact under the workdir
+    (<workdir>/cache/compile/<harness>/; framework/workdir.py), named per
+    spec, never under the source tree."""
     cfg = HARNESSES[harness]
-    compiled = compile_cache(resolve_workdir(workdir)) / harness / \
-        COMPILED_TRACE_NAME
-    sh([sys.executable, str(cfg["compile_py"]), str(BASELINE),
+    compiled = compiled_trace_path(workdir, harness, spec)
+    sh([sys.executable, str(cfg["compile_py"]), str(spec),
         "--out", str(compiled)], check=True)
-    proc = sh([sys.executable, str(cfg["compile_py"]), str(BASELINE), "--check"])
+    proc = sh([sys.executable, str(cfg["compile_py"]), str(spec), "--check"])
     if proc.returncode != 0:
         raise RuntimeError(f"{harness}: compiled trace does not match the canonical spec")
     return compiled
@@ -449,14 +483,16 @@ def trigger_replay(harness: str, run_id: str, timeout_s: float,
     import trigger_openclaw as to
     # clean the previous run's replay log AND the enforcement-point record
     # (the t4/t6 hook appends decisions.jsonl; stale entries would pollute);
-    # the dispatch records (M2a) and the delegation records (the F2
-    # fixture's hand-off stream) join the cleanup list for the same reason
+    # the dispatch records (M2a), the delegation records (the delegation
+    # fixtures' hand-off stream) and the detached children's report files
+    # (the F9 fixture) join the cleanup list for the same reason
     docker_exec(cfg["container"],
                 f"rm -f {cfg['replay_mount']}/replay-log.jsonl "
                 f"{cfg['replay_mount']}/replay-result.json "
                 f"{cfg['replay_mount']}/decisions.jsonl "
                 f"{cfg['replay_mount']}/dispatch-records.jsonl "
-                f"{cfg['replay_mount']}/delegation-records.jsonl", check=False)
+                f"{cfg['replay_mount']}/delegation-records.jsonl "
+                f"{cfg['replay_mount']}/f9-report-*.json", check=False)
     # M2a: stage the run identity for the adapter's dispatch records. The
     # long-lived OpenClaw gateway process cannot receive per-run env, so the
     # driver stages it as a file on the mounted replay volume; the adapters
@@ -478,6 +514,37 @@ def trigger_replay(harness: str, run_id: str, timeout_s: float,
     docker_exec(cfg["container"],
                 f"chown -R {os.getuid()}:{os.getgid()} {cfg['replay_mount']}", check=False)
     return result, replay_dir / "replay-log.jsonl"
+
+
+def collect_f9_reports(submitted_ids: list, staging: Path, out_dir: Path,
+                       wait_s: float = F9_REPORT_WAIT_S) \
+        -> tuple[list[str], int | None]:
+    """F9 (work that outlives its parent): wait (bounded) for the detached
+    children's report files to land on the replay volume, then collect
+    them into the run dir. Returns (the collected delegation ids, the
+    collection-end epoch-ns timestamp). The timestamp is the run's
+    EFFECTIVE kernel-observation window end for the reconciler: the
+    detached effects land after mark-end — beyond the mark-end tolerance
+    — and R3/R4 must scope what the fixture is supposed to measure
+    (run_one passes it to the assembly as window_end_epoch_ns). No
+    submitted rows -> no wait, no extension (every existing run's timing
+    is unchanged)."""
+    if not submitted_ids:
+        return [], None
+    deadline = time.monotonic() + wait_s
+    while time.monotonic() < deadline:
+        landed = [d for d in submitted_ids
+                  if (Path(staging) / f"f9-report-{d}.json").is_file()]
+        if len(landed) == len(submitted_ids):
+            break
+        time.sleep(0.2)
+    collected = []
+    for did in submitted_ids:
+        report_src = Path(staging) / f"f9-report-{did}.json"
+        if report_src.is_file():
+            shutil.copyfile(report_src, out_dir / report_src.name)
+            collected.append(did)
+    return collected, time.time_ns()
 
 
 def capture_tracee(out_path: Path, container: str) -> None:
@@ -616,7 +683,8 @@ def assemble_sensorless(spec_path: Path, profile: dict, replay: dict,
                         harness: str, run_id: str, design: str = "t0",
                         gateway_log: Path | None = None,
                         gateway_policy: Path | None = None,
-                        window_tolerance_ns: int = 1_000_000_000
+                        window_tolerance_ns: int = 1_000_000_000,
+                        detached_reports: dict | None = None
                         ) -> tuple[dict, dict, dict]:
     """Assemble the run record + manifest for a degraded no-sensor run
     (DESIGN.md 9: "Degraded no-eBPF mode ... every output it produces is
@@ -667,8 +735,12 @@ def assemble_sensorless(spec_path: Path, profile: dict, replay: dict,
 
     # instance-level outcomes from the replay + coverage layers only;
     # prevented entries are marked unverified claims (kernel corroboration
-    # is impossible without the sensor; DESIGN.md 9)
-    outcomes = out_mod.compute(spec, replay, coverage_report, design)
+    # is impossible without the sensor; DESIGN.md 9). The F9 fixture's
+    # submitted rows are adjudicated from the collected child reports:
+    # a report that never landed is effect-unknown, never a silent
+    # effect-happened claim
+    outcomes = out_mod.compute(spec, replay, coverage_report, design,
+                               detached_reports=detached_reports)
     for row in outcomes["per_action"]:
         if row["outcome"] == "prevented":
             row["note"] = ("unverified claim: no kernel sensor ran in this "
@@ -761,7 +833,11 @@ def assemble_sensorless(spec_path: Path, profile: dict, replay: dict,
 
 def run_one(harness: str, run_id: str, runs_dir: Path, timeout_s: float | None = None,
             design: str = "t0", sensor: bool = True,
-            workdir: Path | None = None) -> dict:
+            workdir: Path | None = None,
+            workload: str = DEFAULT_WORKLOAD) -> dict:
+    """One full run. The workload name selects the canonical trace spec
+    to compile, stage and reconcile against (framework/workloads.py;
+    baseline-15 = the unchanged default)."""
     cfg = harness_cfg(harness, design, workdir=workdir)
     prefix = cfg["prefix"]
     tracee = f"{prefix}-tracee"
@@ -769,8 +845,32 @@ def run_one(harness: str, run_id: str, runs_dir: Path, timeout_s: float | None =
     if out_dir.exists():
         raise RuntimeError(f"run dir {out_dir} already exists (choose a new --run-id)")
     timeout_s = timeout_s or cfg["timeout_s"]
+    # the workload selection: the spec this run compiles, replays and
+    # reconciles against (baseline-15 -> baseline.yaml; the delegation
+    # variants -> their trace files). Everything downstream (hash check,
+    # compile, staging, the failure gate, the record assembly) reads this
+    # one path — the compile + hash + staging path itself is unchanged.
+    spec = trace_spec_path(workload)
+    if harness == "mock-harness" and workload != DEFAULT_WORKLOAD:
+        # the mock driver reads ONE pinned trace in-container (its own
+        # compile step has no spec input); a variant workload would run
+        # the baseline while the record assembly reconciled against the
+        # variant — refuse, never reconcile against the wrong spec
+        raise ValueError(f"the mock harness replays its pinned baseline "
+                         f"trace only (workload {workload!r} is not "
+                         f"supported on it; run the real harnesses for "
+                         f"the delegation fixtures)")
+    if harness not in ("pi", "mock-harness") and workload != DEFAULT_WORKLOAD:
+        # the delegation fixtures' performed_by markings are compiled and
+        # executed by the pi adapter's hand-off branches only; another
+        # harness would replay the same effects as ordinary parent-
+        # performed actions while the records said otherwise — refuse,
+        # never silently unmark a delegated action
+        raise ValueError(f"workload {workload!r} (the delegation fixtures) "
+                         f"is a pi-harness workload; {harness!r} would drop "
+                         f"the performed_by markings")
 
-    check_spec_hash()
+    check_spec_hash(spec)
     # the mock harness reads the canonical trace directly in-container (the
     # driver compiles each action through the same pi compiler); the real
     # harnesses stage a compiled trace, so the compile/diff-check step and
@@ -778,7 +878,10 @@ def run_one(harness: str, run_id: str, runs_dir: Path, timeout_s: float | None =
     if harness == "mock-harness":
         compiled = None
     else:
-        compiled = compile_harness(harness, workdir)
+        compiled = compile_harness(harness, workdir, spec)
+        # the variant's compiled trace (per-spec cache name) is the one the
+        # trigger stages into the container
+        cfg["compiled"] = compiled
         chown_target_logs(cfg["prefix"])
 
     # T2+: gate the replay on the egress jails having applied their netns
@@ -812,11 +915,17 @@ def run_one(harness: str, run_id: str, runs_dir: Path, timeout_s: float | None =
         prevented = rec_mod.PREVENTED_CLASSES.get(design, set())
         kernel_denied = (rec_mod.T7_KERNEL_DENIED_INSTANCES
                          if design == "t7" else frozenset())
-        spec = rec_mod.load_spec(BASELINE)
-        spec_class = {a["id"]: a["class"] for a in spec["actions"]}
+        spec_doc = rec_mod.load_spec(spec)
+        spec_class = {a["id"]: a["class"] for a in spec_doc["actions"]}
 
         def _bad(r: dict) -> bool:
             status = r.get("status")
+            if status == "submitted":
+                # F9 (work that outlives its parent): the detached hand-
+                # off's terminal replay state — the effect happens after the
+                # replay ended and the post-window collection (the child's
+                # records + report) carries it; not a failure here
+                return False
             if status == "denied":
                 # a spurious denial (design t0 has no enforcement point to
                 # deny) is a failure; t1+ denials are corroborated downstream
@@ -846,13 +955,35 @@ def run_one(harness: str, run_id: str, runs_dir: Path, timeout_s: float | None =
     dispatch_src = Path(replay_log_src).parent / "dispatch-records.jsonl"
     if dispatch_src.is_file():
         shutil.copyfile(dispatch_src, out_dir / "dispatch-records.jsonl")
-    # the delegation record stream (the F2 fixture, delegation-record/1):
-    # collected for EVERY design whenever the fixture wrote one — the F2
-    # fixture runs under t0 too (no enforcement-point pull happens there),
-    # and the execution manifest's delegation section reads this copy
-    # (framework/execute.py). The harness-record designs additionally keep
-    # their copy under gateway/ via pull_harness_log; same volume, same run.
+    # the delegation record stream (the delegation fixtures, delegation-
+    # record/1): collected for EVERY design whenever the fixture wrote
+    # one — the fixtures run under t0 too (no enforcement-point pull
+    # happens there), and the execution manifest's delegation section
+    # reads this copy (framework/execute.py). The harness-record designs
+    # additionally keep their copy under gateway/ via pull_harness_log;
+    # same volume, same run.
     delegation_src = Path(replay_log_src).parent / "delegation-records.jsonl"
+    # F9 (work that outlives its parent): the detached child keeps
+    # running AFTER the replay ended, so its artifacts land on the replay
+    # volume late — wait (bounded) for the submitted actions' report
+    # files, then collect them and the (by then complete) record stream.
+    # The collection is runner-side, exactly like every other artifact:
+    # the parent process is gone and the volume is what survives.
+    submitted_ids = [r.get("detail", {}).get("delegation_id")
+                     if isinstance(r.get("detail"), dict) else None
+                     for r in result.get("results") or []
+                     if r.get("status") == "submitted"]
+    staging = Path(replay_log_src).parent
+    # the bounded wait for the detached children's reports, then the
+    # collection: the collection-end timestamp extends the run's kernel
+    # observation scope (R3/R4 see the post-window effects), and the
+    # collected reports are the submitted rows' effect evidence (the
+    # outcome classifier reads them; a report that never landed leaves
+    # the effect unknown, never bypassed)
+    _f9_ids, f9_collection_end_ns = collect_f9_reports(submitted_ids, staging,
+                                                       out_dir)
+    f9_reports = (out_mod.load_detached_reports(out_dir)
+                  if submitted_ids else None)
     if delegation_src.is_file():
         shutil.copyfile(delegation_src, out_dir / "delegation-records.jsonl")
     if harness == "mock-harness":
@@ -956,7 +1087,7 @@ def run_one(harness: str, run_id: str, runs_dir: Path, timeout_s: float | None =
     profile = rec_mod.load_profile(HERE / "runner" / "profiles" / f"{harness}.yaml")
     if sensor:
         run_record, manifest, report = rr_mod.assemble(
-            BASELINE, profile, rec_mod.load_replay(out_dir / "replay-result.json"),
+            spec, profile, rec_mod.load_replay(out_dir / "replay-result.json"),
             rec_mod.load_mapped(out_dir / "mapped-actions.jsonl"),
             rec_mod.load_target_logs([str(out_dir / "target-logs")]),
             cid, rr_mod.load_versions(VERSIONS),
@@ -965,13 +1096,15 @@ def run_one(harness: str, run_id: str, runs_dir: Path, timeout_s: float | None =
             gateway_policy=(gateway_dir / "policy.yaml" if (gateway_dir / "policy.yaml").is_file()
                             else gateway_dir / "policy.json" if (gateway_dir / "policy.json").is_file()
                             else None) if gateway_dir else None,
-            window_tolerance_ns=int(profile.get("window_tolerance_ns", 1_000_000_000)))
+            window_tolerance_ns=int(profile.get("window_tolerance_ns", 1_000_000_000)),
+            window_end_epoch_ns=f9_collection_end_ns,
+            detached_reports=f9_reports)
     else:
         # degraded no-eBPF mode: the kernel-dependent assembly is replaced
         # by the sensorless one (R1-R5 skipped-with-note, outcomes labeled
         # self-reported; DESIGN.md 9)
         run_record, manifest, report = assemble_sensorless(
-            BASELINE, profile, rec_mod.load_replay(out_dir / "replay-result.json"),
+            spec, profile, rec_mod.load_replay(out_dir / "replay-result.json"),
             rec_mod.load_target_logs([str(out_dir / "target-logs")]),
             cid, rr_mod.load_versions(VERSIONS),
             harness, run_id, design=design,
@@ -979,7 +1112,8 @@ def run_one(harness: str, run_id: str, runs_dir: Path, timeout_s: float | None =
             gateway_policy=(gateway_dir / "policy.yaml" if (gateway_dir / "policy.yaml").is_file()
                             else gateway_dir / "policy.json" if (gateway_dir / "policy.json").is_file()
                             else None) if gateway_dir else None,
-            window_tolerance_ns=int(profile.get("window_tolerance_ns", 1_000_000_000)))
+            window_tolerance_ns=int(profile.get("window_tolerance_ns", 1_000_000_000)),
+            detached_reports=f9_reports)
     artifacts = {
         "replay-result": out_dir / "replay-result.json",
         "replay-log": out_dir / "replay-log.jsonl",
@@ -1038,7 +1172,8 @@ def run_design(harness: str, design: str, run_id: str,
                runs_dir: Path | None = None,
                timeout_s: float | None = None,
                sensor: bool = True,
-               workdir: Path | None = None) -> dict:
+               workdir: Path | None = None,
+               workload: str = DEFAULT_WORKLOAD) -> dict:
     """Minimal programmatic entry for one full run: validate the harness +
     design pairing, then delegate to run_one with the prepared defaults.
     The CLI keeps its own argument handling and calls run_one exactly as
@@ -1046,7 +1181,9 @@ def run_design(harness: str, design: str, run_id: str,
     (framework/execute.py) drives the runner through one named function
     instead of CLI-only plumbing. sensor=False drives the degraded no-eBPF
     path (DESIGN.md 9): no sensor container, no kernel evidence, every
-    output self-reported. The writable artifacts (staging, compile cache,
+    output self-reported. workload names the trace the run compiles and
+    replays (framework/workloads.py; baseline-15 = the unchanged
+    default). The writable artifacts (staging, compile cache,
     and the run outputs when runs_dir is omitted) derive from the workdir
     (framework/workdir.py: --workdir/GUARDSCOPE_WORKDIR > cwd)."""
     if harness not in HARNESSES:
@@ -1057,7 +1194,7 @@ def run_design(harness: str, design: str, run_id: str,
     return run_one(harness, run_id,
                    Path(runs_dir) if runs_dir is not None
                    else wd / "runs", timeout_s, design, sensor=sensor,
-                   workdir=wd)
+                   workdir=wd, workload=workload)
 
 
 # --- reproducibility (rerun) ------------------------------------------------------
@@ -1097,14 +1234,15 @@ def reproducibility_verdict(summaries: list[dict]) -> dict:
 
 def run_rerun(harness: str, label: str, n: int, runs_dir: Path,
               timeout_s: float | None = None, design: str = "t0",
-              workdir: Path | None = None) -> dict:
+              workdir: Path | None = None,
+              workload: str = DEFAULT_WORKLOAD) -> dict:
     if n < 2:
         raise ValueError("rerun needs >= 2 consecutive runs")
     summaries = []
     for i in range(1, n + 1):
         run_id = f"{harness}-{label}-r{i}"
         summaries.append(run_one(harness, run_id, runs_dir, timeout_s, design,
-                                 workdir=workdir))
+                                 workdir=workdir, workload=workload))
     verdict = reproducibility_verdict(summaries)
     verdict["spec_sha256"] = summaries[0]["spec_sha256"]
     out = Path(runs_dir) / f"{harness}-{label}" / "reproducibility.json"
@@ -1432,6 +1570,9 @@ def main() -> int:
 
     p = sub.add_parser("compile", help="compile the canonical spec + diff check")
     p.add_argument("--harness", default="all", choices=["pi", "openclaw", "all"])
+    p.add_argument("--workload", default=DEFAULT_WORKLOAD,
+                   help="the workload whose trace spec to compile "
+                        "(framework/workloads.py; default: baseline-15)")
     p.add_argument("--workdir", type=Path, default=None,
                    help="writable root for run artifacts (staging, run "
                         "outputs, compile cache; default: GUARDSCOPE_WORKDIR "
@@ -1441,6 +1582,10 @@ def main() -> int:
     p.add_argument("--harness", required=True, choices=sorted(HARNESSES))
     p.add_argument("--design", default="t0", choices=sorted(DESIGNS))
     p.add_argument("--run-id", required=True)
+    p.add_argument("--workload", default=DEFAULT_WORKLOAD,
+                   help="the workload whose trace spec the run compiles, "
+                        "replays and reconciles against "
+                        "(framework/workloads.py; default: baseline-15)")
     p.add_argument("--runs-dir", type=Path, default=None,
                    help="run output root (default: <workdir>/runs)")
     p.add_argument("--workdir", type=Path, default=None,
@@ -1458,6 +1603,9 @@ def main() -> int:
     p.add_argument("--design", default="t0", choices=sorted(DESIGNS))
     p.add_argument("--runs", type=int, default=2)
     p.add_argument("--label", default="rerun")
+    p.add_argument("--workload", default=DEFAULT_WORKLOAD,
+                   help="the workload whose trace spec each run compiles "
+                        "and replays (default: baseline-15)")
     p.add_argument("--runs-dir", type=Path, default=None,
                    help="run output root (default: <workdir>/runs)")
     p.add_argument("--workdir", type=Path, default=None,
@@ -1469,6 +1617,11 @@ def main() -> int:
     p.add_argument("--harness", required=True, choices=sorted(HARNESSES))
     p.add_argument("--design", default="t0", choices=sorted(DESIGNS))
     p.add_argument("--run-dir", type=Path, required=True)
+    p.add_argument("--workload", default=None,
+                    help="the workload whose trace spec to re-reconcile "
+                         "against (framework/workloads.py). Default: the "
+                         "retained run record's own spec — the run's "
+                         "provenance, never silently the baseline")
 
     p = sub.add_parser("report", help="summary table + done-criteria checklist")
     p.add_argument("--design", default="t0", choices=sorted(DESIGNS))
@@ -1481,7 +1634,8 @@ def main() -> int:
 
     if args.cmd == "compile":
         harnesses = sorted(HARNESSES) if args.harness == "all" else [args.harness]
-        check_spec_hash()
+        spec = trace_spec_path(args.workload)
+        check_spec_hash(spec)
         for h in harnesses:
             if "compile_py" not in HARNESSES[h]:
                 # the mock harness reads the canonical trace directly in-
@@ -1490,7 +1644,7 @@ def main() -> int:
                 print(f"{h}: no compiled trace (reads the canonical spec "
                       f"directly)")
                 continue
-            compiled = compile_harness(h, args.workdir)
+            compiled = compile_harness(h, args.workdir, spec)
             print(f"{h}: compiled + diff-clean -> {compiled}")
         return 0
 
@@ -1498,7 +1652,8 @@ def main() -> int:
         wd = resolve_workdir(args.workdir)
         runs_dir = args.runs_dir if args.runs_dir is not None else wd / "runs"
         summary = run_one(args.harness, args.run_id, runs_dir, args.timeout,
-                          args.design, sensor=not args.no_sensor, workdir=wd)
+                          args.design, sensor=not args.no_sensor, workdir=wd,
+                          workload=args.workload)
         print(json.dumps(summary, indent=1))
         cov_ok = summary["coverage"] == "pass"
         return 0 if summary["status"] == "pass" and cov_ok else 1
@@ -1507,7 +1662,8 @@ def main() -> int:
         wd = resolve_workdir(args.workdir)
         runs_dir = args.runs_dir if args.runs_dir is not None else wd / "runs"
         verdict = run_rerun(args.harness, args.label, args.runs, runs_dir,
-                            args.timeout, args.design, workdir=wd)
+                            args.timeout, args.design, workdir=wd,
+                            workload=args.workload)
         return 0 if verdict["status"] == "pass" else 1
 
     if args.cmd == "reconcile":
@@ -1524,13 +1680,38 @@ def main() -> int:
         prev_record = (json.loads((d / "run-record.json").read_text())
                        if (d / "run-record.json").is_file() else {})
         cid = prev_record.get("container_id")
+        # the spec this run was measured against: the retained run record's
+        # OWN spec path first (the run's provenance — a variant workload's
+        # run re-reconciles against its variant, never the baseline, which
+        # would overwrite the spec provenance and treat the variant's
+        # valid submitted rows as unmarked, invalid outcomes), the
+        # --workload flag as the explicit override, and the default
+        # workload as the fallback (records predating the spec stamp)
+        if args.workload:
+            spec = trace_spec_path(args.workload)
+        else:
+            retained_spec = (prev_record.get("spec") or {}).get("path")
+            if retained_spec and Path(retained_spec).is_file():
+                spec = Path(retained_spec)
+            else:
+                spec = BASELINE
+        # the F9 fixture's effective window end (the collection point the
+        # run itself used) + the collected child reports: re-reconcile
+        # scopes and adjudicates exactly like the original run did
+        effective = prev_record.get("window_effective_epoch_ns") or {}
+        window_end = (int(effective["end"])
+                      if isinstance(effective, dict) and effective.get("end")
+                      else None)
+        detached_reports = out_mod.load_detached_reports(d)
         run_record, manifest, report = rr_mod.assemble(
-            BASELINE, profile, rec_mod.load_replay(d / "replay-result.json"),
+            spec, profile, rec_mod.load_replay(d / "replay-result.json"),
             rec_mod.load_mapped(d / "mapped-actions.jsonl"),
             rec_mod.load_target_logs([str(d / "target-logs")]),
             cid, versions, args.harness, run_id, design=args.design,
             gateway_log=gateway_log, gateway_policy=gateway_policy,
-            window_tolerance_ns=int(profile.get("window_tolerance_ns", 1_000_000_000)))
+            window_tolerance_ns=int(profile.get("window_tolerance_ns", 1_000_000_000)),
+            window_end_epoch_ns=window_end,
+            detached_reports=detached_reports)
         artifacts = {
             "tracee-events": d / "tracee-events.json",
             "mapped-actions": d / "mapped-actions.jsonl",

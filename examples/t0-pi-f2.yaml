@@ -1,0 +1,15 @@
+# Example experiment (DESIGN.md 6): the T0 control row on the F2 delegation
+# fixture's workload. control: null selects no control; t0 is the bare-harness
+# design that defines the full action surface (DESIGN.md 7). The workload names
+# the trace the run compiles, replays and reconciles against
+# (framework/workloads.py): baseline-f2 = the baseline action surface with the
+# six process-level effect actions handed to a spawned child process
+# (delegation-record/1 hand-off records both sides write). The other fixtures'
+# workloads: baseline-f1 (in-process role switch), baseline-f2h2 (the two-hop
+# chain), baseline-f3 (an agent hiding inside a local tool), baseline-f7 (the
+# restricted child), baseline-f9 (work that outlives its parent).
+schema: 1
+control: null
+designs: [t0]
+harness: pi
+workload: baseline-f2

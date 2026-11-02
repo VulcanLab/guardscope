@@ -23,6 +23,9 @@ from framework.overlay import (  # noqa: E402
     has_slot, overlay_abs_path, overlay_rel_path, validate_overlay,
 )
 from framework.schemas import load_schema
+from framework.workloads import (  # noqa: E402
+    DEFAULT_WORKLOAD, trace_spec_path,
+)
 
 _EXPERIMENT_VALIDATOR = jsonschema.Draft202012Validator(
     load_schema("experiment"))
@@ -37,7 +40,9 @@ class ExperimentError(ValueError):
 # the prepared default set and move to the registry when the registry lands
 # (M2, DESIGN.md 12).
 DEFAULT_HARNESS = "pi"
-DEFAULT_WORKLOAD = "baseline-15"
+# DEFAULT_WORKLOAD comes from the workload selection layer
+# (framework/workloads.py: the mapping a workload name resolves through to
+# its canonical trace spec).
 
 # The reference designs (DESIGN.md 7). Designs that place the selected
 # control in the gateway slot; with control:null there is nothing in that
@@ -240,8 +245,16 @@ def load_experiment(path) -> ResolvedExperiment:
                 raise ExperimentError(
                     f"workload {workload!r}: kind is "
                     f"{workload_manifest['kind']!r}, not 'workload'")
-        # no workload manifests exist yet (baseline-15 registers with the
-        # registry in M2); an unknown id is accepted until then
+        # the workload selection (framework/workloads.py): the name must
+        # resolve to a canonical trace spec. baseline-15 is the baseline;
+        # the delegation fixtures' names (baseline-f1, -f2, -f2h2, -f3,
+        # -f7, -f9) select their trace variants. An unknown id is now a
+        # load-time error naming the known ones — a typo'd workload must
+        # never silently run the baseline.
+        try:
+            trace_spec_path(workload)
+        except ValueError as exc:
+            raise ExperimentError(f"workload {workload!r}: {exc}") from exc
 
     # --- composition gating (DESIGN.md 6: a composition block may never
     # appear alongside a non-null control; it auto-sets off_matrix) -------

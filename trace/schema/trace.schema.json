@@ -58,8 +58,8 @@
         "op": { "type": "string", "minLength": 1 },
         "args": { "type": "object" },
         "performed_by": {
-          "description": "F2 delegation fixture (additive, optional): the process that performs this action's effect. Absent = the harness process itself (every existing fixture — the field changes nothing for them). 'child' = the adapter hands the action to a spawned child process (one hand-off, hop 1); 'grandchild' = the child hands it one level further down (hop 2, one more hand-off in the chain). The action's id, class, target and op are unchanged — the child performs THE SAME effect action the spec declares, so coverage accounting does not move.",
-          "enum": ["child", "grandchild"]
+          "description": "Delegation fixtures (additive, optional): the process that performs this action's effect. Absent = the harness process itself (every single-agent trace — the field changes nothing for them). The action's id, class, target and op are unchanged in every case — the marked process performs THE SAME effect action the spec declares, so coverage accounting does not move. Values: 'child' = the adapter hands the action to a spawned child process (one hand-off, hop 1); 'grandchild' = the child hands it one level further down (hop 2); 'role' = a role switch inside the SAME process (F1, channel inproc — no child, the effects stay in-process and only the actor label moves); 'tool-agent' = the effect rides an ordinary-looking tool call to a local server whose internal agent performs it (F3, channel tool); 'restricted-child' = the F7 two-routes fixture: the child is told it may not cause the effect and immediately tries the named tool AND a direct route to the same effect, reporting which succeeded; 'detached-child' = the adapter spawns the child detached and does NOT wait (F9, work that outlives its parent — the child performs the effects after the replay ended and the run's terminal row status is 'submitted').",
+          "enum": ["child", "grandchild", "role", "tool-agent", "restricted-child", "detached-child"]
         }
       },
       "allOf": [

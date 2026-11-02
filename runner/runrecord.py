@@ -127,16 +127,28 @@ def assemble(spec_path: Path, profile: dict, replay: dict, mapped: list[dict],
              versions: dict, harness: str, run_id: str,
              design: str = "t0", gateway_log: Path | None = None,
              gateway_policy: Path | None = None,
-             window_tolerance_ns: int = 1_000_000_000) -> tuple[dict, dict, dict]:
+             window_tolerance_ns: int = 1_000_000_000,
+             window_end_epoch_ns: int | None = None,
+             detached_reports: dict | None = None) -> tuple[dict, dict, dict]:
     """Run reconciliation and build (run_record, manifest, report).
 
     design != t0 additionally computes the inspection-coverage section
     (T1-4) from the enforcement-point decision log: coverage/ runner
     (coverage.py), scoped to the replay window, with the decisions and the
-    deployed policy hashed into the manifest as auditable artifacts."""
+    deployed policy hashed into the manifest as auditable artifacts.
+
+    window_end_epoch_ns is the F9 fixture's effective kernel-observation
+    window end (the post-window collection point): the detached
+    children's effects land after mark-end — beyond the mark-end
+    tolerance — and R3/R4 must scope them instead of excluding them.
+    detached_reports is the collected F9 child-report evidence
+    (runner/outcomes.py load_detached_reports) the submitted rows'
+    effect adjudication reads. Both default to None: every existing
+    run is unchanged."""
     report = rec_mod.Reconciler(
         rec_mod.load_spec(spec_path), profile, replay, mapped,
-        target_logs, container_id, design=design).run()
+        target_logs, container_id, design=design,
+        window_end_epoch_ns=window_end_epoch_ns).run()
 
     sys.path.insert(0, str(HERE / "trace"))
     from hash_spec import canonical_hash as ch, raw_hash as rh  # noqa: E402
@@ -169,9 +181,13 @@ def assemble(spec_path: Path, profile: dict, replay: dict, mapped: list[dict],
     scoped = report["kernel"].pop("scoped_records", [])
 
     # instance-level outcome classification (checked/bypassed/prevented per
-    # action instance — the RQ1 coverage-matrix artifact)
+    # action instance — the RQ1 coverage-matrix artifact). The F9 fixture's
+    # submitted rows are adjudicated from the collected child reports:
+    # no report (or a malformed one) is effect-unknown, never a silent
+    # effect-happened claim
     outcomes = out_mod.compute(rec_mod.load_spec(spec_path), replay,
-                               coverage_report, design)
+                               coverage_report, design,
+                               detached_reports=detached_reports)
 
     run_record = {
         "schema": SCHEMA,
@@ -229,6 +245,14 @@ def assemble(spec_path: Path, profile: dict, replay: dict, mapped: list[dict],
             "runrecord_created": run_record["created"],
         },
     }
+    # F9: the effective window end (the post-window collection point) is
+    # part of the record whenever the run extended the kernel observation
+    # scope past mark-end; every other run's record is unchanged
+    if report.get("window_effective_epoch_ns"):
+        manifest["timing"]["window_effective_epoch_ns"] = \
+            report["window_effective_epoch_ns"]
+        run_record["window_effective_epoch_ns"] = \
+            report["window_effective_epoch_ns"]
     return run_record, manifest, report
 
 

@@ -8,6 +8,7 @@ mismatches from first-class artifacts.
 | Target (dir) | Trace class | Runs as | Serves |
 |---|---|---|---|
 | `mcp-stdio/` | `stdio_tool_call` | harness-child process (stdio; wired into harness MCP config in M4/M5) | MCP tools `write_file`, `read_file`, `list_directory` (newline-delimited JSON-RPC 2.0) |
+| `mcp-agent/` | (the F3 delegation fixture's target-side addition; rides no canonical class) | harness-child process, opened only for the fixture's `tool-agent`-performed actions (adapter env `F3_SERVER_CMD`) | MCP tool `run_task`: an ordinary-looking local tool whose internal agent performs the handed effects beyond the tool's response and writes its hand-off records |
 | `http-endpoint/` | `http_tool_call` | compose service `http-endpoint:8080` | `POST /hook`, `GET /health`, `PUT /state` |
 | `net-peer/` | `direct_network` | compose service `net-peer` | TCP :9000, UDP :9001 (echo/ack) |
 | `credentials/` | `credential_access` | in-harness-container files via `seed.sh` | `/run/secrets/token`, `/run/secrets/db_password` |

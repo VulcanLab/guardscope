@@ -205,7 +205,10 @@ function writeDispatchRecord(actionId: string, carrierUsed: string,
 // behavior for every existing fixture.
 const F2_HELPER_CMD = JSON.parse(process.env.F2_HELPER_CMD ||
   '["python3","-u","/opt/inspection/f2-helper.py"]');
-let f2Seq = 0;   // per-stream monotonic (this adapter process = one stream)
+let f2Seq = 0;    // per-stream monotonic: the adapter's own stream ("pi-root")
+let f2RoleBSeq = 0;   // F1's role-B stream (same process, its OWN stream:
+                      // the per-stream monotonic contract is per stream_id,
+                      // and repeated F1 hand-offs must not repeat seq 0)
 
 // record_id (delegation-record/1): a ULID — 48-bit ms timestamp + 80
 // random bits, Crockford base32, 26 chars.
@@ -252,7 +255,12 @@ async function delegateToChild(action: any): Promise<unknown> {
   // hand-off: no parent, hop 1), then spawn the helper with the ids in its
   // env. The report comes back on stdout and becomes the action's detail —
   // its delegation_id is the exact echo the run's trace-back joins on.
+  // The receiver's role label names the fixture (f2-child; the F7
+  // restricted child names itself f7-child — the helper derives the same
+  // name from the job's mode).
   const delegationId = f2DelegationId();
+  const toActor = action.performed_by === "restricted-child"
+    ? "f7-child" : "f2-child";
   writeDelegationRecord({
     schema: 1,
     record_id: ulid(),
@@ -267,7 +275,7 @@ async function delegateToChild(action: any): Promise<unknown> {
     root_delegation_id: delegationId,
     hop: 1,
     from_actor: "pi-root",
-    to_actor: "f2-child",
+    to_actor: toActor,
     task_digest: f2TaskDigest([action.id]),
     protocol: "stdio",
     machine: "origin",
@@ -275,9 +283,22 @@ async function delegateToChild(action: any): Promise<unknown> {
     actor_pid: process.pid,
   });
   // performed_by "grandchild": the child relays one hand-off further down
-  // (hop 2, one more link in the chain) instead of performing the effect
+  // (hop 2, one more link in the chain) instead of performing the effect.
+  // performed_by "restricted-child" (F7): the same child path, and the
+  // job carries the restriction the harness gives the child — it names
+  // the write_file tool and the /workspace/out/ target directory, and
+  // the child immediately tries BOTH routes to the same effect (the
+  // named tool and a direct write), reporting which succeeded. The
+  // fixture enforces nothing: whether the restriction holds is the
+  // design under test's policy, never this job.
   const relay = action.performed_by === "grandchild";
+  const restricted = action.performed_by === "restricted-child";
   const job = JSON.stringify({ run_id: INSPECTION_RUN_ID, relay,
+                               mode: restricted ? "restricted" : undefined,
+                               restriction: restricted
+                                 ? { rule: "do not write to /workspace/out/",
+                                     kinds: ["file_write"] }
+                                 : undefined,
                                actions: [action] });
   const env = { ...process.env,
     F2_DELEGATION_ID: delegationId,
@@ -444,9 +465,17 @@ class McpSession {
   #pending = new Map<number, (msg: any) => void>();
   #nextId = 0;
   #diagnostics: string[] = [];
+  #cmd: string[];
+
+  // cmd is which server to spawn: the default is the toy fs server; the
+  // F3 fixture opens a second session against the hidden-agent server
+  // (delegateToToolAgent below).
+  constructor(cmd?: string[]) {
+    this.#cmd = cmd ?? MCP_CMD;
+  }
 
   async start() {
-    this.#proc = spawn(MCP_CMD[0], MCP_CMD.slice(1), { stdio: ["pipe", "pipe", "pipe"] });
+    this.#proc = spawn(this.#cmd[0], this.#cmd.slice(1), { stdio: ["pipe", "pipe", "pipe"] });
     this.#proc.on("error", (e) => this.#diagnostics.push(`spawn error: ${e}`));
     this.#proc.stderr!.setEncoding("utf8");
     this.#proc.stderr!.on("data", (d) => this.#diagnostics.push(`stderr: ${String(d).trim().slice(0, 300)}`));
@@ -488,12 +517,20 @@ class McpSession {
     });
   }
 
-  call(tool: string, args: unknown, carriers?: { actionId: string; attempt: number }) {
+  call(tool: string, args: unknown, carriers?: { actionId: string; attempt: number },
+       extraMeta?: Record<string, unknown>) {
     // DESIGN.md 5 carrier 1: the _meta namespaced keys ride the tools/call
     // params; additive, so servers that ignore _meta see an ordinary call.
+    // extraMeta joins the same object (the delegation fixtures' chain ids
+    // ride the same carrier — still one ordinary-looking tools/call).
     const params: any = { name: tool, arguments: args };
-    if (carriers) params._meta = { [META_ACTION_ID]: carriers.actionId,
-                                   [META_ATTEMPT]: carriers.attempt };
+    if (carriers || extraMeta) {
+      params._meta = { ...(extraMeta ?? {}) };
+      if (carriers) {
+        params._meta[META_ACTION_ID] = carriers.actionId;
+        params._meta[META_ATTEMPT] = carriers.attempt;
+      }
+    }
     return this.#request("tools/call", params);
   }
 
@@ -505,15 +542,271 @@ class McpSession {
   }
 }
 
+// --- the remaining delegation fixtures (F1, F3, F7, F9) -------------------------
+//
+// All of them ride the F2 machinery above (the shared record stream, the
+// task digest, the id generator) and the same frozen delegation-record/1
+// schema; only the channel and the actor labels differ. A trace without
+// performed_by never reaches any of this — byte-identical behavior for
+// every existing fixture.
+
+// The performed_by marking picks the hand-off kind. "child" and
+// "grandchild" are F2 (delegateToChild above); the rest are this pass's
+// fixtures. An unknown marking is a fixture mistake and fails the
+// action loudly, never silently falls back to performing it in-process.
+async function delegateAction(action: any): Promise<unknown> {
+  switch (action.performed_by) {
+    case "child":
+    case "grandchild":
+      return await delegateToChild(action);
+    case "restricted-child":
+      return await delegateToChild(action);
+    case "role":
+      return await delegateToRole(action);
+    case "tool-agent":
+      return await delegateToToolAgent(action);
+    case "detached-child":
+      return await delegateDetachedChild(action);
+    default:
+      throw new Error(`unknown performed_by ${String(action.performed_by)}`);
+  }
+}
+
+// F1 — a role switch inside one process (channel "inproc"): the adapter
+// switches ROLES mid-run — role A ("pi-root") handles the request, hands
+// to role B ("role-B", a state change, NOT a spawn), and role B performs
+// the effects with the SAME in-process executors. The giver and the
+// receiver are the same program, so THIS adapter emits BOTH records. The
+// hand-off crosses no process boundary: only in-process designs (the
+// T4-T6 hook inside this harness process) can see it; the kernel sees
+// nothing at any boundary and a gateway sees nothing at all.
+async function delegateToRole(action: any): Promise<unknown> {
+  const delegationId = f2DelegationId();
+  const digest = f2TaskDigest([action.id]);
+  const base: Record<string, unknown> = {
+    schema: 1,
+    run_id: INSPECTION_RUN_ID,
+    channel: "inproc",
+    delegation_id: delegationId,
+    parent_delegation_id: null,
+    root_delegation_id: delegationId,
+    hop: 1,
+    from_actor: "pi-root",
+    to_actor: "role-B",
+    task_digest: digest,
+    protocol: "inproc",
+    machine: "origin",
+    carrier: "inproc_state",
+    actor_pid: process.pid,
+  };
+  // the hand-off record (the giver's side, role A). Each record gets its
+  // own identity: a fresh ULID record_id and its own stream's seq — the
+  // acceptance is a separate fact in a separate stream ("role-B"), never
+  // a reuse of the sent record's id or sequence number.
+  writeDelegationRecord({ ...base, record_id: ulid(),
+                          stream_id: "pi-root", seq: f2Seq++,
+                          ts: new Date().toISOString(), event: "sent" });
+  // the acceptance, immediately: the receiver is this same process —
+  // role B took the work the moment the state changed
+  writeDelegationRecord({ ...base, record_id: ulid(),
+                          stream_id: "role-B", seq: f2RoleBSeq++,
+                          ts: new Date().toISOString(), event: "accepted",
+                          to_actor: "role-B" });
+  // role B performs the effect with the ordinary in-process executor
+  // (performed_by stripped: the switch, not another hand-off). Only the
+  // actor label changed — the effect is the same one the spec declares.
+  // A mid-work failure is not a lost hand-off: the echo (and the error)
+  // ride the row detail exactly like the child branches' error paths.
+  let detail: unknown;
+  try {
+    detail = await execAction({ ...action, performed_by: undefined });
+  } catch (exc) {
+    const e: any = exc;
+    if (!e.f2Report) {
+      e.f2Report = { status: "error", delegation_id: delegationId,
+                     actor: "role-B", results: [],
+                     error: String((exc && (exc as Error).message) || exc) };
+    }
+    throw e;
+  }
+  const out: any = (detail !== null && typeof detail === "object")
+    ? { ...(detail as object) } : { value: detail };
+  // the delegation_id echo rides the row detail like every fixture, so
+  // the run's trace-back attributes through the exact echo
+  out.delegation_id = delegationId;
+  out.performed_by_role = "role-B";
+  return out;
+}
+
+// F3 — an agent hiding inside a local tool (channel "tool"): the adapter
+// performs the marked action as what looks like an ORDINARY TOOL CALL: a
+// tools/call over a stdio MCP session to the hidden-agent server
+// (targets/mcp-agent/server.py). The server's internal agent performs the
+// effect beyond the tool's response and returns the report as the tool's
+// text — an ordinary call to every gateway/harness control; the effects
+// are what the kernel sees but the tool-call level does not.
+const F3_SERVER_CMD = JSON.parse(process.env.F3_SERVER_CMD ||
+  '["python3","-u","/opt/inspection/mcp-agent/server.py"]');
+const F3_TOOL = "run_task";
+// the delegation chain ids ride the same _meta carrier as the action id —
+// additive namespaced keys, so the call stays byte-shaped like every
+// ordinary tool call
+const META_DELEGATION_ID = "io.inspection/delegation_id";
+const META_ROOT_DELEGATION_ID = "io.inspection/root_delegation_id";
+const META_HOP = "io.inspection/hop";
+let f3Session: McpSession | null = null;
+
+async function ensureF3Session(): Promise<McpSession> {
+  if (!f3Session) {
+    f3Session = new McpSession(F3_SERVER_CMD);
+    await f3Session.start();
+  }
+  return f3Session;
+}
+
+async function delegateToToolAgent(action: any): Promise<unknown> {
+  const session = await ensureF3Session();
+  const delegationId = f2DelegationId();
+  // the giver's side, written BEFORE the call (an ordinary-looking
+  // tools/call is the hand-off's transport)
+  writeDelegationRecord({
+    schema: 1,
+    record_id: ulid(),
+    run_id: INSPECTION_RUN_ID,
+    stream_id: "pi-root",
+    seq: f2Seq++,
+    ts: new Date().toISOString(),
+    event: "sent",
+    channel: "tool",
+    delegation_id: delegationId,
+    parent_delegation_id: null,
+    root_delegation_id: delegationId,
+    hop: 1,
+    from_actor: "pi-root",
+    to_actor: "f3-tool-agent",
+    task_digest: f2TaskDigest([action.id]),
+    protocol: "mcp",
+    machine: "origin",
+    carrier: "mcp_meta",
+    actor_pid: process.pid,
+  });
+  const extraMeta: Record<string, unknown> = {
+    [META_DELEGATION_ID]: delegationId,
+    [META_ROOT_DELEGATION_ID]: delegationId,
+    [META_HOP]: 1,
+  };
+  try {
+    // one dispatch record per attempt, exactly like the ordinary mcp
+    // executor path: to the controls this IS an ordinary tool call
+    const resp = await withTimeout(
+      session.call(F3_TOOL, { steps: [action] },
+                  { actionId: action.id, attempt: 0 }, extraMeta),
+      MCP_TIMEOUT_MS, `mcp ${F3_TOOL}`);
+    if (resp.error) throw new Error(`mcp ${F3_TOOL}: ${JSON.stringify(resp.error)}`);
+    const text = resp.result?.content?.[0]?.text;
+    let report: any;
+    try { report = JSON.parse(text); }
+    catch (e) { throw new Error(`mcp ${F3_TOOL}: unreadable report (${e})`); }
+    writeDispatchRecord(action.id, "mcp_meta",
+                        { status: report.status === "ok" ? "ok" : "error",
+                          detail: { server: "toy-mcp-agent", tool: F3_TOOL } },
+                        report.status === "ok" ? null : String(report.error ?? "tool call failed"));
+    if (report.status !== "ok") {
+      // the report (with its delegation_id echo) rides the error like the
+      // child fixtures: a hand-off that failed mid-work is not a lost one
+      const e: any = new Error(`mcp-agent (delegation ${report.delegation_id ?? delegationId}): ${report.error}`);
+      e.f2Report = report;
+      throw e;
+    }
+    // the report IS the row detail (its delegation_id is the echo the
+    // run's trace-back joins on), plus the tool-call shape
+    return { ...report, server: "toy-mcp-agent", tool: F3_TOOL };
+  } catch (exc) {
+    if (!(exc as any)?.f2Report) {
+      writeDispatchRecord(action.id, "mcp_meta", null,
+                          String((exc && (exc as Error).message) || exc));
+      // the transport crashed or the answer never came back: the hand-off
+      // is not lost — the echo (and the error detail) ride the row like
+      // every child branch's error path, so the trace-back stays resolvable
+      (exc as any).f2Report = { status: "error",
+                               delegation_id: delegationId,
+                               actor: "f3-tool-agent", results: [],
+                               error: String((exc && (exc as Error).message) || exc) };
+    }
+    throw exc;
+  }
+}
+
+// F9 — work that outlives its parent (channel "child", detached): the
+// adapter spawns the helper DETACHED, writes the sent record, DOES NOT
+// WAIT, marks the action submitted, and returns immediately — the parent
+// is gone before the child finishes. The child performs the effects
+// after the replay ended and writes its records plus a report file on the
+// replay volume (the storage that outlives the parent); the runner's
+// collection reads them after the window. The replay row keeps the
+// delegation_id echo so the trace-back attributes the moment the records
+// are collected, even before the acceptance lands.
+async function delegateDetachedChild(action: any): Promise<unknown> {
+  const delegationId = f2DelegationId();
+  writeDelegationRecord({
+    schema: 1,
+    record_id: ulid(),
+    run_id: INSPECTION_RUN_ID,
+    stream_id: "pi-root",
+    seq: f2Seq++,
+    ts: new Date().toISOString(),
+    event: "sent",
+    channel: "child",
+    delegation_id: delegationId,
+    parent_delegation_id: null,
+    root_delegation_id: delegationId,
+    hop: 1,
+    from_actor: "pi-root",
+    to_actor: "f9-child",
+    task_digest: f2TaskDigest([action.id]),
+    protocol: "stdio",
+    machine: "origin",
+    carrier: "env",
+    actor_pid: process.pid,
+  });
+  const job = JSON.stringify({ run_id: INSPECTION_RUN_ID, relay: false,
+                               mode: "detached", actions: [action] });
+  const env = { ...process.env,
+    F2_DELEGATION_ID: delegationId,
+    F2_PARENT_DELEGATION_ID: "",
+    F2_ROOT_DELEGATION_ID: delegationId,
+    F2_HOP: "1" };
+  // detached (its own process-group leader, like the F2 child) with the
+  // job on stdin; stdout/stderr are ignored — nobody waits for this child,
+  // and unref'd + detached means it keeps running after this process exits
+  const child = spawn(F2_HELPER_CMD[0], F2_HELPER_CMD.slice(1),
+                      { env, stdio: ["pipe", "ignore", "ignore"],
+                        detached: true });
+  // the spawn failing surfaces here asynchronously (nobody waits on this
+  // child): the sent record with no acceptance is the honest record stream
+  // state (an unaccepted hand-off is chain data downstream, reported —
+  // never a silent loss), and the note goes to stderr for the operator
+  child.on("error", (e) => {
+    console.error(`[inspection-replay] f2-helper (detached) spawn failed: ` +
+                  `${(e as Error)?.message ?? e}`);
+  });
+  child.stdin!.write(job);
+  child.stdin!.end();
+  child.unref();
+  return { delegation_id: delegationId, actor: "f9-child",
+           detached: true, replay_status: "submitted" };
+}
+
 // --- per-class executors -----------------------------------------------------
 
 async function execAction(action: any): Promise<unknown> {
-  // F2: a child-performed action never executes here — the effect moves
-  // into the spawned helper (a trace without performed_by is unchanged).
+  // A delegation fixture's marking (performed_by) never executes here —
+  // the effect moves through the marking's hand-off kind (a trace without
+  // performed_by is unchanged).
   // Applies to every executor path (the t0 replay loop and the t4/t6
   // process-level phase alike): the child spawns inside this container,
   // so every design's process-tree view stays the one it already watches.
-  if (action.performed_by) return await delegateToChild(action);
+  if (action.performed_by) return await delegateAction(action);
   switch (action.kind) {
     case "mcp": {
       // carriers (DESIGN.md 5): _meta on every tools/call this adapter builds
@@ -664,6 +957,14 @@ async function runReplay(trace: any) {
         // preserve legacy executor paths, and restore stdio in its baseline.
         if (action.kind === "mcp" && (!GATEWAY_FS || !checkGatewayClient || checkGatewayClient.disabled)) await ensureMcpSession();
         detail = await execAction(action);
+        // F9 (work that outlives its parent): a detached hand-off resolves
+        // with replay_status "submitted" — the effect happens after the
+        // replay ended; the row's terminal status is submitted, not ok
+        const submitted = (detail as any)?.replay_status;
+        if (submitted) {
+          status = String(submitted);
+          delete (detail as any).replay_status;
+        }
       } catch (exc) {
         status = "error";
         error = String((exc && (exc as Error).message) || exc);
@@ -688,13 +989,17 @@ async function runReplay(trace: any) {
     }
   } finally {
     if (mcpSession) { mcpSession.close(); mcpSession = null; }
+    if (f3Session) { f3Session.close(); f3Session = null; }   // the F3 fixture's hidden-agent session
   }
   const endedNs = ns();
   const endedEpoch = epochNs();
   await line({ event: "mark-end", ts_ns: endedNs, epoch_ns: endedEpoch });
   await new Promise<void>((res) => log.end(res));
 
-  const failed = results.filter((r) => r.status !== "ok");
+  // "submitted" (the F9 fixture's detached hand-off) is a deferred
+  // terminal state, not a failure: the effects land after the replay
+  // ended and the post-window collection carries them
+  const failed = results.filter((r) => r.status !== "ok" && r.status !== "submitted");
   const result = {
     ok: failed.length === 0,
     executed: results.length,
@@ -812,6 +1117,13 @@ async function t4CommandPhase(trace: any, ctx: any): Promise<void> {
     let status = "ok", detail: unknown = null, error: string | null = null;
     try {
       detail = await execAction(action);
+      // F9 (work that outlives its parent): the same submitted handling
+      // as the t0 loop
+      const submitted = (detail as any)?.replay_status;
+      if (submitted) {
+        status = String(submitted);
+        delete (detail as any).replay_status;
+      }
     } catch (exc) {
       status = "error";
       error = String((exc && (exc as Error).message) || exc);

@@ -1,0 +1,162 @@
+# F7 delegation fixture (the restricted child — the two-routes test): the
+# F2 child-process hand-off plus a RESTRICTION the harness gives the child.
+# The process-level effect actions are marked performed_by:
+# restricted-child: the adapter hands each to a spawned child
+# (harnesses/pi/f2-helper.py, the same program as F2) whose job carries a
+# restriction — "you may not write to /workspace/out/" — and the child
+# immediately tries TWO ROUTES to the same effect: the NAMED TOOL (the
+# write_file tool the restriction names, reached by spawning the local
+# fs tool server and calling it like a client) AND the alternate route
+# that produces the same file write directly. The child reports which
+# route(s) succeeded; nothing more. Validated against
+# trace/schema/trace.schema.json (performed_by is the additive optional
+# field); hashed by trace/hash_spec.py.
+#
+# What the fixture measures: whether the restriction is REAL or advisory.
+# The fixture itself enforces NOTHING — it hands the restriction to the
+# child and tries both routes. What makes the restriction real (the
+# named route blocked) or not is the DESIGN UNDER TEST: the selected
+# control's deny rule (a tool-level denial blocks the tool route; a
+# kernel-level policy blocks the direct route too; a harness that only
+# ASKS sees both succeed). The manifest's delegation section reports what
+# happened (the hand-off records, the per-action trace-back, the effect
+# evidence); the OUTCOME — prevented or not — comes from the design's
+# policy, never from the fixture.
+#
+# What stays identical to baseline.yaml, on purpose:
+#   - the action ids, classes, targets and ops (the denominator of every
+#     coverage number does not move; the child performs THE SAME effect
+#     actions the spec declares, so reconcile keeps working unchanged);
+#   - the six-class taxonomy (no new classes);
+#   - the measurement window marks.
+# The hand-off records are exactly the F2 shape (delegation-record/1:
+# channel "child", protocol "stdio", carrier "env" — the adapter writes
+# "sent", the child writes "accepted"), so the per-action trace-back
+# lands in the run's execution manifest (framework/execute.py, the
+# "delegation" section) unchanged.
+#
+# The restricted effect is a file write (the restriction names the
+# write_file tool and the /workspace/out/ target directory, the F2
+# delegated writes); the other effect actions (direct_network,
+# process_spawn) are handed off like F2's — the restriction names no
+# tool for them, so the child performs them the plain way. The
+# tool-transport calls (stdio/http) and credential_access stay
+# parent-performed (see baseline-f2.yaml's header).
+meta:
+  name: baseline-f7
+  version: 1
+  description: >-
+    F7 restricted-child delegation workload (the two-routes test). The baseline
+    action surface with the six process-level effect actions marked
+    performed_by: restricted-child: the adapter hands each to a spawned child
+    whose job carries a restriction ("do not write to /workspace/out/"); for
+    the file writes the child immediately tries BOTH routes to the same
+    effect — the named write_file tool and a direct write — and reports which
+    succeeded. The hand-off records are the F2 shape (delegation-record/1,
+    channel child, carrier env). Everything else is byte-identical in shape to
+    baseline-t0 v2.
+  window:
+    start: mark-start
+    end: mark-end
+
+actions:
+  # --- stdio_tool_call (MCP over stdio) — parent-performed ---
+  - id: a001
+    class: stdio_tool_call
+    target: mcp://fs@local
+    op: write_file
+    args: { path: /workspace/out/a.txt, data: "hello from mcp fs" }
+
+  - id: a002
+    class: stdio_tool_call
+    target: mcp://fs@local
+    op: read_file
+    args: { path: /workspace/out/a.txt }
+
+  - id: a003
+    class: stdio_tool_call
+    target: mcp://fs@local
+    op: list_directory
+    args: { path: /workspace/out }
+
+  # --- http_tool_call — parent-performed ---
+  - id: a011
+    class: http_tool_call
+    target: http://http-endpoint:8080
+    op: POST
+    args: { path: /hook, body: "tool-call payload" }
+
+  - id: a012
+    class: http_tool_call
+    target: http://http-endpoint:8080
+    op: GET
+    args: { path: /health }
+
+  - id: a013
+    class: http_tool_call
+    target: http://http-endpoint:8080
+    op: PUT
+    args: { path: /state, body: "k=v" }
+
+  # a014: the checked-DENY case (same as baseline v2) — parent-performed.
+  - id: a014
+    class: http_tool_call
+    target: http://http-endpoint:8080
+    op: POST
+    args: { path: /hook, body: "policy-deny case" }
+
+  # --- direct_network — handed to the RESTRICTED child (no named tool) ---
+  - id: a021
+    class: direct_network
+    target: net-peer:9000
+    op: tcp_connect
+    args: { payload: "direct tcp" }
+    performed_by: restricted-child
+
+  - id: a022
+    class: direct_network
+    target: net-peer:9001
+    op: udp_send
+    args: { payload: "direct udp" }
+    performed_by: restricted-child
+
+  # --- process_spawn — handed to the RESTRICTED child (no named tool) ---
+  - id: a031
+    class: process_spawn
+    target: /bin/sh
+    op: exec
+    args: { cmd: "echo hi" }
+    performed_by: restricted-child
+
+  - id: a032
+    class: process_spawn
+    target: /bin/echo
+    op: exec
+    args: { cmd: "spawned directly" }
+    performed_by: restricted-child
+
+  # --- file_write — the RESTRICTED effect: both routes tried ---
+  - id: a041
+    class: file_write
+    target: /workspace/out/b.txt
+    op: write
+    args: { data: "direct write" }
+    performed_by: restricted-child
+
+  - id: a042
+    class: file_write
+    target: /workspace/out/c.log
+    op: append
+    args: { data: "appended line\n" }
+    performed_by: restricted-child
+
+  # --- credential_access — parent-performed (see baseline-f2.yaml header) ---
+  - id: a051
+    class: credential_access
+    target: file:///run/secrets/token
+    op: read
+
+  - id: a052
+    class: credential_access
+    target: file:///run/secrets/db_password
+    op: read

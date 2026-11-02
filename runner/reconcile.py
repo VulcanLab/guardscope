@@ -364,7 +364,8 @@ class Reconciler:
                  container_id: str | None = None, design: str = "t0",
                  calibration_logs: list[dict] | None = None,
                  gateway_stdio_wire: list[dict] | None = None,
-                 gateway_lifecycle: list[dict] | None = None):
+                 gateway_lifecycle: list[dict] | None = None,
+                 window_end_epoch_ns: int | None = None):
         self.spec = spec
         self.profile = profile
         self.replay = replay
@@ -378,6 +379,15 @@ class Reconciler:
         self.container_id = container_id
         self.design = design
         self.prevented = prevented_for(design, profile)
+        # F9 (work that outlives its parent): the effective window END the
+        # kernel scoping uses. The replay's window closes at mark-end, but
+        # the detached children's effects land AFTER it (that is the
+        # fixture's point) — the runner records when its post-window
+        # collection finished and passes that timestamp here, so R3/R4
+        # scope the effects the fixture is supposed to measure instead of
+        # excluding them beyond the mark-end tolerance. None = the replay
+        # window as-is (every non-detached run is unchanged).
+        self.window_end_epoch_ns = window_end_epoch_ns
         self.mult = profile.get("multiplicity", {})
         self.actions = spec["actions"]
         self.by_class = {c: [a for a in self.actions if a["class"] == c]
@@ -398,7 +408,10 @@ class Reconciler:
     def window(self) -> tuple[int, int]:
         w = self.replay.get("window_epoch_ns") or {}
         tolerance = int(self.profile.get("window_tolerance_ns", 0))
-        return int(w["start"]) - tolerance, int(w["end"]) + tolerance
+        end = (int(self.window_end_epoch_ns)
+               if self.window_end_epoch_ns is not None
+               else int(w["end"]))
+        return int(w["start"]) - tolerance, end + tolerance
 
     @staticmethod
     def _ref(rec: dict) -> dict:
@@ -440,6 +453,16 @@ class Reconciler:
                 # the SIGKILLed child as status error; the allowed twins of
                 # the class (a031) must still succeed. The outcome classifier
                 # + C6 adjudicate; R1 does not.
+                continue
+            if status == "submitted" and a.get("performed_by") == "detached-child":
+                # F9 (work that outlives its parent): the detached hand-off's
+                # terminal replay state — the parent handed the work to a
+                # child that outlives it and did not wait. The effect happens
+                # after the replay ended; the post-window collection (the
+                # child's delegation records + report, the kernel watcher)
+                # carries the effect evidence. R1 checks the replay layer;
+                # a submitted row on a detached-child action is that layer's
+                # valid terminal state, not a defect.
                 continue
             if a["class"] in self.prevented:
                 # prevented (design t2/t3): the network layer must
@@ -1252,7 +1275,7 @@ class Reconciler:
                    else f"{len(self.leftovers)} leftover records (see report)")
 
         hard_fail = any(c["status"] == "fail" for c in self.checks if c["hard"])
-        return {
+        out = {
             "schema": "inspection-reconciliation/1",
             "status": "fail" if hard_fail else "pass",
             "harness": self.profile["harness"],
@@ -1280,6 +1303,17 @@ class Reconciler:
             "leftovers": self.leftovers,
             "checks": self.checks,
         }
+        # F9: the effective window end (the collection point) is part of
+        # the record whenever the run extended the kernel observation
+        # scope past mark-end — the run record + manifest carry it
+        if self.window_end_epoch_ns is not None:
+            w = self.replay.get("window_epoch_ns") or {}
+            out["window_effective_epoch_ns"] = {
+                "start": w.get("start"), "end": self.window_end_epoch_ns,
+                "note": ("extended past mark-end for the F9 detached "
+                         "effects (the post-window collection point)"),
+            }
+        return out
 
 
 # --- CLI ------------------------------------------------------------------------
