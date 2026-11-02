@@ -81,6 +81,31 @@ def main(argv=None) -> int:
                                 "or the cwd); the resolved paths are "
                                 "printed to stderr")
     p = sub.add_parser(
+        "batch",
+        help="expand + execute a batch plan (DESIGN.md 6: the only file "
+             "that names many controls/designs; one warm-up run per "
+             "measurement, excluded from the merge set)")
+    p.add_argument("file", help="batch plan file (YAML)")
+    p.add_argument("--out-root", default=None,
+                   help="root for the expanded experiment files, run "
+                        "artifacts, and batch-manifest.json "
+                        "(default: <workdir>/runs)")
+    p.add_argument("--workdir", default=None,
+                   help="writable root for run artifacts "
+                        "(default: GUARDSCOPE_WORKDIR or the cwd)")
+    p.add_argument("--rows", default=None,
+                   help="comma-separated row ids to run (default: all)")
+    p.add_argument("--dry-run", action="store_true",
+                   help="expand + validate every row, execute nothing")
+    p.add_argument("--include-pending", action="store_true",
+                   help="also run rows marked ready: false (measurements "
+                        "whose fixture is not built yet)")
+    p.add_argument("--no-sensor", action="store_true",
+                   help="degraded no-eBPF mode for every row (DESIGN.md 9)")
+    p.add_argument("--merge", action="store_true",
+                   help="after the runs, also write the merged report "
+                        "over the real runs' execution manifests")
+    p = sub.add_parser(
         "report",
         help="merge execution manifests into report-level grids "
              "(DESIGN.md 10)")
@@ -215,6 +240,42 @@ def main(argv=None) -> int:
                                    "running topology (compose stack with the "
                                    "control provisioned); not implemented "
                                    "this pass")}, indent=1, sort_keys=True))
+        return 0
+
+    # the experiment-file commands share the load+resolve prelude; batch
+    # is NOT one of them (its file is a batch plan, not an experiment file)
+    if args.command == "batch":
+        from framework.batch import (BatchError, merge_command, run_batch)
+        rows = ([r for r in args.rows.split(",") if r]
+                if args.rows else None)
+        try:
+            batch = run_batch(args.file, out_root=args.out_root,
+                              workdir=args.workdir, rows=rows,
+                              include_pending=args.include_pending,
+                              dry_run=args.dry_run,
+                              sensor=not args.no_sensor)
+        except (BatchError, ExperimentError, OSError, ValueError) as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        for r in batch.rows:
+            if r.executed and not r.reason:
+                st = [f"{u['kind']}:{u.get('run_statuses')}"
+                      for u in r.runs]
+                print(f"[batch] {r.row_id}: {' '.join(st)}")
+            else:
+                print(f"[batch] {r.row_id}: skipped ({r.reason})")
+        print(f"batch manifest: {batch.out_root}/batch-manifest.json",
+              file=sys.stderr)
+        print(f"merge ({len(batch.merge_set)} real runs): "
+              f"{' '.join(map(str, merge_command(batch)))}",
+              file=sys.stderr)
+        if args.merge and batch.merge_set:
+            from framework.report import merge_reports as merge_manifests
+            report = merge_manifests(batch.merge_set)
+            out = batch.out_root / "batch-merged.json"
+            out.write_text(json.dumps(report, indent=1) + "\n",
+                            encoding="utf-8")
+            print(f"merged report: {out}", file=sys.stderr)
         return 0
 
     try:
