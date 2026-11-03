@@ -717,8 +717,25 @@ class Reconciler:
                              "credential_access": "credential_opens_per_action"
                              }.get(cls))
         if rng:
+            # the F7 fixture (restricted-child actions) tries BOTH routes
+            # to the same effect — the named tool AND the direct route —
+            # so each restricted file-write target legitimately produces
+            # more kernel opens than the single-write baseline model.
+            # Widen the range for those actions; the baseline range stays
+            # exactly as-is for every other workload.
+            restricted_targets = {
+                a["target"] for a in actions
+                if a.get("performed_by") == "restricted-child"}
             for path, group in path_groups.items():
-                if path in spec_targets and not rng[0] <= len(group) <= rng[1]:
+                if path not in spec_targets:
+                    continue
+                if path in restricted_targets:
+                    wide = (rng[0], rng[1] * 2)
+                    if not wide[0] <= len(group) <= wide[1]:
+                        mult_problems.append(
+                            f"{path}: {len(group)} opens not in {wide} "
+                            f"(restricted-child: both routes)")
+                elif not rng[0] <= len(group) <= rng[1]:
                     mult_problems.append(f"{path}: {len(group)} opens not in {rng}")
 
         # leftover detection: any record whose target matches neither a spec
@@ -987,6 +1004,12 @@ class Reconciler:
         return {"spec": n, "kernel_raw": len(recs), "evidence": "kernel-group+calibrated-http-pre-window",
                 "problems": problems, "calibration": calibration}
 
+    def _has_restricted_child(self) -> bool:
+        """Whether this run's spec marks any action as a restricted-child
+        hand-off (the F7 fixture: both routes to the same effect)."""
+        return any(a.get("performed_by") == "restricted-child"
+                   for a in self.spec.get("actions", []))
+
     def kernel_group(self, cls: str, recs: list[dict]) -> dict:
         """Group kernel support under the documented expected count range."""
         if (cls == "http_tool_call" and "http_startup_calibration" in self.mult
@@ -1018,6 +1041,19 @@ class Reconciler:
                 if not n <= len(recs) <= n + 2:
                     problems.append(f"{len(recs)} stdio writes outside "
                                     f"[{n}, {n + 2}] (tool responses + config handshake)")
+            elif self._has_restricted_child():
+                # the F7 fixture's tool route makes extra MCP calls through
+                # the fs server (the restricted child tries the named tool),
+                # so the expected count widens by the restricted action count
+                n_restricted = sum(1 for a in actions
+                                   if a.get("performed_by") == "restricted-child")
+                handshake = int(self.mult.get("stdio_handshake_extra_writes", 1))
+                lo = n + handshake
+                hi = n + handshake + n_restricted
+                if not lo <= len(recs) <= hi:
+                    problems.append(f"{len(recs)} response writes outside "
+                                    f"[{lo}, {hi}] (tool calls + handshake + "
+                                    f"{n_restricted} restricted-child tool-route calls)")
             else:
                 handshake = int(self.mult.get("stdio_handshake_extra_writes", 1))
                 expected = n + handshake
