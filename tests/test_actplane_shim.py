@@ -178,7 +178,7 @@ def test_seq_monotonic_per_stream():
 def test_fixture_policy_wellformed_with_expected_rules():
     """The t7 fixture policy (the design's enforcement_config): YAML
     well-formed, and the rule inventory matches the design comment (notify
-    over the mediated classes + the kill arm on secret reads)."""
+    over the mediated classes + the kill rule on secret reads)."""
     doc = yaml.safe_load(
         (ROOT / "plugins" / "actplane" / "policy" / "t7.ap.yaml").read_text())
     assert doc["version"] == 1
@@ -188,10 +188,10 @@ def test_fixture_policy_wellformed_with_expected_rules():
     assert "notify connect endpoint" in body
     assert "notify open file \"/run/secrets/**\"" in body
     assert "kill read file" not in body          # reads are notified (v2)
-    # v4: the spawn class is the deny arm (both instances; the class-level
+    # v4: the spawn class is the deny rule (both instances; the class-level
     # outcome model needs the whole class denied, like t2's egress)
     assert "notify exec" in body               # v5: a031's allowed twin
-    assert 'kill exec "/bin/echo"' in body        # the instance deny arm
+    assert 'kill exec "/bin/echo"' in body        # the instance deny rule
     assert 'kill exec "/bin/sh"' not in body      # harness plumbing
 
 

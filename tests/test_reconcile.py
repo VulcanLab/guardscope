@@ -764,7 +764,7 @@ def test_t6_denied_prevented_class_fails():
                for c in report["checks"])
 
 
-# --- T7: the kernel kill arm's denial is a policy denial (checked-denied) ----
+# --- T7: the kernel kill rule's denial is a policy denial (checked-denied) ----
 
 
 def _t7_replay(status_by_id):

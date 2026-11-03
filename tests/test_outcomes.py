@@ -168,7 +168,7 @@ def test_t0_all_bypassed():
     assert report["status"] == "pass"
 
 
-# --- T7: kernel position — the kill arm's deny is checked-denied --------------
+# --- T7: kernel position — the kill rule's deny is checked-denied --------------
 
 
 def test_t7_kernel_kill_is_checked_denied():

@@ -15,7 +15,7 @@
 # was driven manually, minutes after bring-up; this script runs seconds
 # after `compose up`). The t7 path now waits for the control's readiness
 # AND proves enforcement with a live kill probe (exec /bin/echo must be
-# killed by the kill arm) before running the experiment.
+# killed by the kill rule) before running the experiment.
 set -uxo pipefail
 
 CHECKOUT="$HOME/guardscope"
@@ -49,7 +49,7 @@ wait_t7_ready () {
   done
   kc_ready || { echo "FATAL: kernel control never came up"; return 1; }
   # 2. enforcement must actually work: a probe exec of /bin/echo (the kill
-  #    arm's target) must produce a kill event
+  #    rule's target) must produce a kill event
   docker exec t7-kernel-control sh -c \
     ': > /var/log/control/actplane-events.log' || return 1
   for _ in $(seq 1 30); do
@@ -58,14 +58,14 @@ wait_t7_ready () {
     sleep 1
     if docker exec t7-kernel-control sh -c \
         'grep -q "\"effect\":\"kill\"" /var/log/control/actplane-events.log'; then
-      echo "t7 control READY: kill arm fired on the probe exec"
+      echo "t7 control READY: kill rule fired on the probe exec"
       # clean the probe events out of the streams the runs will read
       docker exec t7-kernel-control sh -c \
         ': > /var/log/control/actplane-events.log; : > /var/log/control/decisions.jsonl'
       return 0
     fi
   done
-  echo "FATAL: t7 kill-arm probe never fired"; return 1
+  echo "FATAL: t7 kill-rule probe never fired"; return 1
 }
 
 fresh_sensor () {  # $1=design  $2=base  $3=overlay

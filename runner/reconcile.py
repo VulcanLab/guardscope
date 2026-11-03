@@ -98,7 +98,7 @@ PREVENTED_CLASSES = {
     # construction), nothing prevented
     "t6": set(),
     # t7 (0.2.0): nothing prevented. The kernel position mediates through
-    # a POLICY (the actplane engine), so its kill arm's denial is a policy
+    # a POLICY (the actplane engine), so its kill rule's denial is a policy
     # decision — the denied instance (a032) crosses the kernel enforcement
     # point and classifies as checked-denied, not prevented; every
     # mediated class is notified (checked). Prevented stays reserved for
@@ -106,7 +106,7 @@ PREVENTED_CLASSES = {
     "t7": set(),
 }
 
-# The t7 fixture policy's kill arm (plugins/actplane/policy/t7.ap.yaml:
+# The t7 fixture policy's kill rule (plugins/actplane/policy/t7.ap.yaml:
 # `kill exec "/bin/echo"`) denies exactly one declared instance: a032.
 # The denial is a policy verdict at the kernel enforcement point, so the
 # instance's outcome is checked-denied (the deny decision record is
@@ -1229,7 +1229,7 @@ class Reconciler:
 
     def _kernel_denied_ids(self) -> set:
         """t7: the instance-level kernel denials — the fixture policy's
-        kill arm denies these instances (checked-denied: the engine
+        kill rule denies these instances (checked-denied: the engine
         SIGKILLed the exec'd child, so the replay status is error; the
         deny decision record is attributed by the coverage layer and C6
         verifies the denial held). Keyed on the declared deny instances,

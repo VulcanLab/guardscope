@@ -55,7 +55,7 @@ PREVENTED_CLASSES = {
     "t5": set(),
     "t6": set(),
     # t7 (0.2.0): nothing prevented. The kernel position mediates through
-    # a POLICY (the actplane engine), so its kill arm's denial is a policy
+    # a POLICY (the actplane engine), so its kill rule's denial is a policy
     # decision — the denied instance (a032) crosses the kernel enforcement
     # point and classifies as checked-denied (the deny decision record is
     # attributed by the class+target join below; C6 verifies the denial

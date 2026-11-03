@@ -903,7 +903,7 @@ def run_one(harness: str, run_id: str, runs_dir: Path, timeout_s: float | None =
     if not result.get("ok"):
         # design-aware: failures are only tolerated for PREVENTED actions
         # (design t2/t3: refused by the egress policy with a refusal errno),
-        # for the t7 kernel-denied instances (the fixture policy's kill arm
+        # for the t7 kernel-denied instances (the fixture policy's kill rule
         # denies them at the kernel — the harness replay sees the SIGKILLed
         # child as an execution error; the deny decision record + C6 verify
         # the denial downstream, this gate only decides abort-vs-continue),
@@ -933,7 +933,7 @@ def run_one(harness: str, run_id: str, runs_dir: Path, timeout_s: float | None =
             if status == "ok":
                 return False
             if r.get("id") in kernel_denied and status == "error":
-                # the t7 kill arm denied this instance at the kernel; the
+                # the t7 kill rule denied this instance at the kernel; the
                 # deny record + C6 corroborate downstream
                 return False
             return not (spec_class.get(r.get("id")) in prevented

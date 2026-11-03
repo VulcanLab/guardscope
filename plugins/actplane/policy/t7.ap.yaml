@@ -16,8 +16,8 @@
 #       file_write     a041/a042  (write/unlink under /workspace/out/)
 #       direct_network a021/a022  (connect *:9000, *:9001 — numeric IPv4)
 #       credential_access a051/a052 (open under /run/secrets/)
-#   - KILL on the a032 spawn INSTANCE (exec /bin/echo): the kernel-deny
-#     arm — the T7 analogue of a014's checked-DENY role in T6 (an
+#   - KILL on the a032 spawn INSTANCE (exec /bin/echo): the kernel deny
+#     rule — the T7 analogue of a014's checked-DENY role in T6 (an
 #     argument-level constraint is NOT expressible at the kernel, so the
 #     deny boundary is a kernel-observable feature: the spawned binary).
 #     The denial is INSTANCE-level: a031 (/bin/sh) stays allowed because
@@ -46,7 +46,7 @@ policy: |
 
   rule t7-notify-sh:
     notify exec "/bin/sh" if AGENT
-    because "T7 coverage: a031 (exec /bin/sh) — allowed twin of the denied a032; /bin/sh is ALSO harness plumbing (pi launches MCP servers through it), so the deny arm cannot target the class, only the instance"
+    because "T7 coverage: a031 (exec /bin/sh) — allowed twin of the denied a032; /bin/sh is ALSO harness plumbing (pi launches MCP servers through it), so the deny rule cannot target the class, only the instance"
 
   rule t7-notify-echo:
     notify exec "/bin/echo" if AGENT
@@ -54,7 +54,7 @@ policy: |
 
   rule t7-kill-echo:
     kill exec "/bin/echo" if AGENT
-    because "T7 kill arm: the a032 spawn instance is denied at the kernel (a checked-denied instance — a policy verdict at the kernel enforcement point; C6 verifies the denial held); kills only the short-lived child, so the replay survives"
+    because "T7 kill rule: the a032 spawn instance is denied at the kernel (a checked-denied instance — a policy verdict at the kernel enforcement point; C6 verifies the denial held); kills only the short-lived child, so the replay survives"
 
   rule t7-notify-secret-open:
     notify open file "/run/secrets/**" if AGENT
