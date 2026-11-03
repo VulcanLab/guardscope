@@ -70,6 +70,7 @@ no-sensor mode) C6 is SKIPPED with a note, never a finding (DESIGN.md 9).
 """
 
 import json
+import os
 from functools import lru_cache
 from pathlib import Path
 
@@ -230,6 +231,33 @@ def _record_matches(rec: dict, pred: dict) -> bool:
 # --- deny-record attribution (DESIGN.md 5 priority: id -> target_identity) --------
 
 
+def _kernel_route_candidates(record: dict, spec: dict,
+                            cls) -> list[dict]:
+    """Kernel-position records (the t7 actplane shim): `tool` is the
+    acting process COMM (e.g. "echo"), not a tool name, so the op-based
+    route cannot match them; join class+target the way the coverage
+    layer's kernel branch does (framework/reconcile.py _kernel_match):
+    paths exact (credential targets carry the file:// scheme prefix in
+    the spec), spawns by binary basename."""
+    ktgt = ((record.get("target") or {}).get("value") or "")
+    if not isinstance(ktgt, str) or not ktgt:
+        return []
+    out: list[dict] = []
+    for a in spec["actions"]:
+        if a["class"] != cls:
+            continue
+        at = a.get("target") or ""
+        if cls == "credential_access":
+            at = at.removeprefix("file://")
+        if cls == "process_spawn":
+            if os.path.basename(at) in (os.path.basename(ktgt),
+                                        record.get("tool")):
+                out.append(a)
+        elif at.rstrip("/") == ktgt.rstrip("/"):
+            out.append(a)
+    return out
+
+
 def _route_candidates(record: dict, spec: dict) -> list[dict]:
     """Spec actions a deny record may resolve onto by tool route (the v0 /
     target-identity ladder; the same routing the runner's C2 attribution
@@ -248,8 +276,12 @@ def _route_candidates(record: dict, spec: dict) -> list[dict]:
                if a["class"] == "stdio_tool_call" and a["op"] == tool]
     else:
         cls = record.get("action_class")
-        out = [a for a in spec["actions"] if a["class"] == cls
-               and a["op"] == tool]
+        out = [a for a in spec["actions"]
+               if a["class"] == cls and a["op"] == tool]
+        if not out and record.get("protocol") == "none":
+            # kernel-position records carry no tool/op identity: the
+            # class+target kernel join (the coverage layer's ladder)
+            out = _kernel_route_candidates(record, spec, cls)
     return out
 
 

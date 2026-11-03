@@ -152,6 +152,9 @@ def load_decisions(path: Path) -> tuple[list[dict], list[str]]:
                 "action_class": entry.get("action_class"),
                 "target_value": ((entry.get("target") or {})
                                  .get("value") or ""),
+                "target_kind": ((entry.get("target") or {})
+                                .get("kind")),
+                "protocol": entry.get("protocol"),
                 "decision": entry.get("decision"),
                 "seq": entry.get("seq"),
                 "allowed": entry.get("decision")
@@ -578,6 +581,20 @@ def decision_records_to_log_entries(records: list[dict]) -> list[dict]:
             "allowed": decision in ("allow", "observe"),
             "parameters": record.get("parameters") or {},
         }
+        # decision-record/1 fields with no v0 origin (the kernel
+        # position: the class + structured target + protocol): carried
+        # through ONLY when the record's target is structured (a
+        # decision-record/1 origin); v0-origin records keep the exact
+        # four-field log view (the round trip must stay exact — found live
+        # 2026-11-03: dropping the kernel records' target left the t7
+        # recomputation with no way to attribute them)
+        tk = (record.get("target") or {}).get("kind")
+        tv = ((record.get("target") or {}).get("value") or "")
+        if tk and tk != "unknown" and tv:
+            entry["action_class"] = record.get("action_class")
+            entry["target_value"] = tv
+            entry["target_kind"] = tk
+            entry["protocol"] = record.get("protocol")
         if "tool_call_id" in ids:
             entry["tool_call_id"] = ids["tool_call_id"]
         entries.append(entry)

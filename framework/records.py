@@ -229,6 +229,16 @@ def audit_entry_to_decision_record(entry: dict, *, run_id: str, stream_id: str,
         raise RecordValidationError("v0 AuditEntry timestamp unparseable")
 
     tool = entry["tool_name"]
+    # decision-record/1 streams (framework/reconcile.py load_decisions'
+    # schema-1 branch) carry the class + structured target + protocol the
+    # v0 AuditEntry never had: preserve them through the mapping (found
+    # live 2026-11-03: re-deriving the class from the tool routing table
+    # mislabeled the kernel position's records and dropped the target the
+    # kernel join needs)
+    entry_class = entry.get("action_class")
+    entry_target = entry.get("target_value")
+    entry_target_kind = entry.get("target_kind")
+    entry_protocol = entry.get("protocol")
     parameters = entry.get("parameters") or {}
     ids = {k: entry[k] for k in ("agent_id", "tool_call_id",
                                 "approval_status") if entry.get(k) is not None}
@@ -245,11 +255,23 @@ def audit_entry_to_decision_record(entry: dict, *, run_id: str, stream_id: str,
                              "product_version": product_version},
         "producer": {"plugin": plugin, "plugin_version": plugin_version,
                      "record_source": "ingested"},
-        "action_class": _v0_action_class(tool, default_action_class),
-        "protocol": protocol,
+        "action_class": (entry_class
+                        if isinstance(entry_class, str) and entry_class
+                        else _v0_action_class(tool, default_action_class)),
+        "protocol": (entry_protocol
+                     if isinstance(entry_protocol, str) and entry_protocol
+                     else protocol),
         "tool": tool,
-        "target": {"kind": "unknown",
-                   "note": "v0 AuditEntry carries no structured target"},
+        "target": ({"kind": (entry_target_kind
+                           if isinstance(entry_target_kind, str)
+                           else "kernel_path_or_endpoint"),
+                    "value": entry_target,
+                    "note": "decision-record/1 reader-side mapping: the "
+                            "structured target value is preserved"}
+                   if isinstance(entry_target, str) and entry_target
+                   else {"kind": "unknown",
+                         "note": "v0 AuditEntry carries no structured "
+                                 "target"}),
         "parameters_digest": parameters_digest(parameters),
         "action_id": None,
         "attempt": 0,

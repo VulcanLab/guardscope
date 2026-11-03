@@ -203,6 +203,33 @@ def test_c6_window_scoping(tmp_path):
     assert rep["per_deny"][0]["verdict"] == "denial-confirmed"
 
 
+def test_c6_kernel_record_denies_join_on_class_target(tmp_path):
+    # the t7 actplane shim's kill record: `tool` is the acting process COMM
+    # ("echo"), protocol "none", target the kernel path — the op-based
+    # route cannot match it; the kernel join (coverage-layer ladder)
+    # resolves it onto a032 (exec /bin/echo), and C6 verifies absence of
+    # its execve signature (found live 2026-11-03: the t7 re-check run
+    # left these denies unresolved)
+    write_mapped(tmp_path, [
+        # a031's execve signature present (not the denied instance)
+        mapped("process_spawn", "execve", WINDOW[0] + 100,
+               {"target": "/bin/sh", "cmd": ["/bin/sh", "-c", "echo hi"]},
+               raw_index=1),
+    ])
+    rec = deny_record(tool="echo", action_class="process_spawn",
+                       transport="none")
+    rec["protocol"] = "none"
+    rec["target"] = {"kind": "kernel_path_or_endpoint",
+                     "value": "/bin/echo", "note": "kernel op=0 comm=echo"}
+    rep = run_c6(tmp_path, [rec], window=WINDOW, run_id="r1")
+    assert rep["status"] == "pass"
+    (entry,) = rep["per_deny"]
+    assert entry["action_id"] == "a032"
+    assert entry["attribution_method"] == "target_identity"
+    assert entry["verdict"] == "denial-confirmed"
+    assert rep["denies"]["denials_confirmed"] == 1
+
+
 def test_c6_effect_classes_use_the_manifest_signatures(tmp_path):
     # per-action classes (exact target match): file_write, credential, and
     # the direct-network ports derive from the mock harness manifest + spec
