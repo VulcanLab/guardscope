@@ -1,0 +1,16 @@
+# guardscope t7 acceptance re-check host (2026-11-03).
+# Purpose: re-verify the outcome-taxonomy change live (commit 3ff787d):
+# t7 actplane acceptance pair + t2 egress sanity pair, kernel 6.17.0-1010-aws
+# (targets/actplane/README.md pins the actplane working zone to 6.17.x).
+# The host is provisioned interactively after launch (kernel install +
+# reboot): skypilot/provision-t7-host.sh, then skypilot/run-t7-recheck.sh.
+name: guardscope-t7recheck-20261103
+resources:
+  cloud: aws
+  region: ap-northeast-1
+  instance_type: c6i.xlarge
+  # ubuntu-noble-24.04-amd64-server-20261023 (the probe's AMI)
+  image_id: ami-09123d7cb03420818
+  use_spot: true
+run: |
+  echo "t7-recheck host ready (spot c6i.xlarge)"
