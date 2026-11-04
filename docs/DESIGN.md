@@ -4,7 +4,7 @@ Status: authoritative design document.
 
 ## 1. Overview
 
-guardscope is a measurement framework for LLM-agent runtime controls. A runtime control (a gateway, an in-process policy engine, a kernel monitor) can only evaluate actions that cross its enforcement point; a coverage claim is therefore only as good as the evidence that the action actually crossed the point. Guardscope makes this measurable: it runs a declared workload through a real agent harness via deterministic replay injection (no LLM in the loop), ingests decision records emitted by every enforcement point in the topology, reconciles those records against kernel-level ground truth observed by a Tracee eBPF sensor, and emits a path x design coverage grid in which every cell carries an evidence class. The evidence rules are fixed: decision records are claims, not facts; coverage is computed by reconciling claims against kernel observation; outcomes (`checked` / `bypassed` / `prevented`) are derived only by the reconciler and never asserted by any measured component. It is a reproducibility instrument: it exists so that a third party can re-run a pinned measurement and so that coverage can be re-measured as tool versions change.
+guardscope is a measurement framework for LLM-agent runtime controls. A runtime control (a gateway, an in-process policy engine, a kernel monitor) can only evaluate actions that cross its enforcement point, so a coverage claim is only as good as the evidence that the action actually crossed the point. Guardscope runs a declared workload through a real agent harness via deterministic replay injection (no LLM in the loop), ingests decision records emitted by every enforcement point in the topology, reconciles them against kernel-level ground truth observed by a Tracee eBPF sensor, and emits a path x design coverage grid in which every cell carries an evidence class. The evidence rules are fixed: decision records are claims, not facts; coverage is computed by reconciling claims against kernel observation; outcomes (`checked` / `bypassed` / `prevented`) are derived only by the reconciler and never asserted by any measured component. It is a reproducibility instrument: a third party can re-run a pinned measurement, and coverage can be re-measured as tool versions change.
 
 It is for three kinds of users:
 
@@ -31,11 +31,11 @@ The rule: **plugins are everything the framework measures or exercises; the core
 | Registry | manifest index; version-keyed expiring verdicts; per-product capability facts; candidate-design queue | Two tiers: curated (CI re-verified, eligible for the main grid, small, funded) + open (self-attested, labeled) |
 | Experiment file | the four user fields (§6); plugin pins; design references; embeds design-set, contract, and sensor versions | Authored by experimenter; recorded per run |
 
-The mock harness is a policy-blind stand-in that performs the canonical actions directly, for exposure measurements the real harnesses cannot reach; a mock, never a measured subject.
+The mock harness is a policy-blind stand-in that performs the canonical actions directly, for exposure measurements the real harnesses cannot reach. It is a mock, never a measured subject.
 
-**Sensor exception.** The kernel sensor is not a plugin. It is runner-managed, exactly one per run, one clock source. There is exactly one sensor per run. The runner enforces this (the sensor starts first; it cannot be set from the experiment file) and checks it by behavior (its health report is a required run input; it is re-checked after control provisioning, because a kernel-level control can interfere with or tamper with it; a failed sensor check invalidates the run). The sensor is kept out of every plugin contract, so no plugin can change it. A new sensor (e.g. Falco) must be cross-validated against the current one on calibration workloads, plus a ground-truth equivalence study, and is added in a major release; it is never a plugin registration.
+**Sensor exception.** The kernel sensor is not a plugin. It is runner-managed, exactly one per run, one clock source. The runner starts the sensor first. Its health report is a required run input, and it is re-checked after control provisioning, because a kernel-level control can interfere with or tamper with it; a failed sensor check invalidates the run. The sensor is kept out of every plugin contract, so no plugin can change it. A new sensor (e.g. Falco) must be cross-validated against the current one on calibration workloads plus a ground-truth equivalence study, and is added in a major release; it is never a plugin registration.
 
-**Reference-plugin governance.** Reference plugins serve as the conformance baseline that CI runs against continuously. This is stated openly, not denied:
+**Reference-plugin governance.** Reference plugins serve as the conformance baseline that CI runs against continuously:
 
 - A `reference` label affects interpretation only (they are the calibration set); it has no effect on evidence classes or main-grid results.
 - Equal treatment is enforced: no core code depends on plugin identity, and CI checks that reference plugins use only the public contract.
@@ -75,7 +75,7 @@ The reconciler enforces the limit: ingested records can support `bypassed` (kern
 | `collect()` | Dispatch-record flush |
 | `teardown()` | State isolation between grid cells; permission state must not carry over |
 
-Harness-native enforcement (T4/T6) emits decision records in the main schema with the harness as the `enforcement_point`. Dispatch records use the sibling schema `dispatch-record/1` sharing the identity fields; this shared identity closes the attribution gap between the two record streams (which otherwise share no id). **The mock harness formally implements this contract in reduced form** (`describe` / `inject` / dispatch records), so mock-harness-derived cells are treated the same as harness cells and the dispatch tooling is shared. The mock harness is never called a harness: it is a path-originator fixture, an instrument on the workload side, never an evaluated component and never a row or column of the grid. It only adds provenance labels to cells.
+Harness-native enforcement (T4/T6) emits decision records in the main schema with the harness as the `enforcement_point`. Dispatch records use the sibling schema `dispatch-record/1` sharing the identity fields; this shared identity closes the attribution gap between the two record streams (which otherwise share no id). **The mock harness formally implements this contract in reduced form** (`describe` / `inject` / dispatch records), so mock-harness-derived cells are treated the same as harness cells and the dispatch tooling is shared. The mock harness is never called a harness: it is a path-originator fixture, an instrument on the workload side. It is never an evaluated component and never a row or column of the grid. It only adds provenance labels to cells.
 
 Determinism is a set of contract clauses (replay only, no LLM, pinned loopback targets, fixed argv/paths, declared timeouts), verified by pinned hashes in the run manifest, not a separate receipt artifact.
 
@@ -92,9 +92,9 @@ Every component that **can emit a decision-record stream** must be declared as e
 
 The emission test: emitters are declared; non-emitters are environment. The silent egress jail emits nothing, so it is environment topology, hashed into the fixture fingerprint and rendered as a note on the design column (this is exactly what distinguishes T2 from T1); a hypothetical record-emitting jail is fixture-intrinsic and must be declared. Undeclared emitters are conformance failures, detected by a test action plus a kernel-truth anomaly check.
 
-**One selected control per run.** An on-matrix run selects at most one control: one plugin product, nullable, together with the positions its manifest declares. Selection counts plugins, never positions. `control: null` with an enforcement-capable harness is the natural expression of the T4/T6 configurations. Registered is not selectable: harness-intrinsic enforcement registers through the control contract (so its records flow into grid attribution per position) but is never user-selectable. No run-level syntax may name two controls; two-selected-control deployments run only as off-matrix composition fixtures (§7), measured at full fidelity and projected to the nearest design. Every grid position carries an origin label (`selected` / `harness-intrinsic` / `fixture-intrinsic`).
+**One selected control per run.** An on-matrix run selects at most one control: one plugin product, nullable, together with the positions its manifest declares. Selection counts plugins, never positions. `control: null` with an enforcement-capable harness is the natural expression of the T4/T6 configurations. Registered is not selectable: harness-intrinsic enforcement registers through the control contract (so its records flow into grid attribution per position) but is never user-selectable. No run-level syntax may name two controls; two-selected-control deployments run only as off-matrix composition fixtures (§7). Every grid position carries an origin label (`selected` / `harness-intrinsic` / `fixture-intrinsic`).
 
-**Multi-position products.** One plugin per deployed artifact; the capability manifest declares N enforcement-point positions; fixtures bind positions to slots; one provisioning. Per-slot record streams with per-slot policy identity; the grid attributes per `(path x design x position)`; product rollups are derived views with per-position decomposition preserved, never summed away; unobservable positions get an explicit marker; conformance verdicts are per-position. Harness-embedded controls (T4/T6) register separately as control plugins with an `embedded` slot; composition inside one process does not exempt it from coverage accounting; otherwise T4/T6 cells would be judged by the harness's own records alone. Self-judging is impossible regardless: C1-C6 kernel corroboration independently verifies inspection no matter who emitted the claim.
+**Multi-position products.** One plugin per deployed artifact; the capability manifest declares N enforcement-point positions; fixtures bind positions to slots; one provisioning. Per-slot record streams with per-slot policy identity; the grid attributes per `(path x design x position)`; product rollups are derived views with per-position decomposition preserved, never summed away; unobservable positions get an explicit marker; conformance verdicts are per-position. Harness-embedded controls (T4/T6) register separately as control plugins with an `embedded` slot; composition inside one process does not exempt it from coverage accounting. Self-judging is impossible regardless: C1-C6 kernel corroboration independently verifies inspection no matter who emitted the claim.
 
 ## 4. Record schemas
 
@@ -214,18 +214,18 @@ fixture:
 
 When a production stack runs two controls (gateway plus guardrail SDK), the honest default is the composition fixture: the production system's behavior is the composite, not either control alone. Two single-control runs against the same named fixture remain the path for per-product attribution.
 
-A plan file (`guardscope batch --plan plan.yaml`) is the only file that names more than one control or design: it expands into K single-control experiment files plus a merge manifest. This makes the one-control rule easy to check: no artifact except the batch plan ever names a cross product.
+A plan file (`guardscope batch --plan plan.yaml`) is the only file that names more than one control or design: it expands into K single-control experiment files plus a merge manifest. No artifact except the batch plan ever names a cross product.
 
 ## 7. Fixtures & designs
 
 **The split.** Designs (T0-T7) are part of the core: the abstract enforcement-point placement, versioned with the major release. Fixtures are core-owned data realizing a design: a concrete, versioned, hash-pinned realization binding plugins by capability into slots. A custom topology is a documented fixture, not a contract; there is no topology DSL in v1.
 
-**Bases and overlays.** A fixture with a control slot is composed of two parts, and the framework's own reference fixture is expressed the same way a third party's is (no core code depends on which control is bound):
+**Bases and overlays.** A fixture with a control slot is composed of two parts, and the framework's own reference fixture is expressed the same way a third party's is:
 
 - The **base** (`compose/<design>.yaml`, its mock variant for the mock-harness fixture) carries the full design structure - networks, targets, harness services, the sensor profile, the forced-egress jail where the design has one, log volumes - with the slot *declared* but the control service absent. A base alone is not a validatable unit: its harness services `depends_on` the slot service, so compose validation fails loudly without the overlay; base+overlay is the unit. Slot declarations are framework-side sidecar data (`compose/slots/<design>.yaml`: slot name, the service name the overlay must define, the slot's network, the env convention the harness services use to reach the slot, the decision-log volume, the deployed policy artifact); compose files stay pure compose (compose rejects unknown top-level keys), and the sidecar is read by the validator, not by compose.
-- The **control-binding overlay** is the control's binding bundle under its plugin directory: `plugins/<control>/overlay/<design>.yaml` (the `-mock` variant on the mock fixture) - the slot's service definition (image/build, env, policy, log wiring) plus the binding files it references. Merged bring-up is plain compose file merge, base first. The fixture identity is the composition: merged fixture id `reference-rig/<design>+<control>`, and the fixture fingerprint carries the base hash and the overlay hash separately (plus the enforcement_config hash), so a design restructure and a control version bump are each visible on their own.
+- The **control-binding overlay** is the control's binding bundle under its plugin directory: `plugins/<control>/overlay/<design>.yaml` (the `-mock` variant on the mock fixture) - the slot's service definition (image/build, env, policy, log wiring) plus the binding files it references. Merged bring-up is plain compose file merge, base first. The merged fixture id is `reference-rig/<design>+<control>`; the fingerprint carries the base hash and the overlay hash separately (plus the enforcement_config hash), so a design restructure and a control version bump are each visible on their own.
 
-**On-matrix rule for overlays.** A binding overlay stays on-matrix when it (a) defines exactly the declared slot service (it may set or override that service's fields), (b) adds auxiliary services only under the name `control-*` and only attached to the slot's network or the slot service's netns, and (c) removes or modifies no base service. A violating overlay is not a load error: the run is flagged off_matrix as a custom fixture (the flag controls grid placement, not measurement fidelity). A control whose manifest declares a supported design but provides no overlay for it is a manifest claim with nothing behind it: a load-time hard error naming the missing file.
+**On-matrix rule for overlays.** A binding overlay stays on-matrix when it (a) defines exactly the declared slot service (it may set or override that service's fields), (b) adds auxiliary services only under the name `control-*` and only attached to the slot's network or the slot service's netns, and (c) removes or modifies no base service. A violating overlay is not a load error: the run is flagged off_matrix as a custom fixture. A control whose manifest declares a supported design but provides no overlay for it is a load-time hard error naming the missing file.
 
 Fixtures without a control slot (t0, t4, t6, t7) remain single-file fixtures; t4/t6's permission chain is harness-intrinsic, not a slot.
 
@@ -242,7 +242,7 @@ Reference designs and fixtures:
 | T6 | In-process policy engine (declarative rules at the harness tool-call hook) | Harness-embedded control registers with an `embedded` slot |
 | T7 | Kernel-level enforcement | Kernel slot (0.2.0): the exemplar actplane binding loads the engine on the pinned 6.17.x host kernel; `control: null` keeps the observation row (kernel observability, no enforcement) |
 
-**Custom fixtures** run off-matrix: full measurement fidelity (all streams, all evidence classes), but only grid placement is provisional. They carry an `off_matrix` flag, a mandatory **nearest-design projection** (which core design the fixture most resembles, plus a divergence note), and registry-tracked recurrence. Custom fixtures arrive two ways: an experiment `fixture` block, or an on-matrix rule violation by a control-binding overlay (above; the run is measured at full fidelity with the violations recorded). The flag controls whether results enter the grid, not whether they are published: off-matrix results appear in an extension section with their own evidence class.
+**Custom fixtures** run off-matrix: full measurement fidelity (all streams, all evidence classes), but only grid placement is provisional. They carry an `off_matrix` flag, a mandatory **nearest-design projection** (which core design the fixture most resembles, plus a divergence note), and registry-tracked recurrence. Custom fixtures arrive two ways: an experiment `fixture` block, or an on-matrix rule violation by a control-binding overlay (above; the violations are recorded). The flag controls whether results enter the grid, not whether they are published: off-matrix results appear in an extension section with their own evidence class.
 
 **Off-matrix promotion path.** Tracking repeated custom fixtures turns the off-matrix section into a path toward new designs. A design RFC must state:
 
@@ -254,7 +254,7 @@ Reference designs and fixtures:
 
 Design-set review happens at each major release, with response deadlines, published criteria, and decision-log rationale. Old grids remain citable under the design set they were measured with. Composition fixtures (two user-selected controls, the defense-in-depth case) get a fast-track RFC path with re-badging after promotion, so repeated compositions can become numbered designs at low cost.
 
-Accepted limitations: merged columns are independent runs, not one run; they cannot reproduce interaction effects (one control rewriting an action so another control never sees it; such effects require both controls running in the same run). And: two selected controls cannot be measured together in one on-matrix run until a composition design is promoted. These are documented costs, not oversights.
+Accepted limitations: merged columns are independent runs, not one run; they cannot reproduce interaction effects (one control rewriting an action so another control never sees it; such effects require both controls running in the same run). And: two selected controls cannot be measured together in one on-matrix run until a composition design is promoted.
 
 ## 8. Workloads
 
@@ -269,7 +269,13 @@ Workload packs are registered and versioned like plugins, but follow their own s
 | Generation provenance | For generated packs: model + prompt pinned; exploratory until replay-conformance passes |
 | Minimum kernel-signature requirements | What the sensor must be able to see for the pack to be reconcilable |
 
-`baseline-15` is the default pack and the reference workload, pinned per science release. The mock harness is the reference path-originator: a hash-pinned path manifest (all 15 paths with class, operation, origin channel, expected kernel-visible signature, expected inspection points per design, attribution rules for deferred/async instances), a policy-blind originator library (one deterministic primitive per action, syscall-level for the bypass classes, plus an inspected pair per bypass path as negative control; no code shared with the inspection layer or the mapper), and a thin deterministic driver reading the canonical trace from the shared package (one definition used by both replay injection and the mock harness, so the two cannot drift apart). The driver executes the full action surface unconditionally and never knows which paths are expected to bypass; classification comes only from reconciliation.
+`baseline-15` is the default pack and the reference workload, pinned per science release. The mock harness is the reference path-originator:
+
+- a hash-pinned path manifest: all 15 paths with class, operation, origin channel, expected kernel-visible signature, expected inspection points per design, attribution rules for deferred/async instances;
+- a policy-blind originator library: one deterministic primitive per action, syscall-level for the bypass classes, plus an inspected pair per bypass path as negative control; no code shared with the inspection layer or the mapper;
+- a thin deterministic driver reading the canonical trace from the shared package (one definition used by both replay injection and the mock harness, so the two cannot drift apart).
+
+The driver executes the full action surface unconditionally and never knows which paths are expected to bypass; classification comes only from reconciliation.
 
 **Mock harness placement modes** (configuration of the same code, not separate codebases):
 
@@ -285,7 +291,7 @@ Workload packs are registered and versioned like plugins, but follow their own s
 4. Capability/placement diff documented per run (exposure claims depend on the privileges of the process).
 5. Tracee integrity check on the target kernel before the T7 row.
 
-Hard properties: per-process determinism with interleaving-independent classification; digest pinning; trust-domain placement documented per run; independence (no self-reporting; Tracee is the sole ground truth); policy-blind originators; never a row or column of the grid; only per-cell provenance labels. Exposure (a path exists and escapes) is a property of the topology: any policy-blind originator inside the trust domain can prove it, if the kernel confirms the action executed. Inhabitation (real agents take the path) is a property of real agents: only real-harness runs can show it. Mock-harness cells assert "the path exists and escapes this topology, kernel-confirmed; no agent in the loop." v1 exclusions: no OpenClaw host mode (the hook-API blockage must not drive the design; revisit opportunistically via a harness-spawned MCP server), and no overhead or performance claims from the instrument. Mock-harness provenance (origin, placement, digests) is stored in a per-record field; the only other pipeline change is capture-window and attribution support for async paths (daemon submission, outliving processes) with ancestry-based attribution.
+Hard properties: per-process determinism with interleaving-independent classification; digest pinning; trust-domain placement documented per run; independence (no self-reporting; Tracee is the sole ground truth); policy-blind originators. Exposure (a path exists and escapes) is a property of the topology: any policy-blind originator inside the trust domain can prove it, if the kernel confirms the action executed. Inhabitation (real agents take the path) is a property of real agents: only real-harness runs can show it. Mock-harness cells assert "the path exists and escapes this topology, kernel-confirmed; no agent in the loop." v1 exclusions: no OpenClaw host mode (the hook-API blockage must not drive the design; revisit opportunistically via a harness-spawned MCP server), and no overhead or performance claims from the instrument. Mock-harness provenance (origin, placement, digests) is stored in a per-record field. The only other pipeline change is capture-window and attribution support for async paths (daemon submission, outliving processes) with ancestry-based attribution.
 
 **Anti-overfitting rule:** primary published claims require at least one non-baseline pack; grid cells record which pack produced them; generated packs stay exploratory until replay-conformance passes; an unmatched-counters check runs in conformance.
 
@@ -293,7 +299,7 @@ Hard properties: per-process determinism with interleaving-independent classific
 
 **Runner state machine:** `provision -> configure -> ready-gate -> window open -> inject -> drain (wait for in-flight actions) -> window close -> collect -> teardown -> reconcile`. The window opens only after every enforcement point passes its readiness check; only the runner controls the window, never a plugin.
 
-**Tracee is runner-managed shared infrastructure:** one sensor per run, N controls, one clock source (host clock, offsets recorded at run start). Deploy, sensor check, collect, and teardown of the sensor are owned by the runner, not the control contract; the sensor is the measuring instrument and must never share the contract of the components it measures. Slot descriptors carry cgroup/namespace scope so the sensor can be scoped per slot. Sensor health (dropped-event counts) is a required run input; a run with a degraded sensor is downgraded and flagged, never trusted silently. The sensor is re-checked **after control provisioning** (a kernel-level control can interfere with or tamper with it); a failed sensor check invalidates the run. Known gaps are listed in every health report.
+**Tracee is runner-managed shared infrastructure:** one sensor per run, N controls, one clock source (host clock, offsets recorded at run start). Deploy, sensor check, collect, and teardown of the sensor are owned by the runner, not the control contract; the sensor is the measuring instrument and must never share the contract of the components it measures. Slot descriptors carry cgroup/namespace scope so the sensor can be scoped per slot. Sensor health (dropped-event counts) is a required run input; a run with a degraded sensor is downgraded and flagged, never trusted silently. The post-provision sensor re-check and its failure rule are in §2. Known gaps are listed in every health report.
 
 **Reconcile order:** partition by `stream_id`; join per point by priority `id -> target_identity -> process_tree -> time_window`, method recorded per join; per-point accounting, with cross-point joins deduped; then the versioned C1-C6 library:
 
@@ -315,7 +321,7 @@ Hard properties: per-process determinism with interleaving-independent classific
 - `attribution_method`; `evidence class: harness-run | mock-run | self-reported | derived`; `degraded: [reasons]`; structured C1-C6 findings.
 - Per-run unmatched counters: unmatched kernel events, unmatched decisions, unmatched expected actions; organic-traffic volume per stream.
 
-The primary reported numbers come from verified results only. Harness-run and mock-run cells are reported separately, never aggregated. Stated limit: the kernel verifies absence-of-effect claims — that a `checked-denied` instance's denial held (C6), and that a `prevented` instance never took effect — and only with a sensor inside its observation window; `prevented`'s no-decision property is a topology attribute (the blocking mechanism sits outside the policy), not something the kernel verifies. `checked` confidence is limited by conformance, determinism, and record plausibility: a fabricated allow-record for an action that did occur passes both the id check and the kernel-presence check.
+The primary reported numbers come from verified results only. Harness-run and mock-run cells are reported separately, never aggregated. Stated limit: the kernel verifies absence-of-effect claims only with a sensor inside its observation window. It verifies that a `checked-denied` instance's denial held (C6) and that a `prevented` instance never took effect. `prevented`'s no-decision property is a topology attribute (the blocking mechanism sits outside the policy), not something the kernel verifies. `checked` confidence is limited by conformance, determinism, and record plausibility: a fabricated allow-record for an action that did occur passes both the id check and the kernel-presence check.
 
 **Degraded no-eBPF mode** (the default path for users without kernel privileges, the main obstacle for new users): every output it produces is labeled `self-reported` / unverified. The claimed-vs-verified distinction is preserved even without the sensor.
 
@@ -347,8 +353,6 @@ On mismatch, the default is separate grids; a forced single grid marks affected 
 - Origin labels (`selected` / `harness-intrinsic` / `fixture-intrinsic`) are shown on every grid position.
 - Off-matrix columns render in an extension section with labels, nearest-design projections, and never contribute to on-matrix rollups.
 
-Renderers are plugins that consume the canonical grid export; they may not recompute coverage or define badge meanings.
-
 ## 11. Registry & governance
 
 Three strict layers:
@@ -376,11 +380,11 @@ Three strict layers:
 | M1 | The two contracts (`control`, `harness`); both record schemas (`decision-record/1`, `dispatch-record/1`); the experiment-file runner with load-time validation; the C1-C4 reconcile library; the mock harness and the AGT gateway as the first two control-side plugins (the pi and OpenClaw adapters are equally in scope as the reference harness plugins); the v0 AuditEntry reader mapping |
 | M2 | Fidelity check; C5/C6 (id consistency, denial effectiveness via mock-harness-derived kernel signatures); `report --merge` with the comparability key; the registry (two tiers, expiring verdicts); the conformance kit (L1/L2); the degraded no-eBPF mode, labeled self-reported |
 | M3 | First third-party control admitted through the conformance kit; success criterion: that third party reproduces a published reference measurement unaided; the reference badge |
-| M4+ | Scenario packs; LLM-driven path discovery on the mock-harness substrate (Mode R); decay-tracking mode (re-running pinned snapshots across control versions, the measurement the framework exists to enable) |
+| M4+ | Scenario packs; LLM-driven path discovery on the mock-harness substrate (Mode R); decay-tracking mode (re-running pinned snapshots across control versions) |
 
 **Reference snapshot**: a published, dated, hash-pinned set of run manifests that anyone can re-run. The reference badge (M3) is earned by reproducing it.
 
-**Privilege tiers** (what a user needs to install): Tier 0 harness-native (no privileges), Tier 1 gateway designs (plain Docker), Tier 2 kernel/eBPF (privileged, opt-in, restricted kernel families). The degraded no-eBPF mode is the default path and is labeled self-reported/unverified. Multiple harnesses per run-set are allowed (switching the harness does not complicate attribution).
+**Privilege tiers** (what a user needs to install): Tier 0 harness-native (no privileges), Tier 1 gateway designs (plain Docker), Tier 2 kernel/eBPF (privileged, opt-in, restricted kernel families). Multiple harnesses per run-set are allowed (switching the harness does not complicate attribution).
 
 **CI scope (v1).** Determinism test (same trace twice, identical decision stream), schema conformance, and mock-harness smoke on one pinned kernel; a manually maintained kernel capability matrix documents the rest, including the two known-failing families. No promise of hosted multi-kernel CI.
 
@@ -388,7 +392,19 @@ Three strict layers:
 
 **Framework conditionality.** The replication kit (M1/M2) is unconditional; the plugin-contract layer beyond it is justified by the longitudinal decay study commitment. If that commitment stops, fall back to the kit rather than maintaining contract features nobody uses.
 
-Scope rule: v1 includes only what has an existing consumer among the two harnesses and the controls in scope. Out of v1: GUI, hosted service, auto-discovery, non-Linux sensors, multi-node, LLM-driven workloads, a topology DSL, arbitrary third-party profile parsing. Deferred, documented, non-blocking: causation/hop chains and a second correlation id, `preflight` as a separate operation (folded into configure validation plus ready), streaming/drain APIs beyond collect-with-flush-ack, capability negotiation (the runner statically compares `describe()` output), health-check operations, multi-slot plugins, monotonic-clock fields, standalone determinism receipts (pinned hashes live in the run manifest), schema-migration tooling beyond v0 reading, a second workload, richer decision values (`ask`, `throttle`, `not_evaluated`).
+Scope rule: v1 includes only what has an existing consumer among the two harnesses and the controls in scope. Out of v1: GUI, hosted service, auto-discovery, non-Linux sensors, multi-node, LLM-driven workloads, a topology DSL, arbitrary third-party profile parsing. Deferred, documented, non-blocking:
+
+- causation/hop chains and a second correlation id;
+- `preflight` as a separate operation (folded into configure validation plus ready);
+- streaming/drain APIs beyond collect-with-flush-ack;
+- capability negotiation (the runner statically compares `describe()` output);
+- health-check operations;
+- multi-slot plugins;
+- monotonic-clock fields;
+- standalone determinism receipts (pinned hashes live in the run manifest);
+- schema-migration tooling beyond v0 reading;
+- a second workload;
+- richer decision values (`ask`, `throttle`, `not_evaluated`).
 
 ## Open questions
 

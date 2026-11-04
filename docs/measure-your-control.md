@@ -142,11 +142,11 @@ check over a recorded log set as well (`docs/shim-guide.md`, section 5);
 
 ## 6. Measure
 
-Start with the mock harness (the reduced stand-in that performs the
-canonical actions directly; a fixture, never a measured subject). Why
-first: it needs no agent harness, it is deterministic (replay injection,
-no LLM in the loop), and it is how exposure measurements (paths that exist
-and escape your placement, kernel-confirmed) get their numbers. Its cells
+Start with the mock harness (DESIGN.md 2 and 8 define it: a reduced,
+policy-blind stand-in; a fixture, never a measured subject). Why first:
+it needs no agent harness, it is deterministic (replay injection, no LLM
+in the loop), and it is how exposure measurements (paths that exist and
+escape your placement, kernel-confirmed) get their numbers. Its cells
 carry the `mock-run` evidence class, reported separately from
 `harness-run` cells. Use `examples/t1-mock.yaml` (or `t2-mock.yaml`,
 `t3-mock.yaml`) as the template, with the mock fixtures
@@ -168,7 +168,7 @@ writes its artifacts under the workdir: `runs/<run-id>/` plus
 machine without kernel privileges, `--no-sensor` completes the run in the
 degraded mode: every output is labeled `self-reported`, and C6 (denial
 effectiveness) is skipped with a note. Do not mix sensor and no-sensor runs
-in one grid: they never compose (the sensor key differs, by design).
+in one grid: they never compose.
 
 ## 7. Read your column honestly
 
@@ -205,12 +205,12 @@ Other things to read before claiming: `degraded` flags (e.g.
 `sensor-absent`) on the run summary; attribution methods (the reconciler
 records how each decision was joined: `id` and `target_identity` are
 implemented today; `process_tree` and `time_window` are specified in
-DESIGN.md 5 but not implemented in this pass); the fixture fingerprint
-(base compose sha256 + your overlay sha256 + the deployed policy sha256, so
-your version bumps move the fingerprint on their own, and runs under
-different fingerprints are not comparable); and the vendor-overlap flag
-(when your plugin id equals the harness's, the report shows it, so
-selectively chosen run sets are visible).
+DESIGN.md 5 but not implemented); the fixture
+fingerprint (base compose sha256 + your overlay sha256 + the deployed
+policy sha256, so your version bumps move the fingerprint on their own, and
+runs under different fingerprints are not comparable); and the
+vendor-overlap flag (when your plugin id equals the harness's, the report
+shows it, so selectively chosen run sets are visible).
 
 ## 8. Where to ask for help / what is not supported yet
 
@@ -218,10 +218,9 @@ selectively chosen run sets are visible).
   reference fixture is not materialized in this pass.
 - The curated registry tier requires framework CI, which does not exist
   yet; recorded conformance verdicts are open-tier and self-attested.
-- The distribution package is editable-install-from-checkout: `pip
-  install -e .` from the repo, not a published package; a distribution
+- The distribution package is not a published package; a distribution
   bundle is later work.
 - Attribution beyond `id`/`target_identity` (process-tree and time-window
-  joins) is specified but not implemented.
+  joins): specified, not implemented (see section 7).
 - Questions and problems: open an issue against the repository; the
   decision log (DESIGN.md 11) records every contract decision.
