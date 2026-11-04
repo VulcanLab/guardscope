@@ -113,7 +113,7 @@ def _load_json(path: Path):
 def _resolve_run_dir(run_dir: str, manifest_path: Path) -> Path | None:
     """Resolve a run entry's recorded run_dir onto disk. The recorded path
     is out_root-relative at execution time; a results tree may have been
-    moved, so the ladder tries: the path as recorded, out_root (the
+    moved, so it tries in priority order: the path as recorded, out_root (the
     manifest's parent's parent) + the path, out_root + the run dir's name,
     and the manifest's own dir + the name. None when nothing resolves —
     the cell keeps its provenance with a note, never silently dropped."""

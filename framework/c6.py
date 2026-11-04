@@ -32,12 +32,12 @@ trace spec for the per-action target identity. The kernel evidence is the
 run's mapped-actions stream (sensor/mapping/map_events.py output — the
 runner's mapped view, not raw Tracee events; DESIGN.md 9 kernel layer).
 
-Attribution ladder for a deny record (DESIGN.md 5, priority order):
+Attribution priority order for a deny record (DESIGN.md 5):
   1. action_id — native records echo the carrier id; used when non-null and
      a known spec action
   2. target_identity — v0-mapped records carry no ids: the deny is resolved
      onto a spec action by tool route + exact argument match (the same
-     ladder the runner's C2 attribution uses)
+     priority order the runner's C2 attribution uses)
 
 Design notes / v1 limitations (documented, not hidden):
 
@@ -87,7 +87,8 @@ MOCK_HARNESS_MANIFEST = REPO_ROOT / "mock_harness" / "manifest.yaml"
 BASELINE_SPEC = REPO_ROOT / "trace" / "traces" / "baseline.yaml"
 
 # The gateway's fs tools (T3+; framework/records.py V0_FS_TOOLS) — the stdio
-# route in the target-identity ladder for v0-mapped records.
+# route in the target-identity step of the priority order for v0-mapped
+# records.
 V0_FS_TOOLS = ("write_file", "read_file", "list_directory")
 
 # Write-mode open(2) tokens: a kernel open carrying one of these is a write
@@ -260,7 +261,7 @@ def _kernel_route_candidates(record: dict, spec: dict,
 
 def _route_candidates(record: dict, spec: dict) -> list[dict]:
     """Spec actions a deny record may resolve onto by tool route (the v0 /
-    target-identity ladder; the same routing the runner's C2 attribution
+    target-identity step; the same routing the runner's C2 attribution
     uses: gateway tool routes for http, the fs tool names for stdio)."""
     tool = record.get("tool")
     if not isinstance(tool, str):
@@ -280,7 +281,7 @@ def _route_candidates(record: dict, spec: dict) -> list[dict]:
                if a["class"] == cls and a["op"] == tool]
         if not out and record.get("protocol") == "none":
             # kernel-position records carry no tool/op identity: the
-            # class+target kernel join (the coverage layer's ladder)
+            # class+target kernel join (the coverage layer's priority order)
             out = _kernel_route_candidates(record, spec, cls)
     return out
 
@@ -297,7 +298,7 @@ def _exact_params_match(action: dict, record: dict) -> bool:
 def _resolve_action(record: dict, spec: dict) -> tuple[dict | None, str, str]:
     """Resolve one deny record onto a spec action. Returns
     (action, attribution_method, note); method is "id" or "target_identity"
-    (DESIGN.md 5 attribution ladder), or the action is None with a note
+    (DESIGN.md 5 attribution priority order), or the action is None with a note
     when unresolvable (organic/unknown traffic — recorded, never dropped,
     and left to the C1-C4 accounting checks to flag)."""
     aid = record.get("action_id")

@@ -74,7 +74,7 @@ The evidence ceiling for translated records (DESIGN.md 3, 9):
 - **prevented: reachable through a shim.** A deny record in a translated
   log, plus the C6 check's kernel-verified absence of the action's effect,
   grounds `prevented`; a deny without action ids is attributed to its spec
-  action by target identity (the same ladder the shipped v0 mapping uses).
+  action by target identity (the same priority order the shipped v0 mapping uses).
   What native emission adds is id-based attribution (the correlation
   carriers) and the fidelity evidence, not `prevented` itself.
 

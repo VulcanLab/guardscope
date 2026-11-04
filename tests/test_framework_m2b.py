@@ -206,7 +206,7 @@ def test_c6_window_scoping(tmp_path):
 def test_c6_kernel_record_denies_join_on_class_target(tmp_path):
     # the t7 actplane shim's kill record: `tool` is the acting process COMM
     # ("echo"), protocol "none", target the kernel path — the op-based
-    # route cannot match it; the kernel join (coverage-layer ladder)
+    # route cannot match it; the kernel join (the coverage layer's priority order)
     # resolves it onto a032 (exec /bin/echo), and C6 verifies absence of
     # its execve signature (found live 2026-11-03: the t7 re-check run
     # left these denies unresolved)
