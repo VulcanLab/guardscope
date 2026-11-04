@@ -32,6 +32,9 @@
 //   INSPECTION_RUN_ID  run id the runner stamps into the pi process env
 //                   (runner/trigger_pi.py docker exec -e ...); the adapter's
 //                   dispatch records carry it as run_id (M2a, DESIGN.md 4)
+//   INSPECTION_ACTION_TIMEOUT_MS  per-action timeout override (default
+//                   20000; the remote hand-offs' whole response cycle sits
+//                   inside it — a test knob, the deployed default unchanged)
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai/compat";
@@ -46,7 +49,11 @@ const REPLAY_LOG_DIR = process.env.REPLAY_LOG_DIR || "/workspace/replay";
 const MCP_CMD = JSON.parse(process.env.MCP_SERVER_CMD ||
   '["python3","-u","/opt/inspection/mcp-fs/server.py"]');
 const MCP_TIMEOUT_MS = 20000;
-const ACTION_TIMEOUT_MS = 20000;
+// the per-action timeout: the whole response cycle (connect + headers +
+// BODY READ + parse) sits inside it. Overridable for the offline tests
+// (INSPECTION_ACTION_TIMEOUT_MS); the deployed default is unchanged.
+const ACTION_TIMEOUT_MS =
+  Number(process.env.INSPECTION_ACTION_TIMEOUT_MS) || 20000;
 // Opt-in Stage 9b observation only; unset preserves every existing replay shape.
 const CSB_EVIDENCE_DIR = process.env.CSB_EVIDENCE_DIR || "";
 async function csbSnapshot(trace: any) {
@@ -326,7 +333,7 @@ async function delegateToChild(action: any): Promise<unknown> {
       }
       try { child.kill("SIGKILL"); } catch { /* already gone */ }
     };
-    // The helper's report (and with it the delegation_id echo) rides on
+    // The helper's report (and with it the delegation_id echo) travels in
     // the error even when the child failed: the replay row keeps it as
     // its detail, so an action whose child errored mid-work still traces
     // back through its echo — a failed hand-off is not a lost one.
@@ -339,7 +346,7 @@ async function delegateToChild(action: any): Promise<unknown> {
     };
     timer = setTimeout(() => {
       // Kill the tree FIRST, then reject: a rejected promise with a live
-      // child lets effects and records land after the action finished.
+      // child lets effects and records occur after the action finished.
       killTree();
       fail("f2-helper timeout");
     }, ACTION_TIMEOUT_MS + 5000);
@@ -565,6 +572,10 @@ async function delegateAction(action: any): Promise<unknown> {
       return await delegateToRole(action);
     case "tool-agent":
       return await delegateToToolAgent(action);
+    case "remote-tool-agent":
+      return await delegateToRemoteTool(action);
+    case "remote-agent":
+      return await delegateToRemoteAgent(action);
     case "detached-child":
       return await delegateDetachedChild(action);
     default:
@@ -631,7 +642,7 @@ async function delegateToRole(action: any): Promise<unknown> {
   }
   const out: any = (detail !== null && typeof detail === "object")
     ? { ...(detail as object) } : { value: detail };
-  // the delegation_id echo rides the row detail like every fixture, so
+  // the delegation_id echo travels in the row detail like every fixture, so
   // the run's trace-back attributes through the exact echo
   out.delegation_id = delegationId;
   out.performed_by_role = "role-B";
@@ -712,7 +723,7 @@ async function delegateToToolAgent(action: any): Promise<unknown> {
                           detail: { server: "toy-mcp-agent", tool: F3_TOOL } },
                         report.status === "ok" ? null : String(report.error ?? "tool call failed"));
     if (report.status !== "ok") {
-      // the report (with its delegation_id echo) rides the error like the
+      // the report (with its delegation_id echo) travels in the error like the
       // child fixtures: a hand-off that failed mid-work is not a lost one
       const e: any = new Error(`mcp-agent (delegation ${report.delegation_id ?? delegationId}): ${report.error}`);
       e.f2Report = report;
@@ -737,6 +748,312 @@ async function delegateToToolAgent(action: any): Promise<unknown> {
   }
 }
 
+// F4/F5 — the REMOTE delegation fixtures (the hand-off crosses to a SECOND
+// machine, the two-host topology's executor host; compose/executor.yaml).
+// Both ride the shared machinery above (the record stream, the task digest,
+// the id generator, the frozen delegation-record/1 schema); what moves is
+// the transport and the machine label. The origin side of the hand-off
+// (this adapter) writes its "sent" record with machine "origin" BEFORE the
+// network call; the far server writes its own "accepted" record with
+// machine "executor" on ITS machine (the runner's cross-host collection
+// merges the two streams into one delegation-records.jsonl — the chain
+// joins on the delegation id, and the machine label stays on every line).
+// To the outside world each call is one ordinary HTTP request — that is
+// the point: the far machine's effects happen where no origin-side control
+// can see them.
+//
+const F4_TOOL_SERVER_URL = process.env.F4_TOOL_SERVER_URL || "";
+const F5_AGENT_SERVER_URL = process.env.F5_AGENT_SERVER_URL || "";
+// the chain ids ride the request headers (F4, the http_header carrier —
+// the same x-inspection-* vocabulary the raw http tool calls' action ids
+// already use, so the request stays byte-shaped like every ordinary HTTP
+// tool call; header names are RFC 7230 tokens, so no namespaced dots)
+const HEADER_DELEGATION_ID = "x-inspection-delegation-id";
+const HEADER_ROOT_DELEGATION_ID = "x-inspection-root-delegation-id";
+const HEADER_HOP = "x-inspection-hop";
+const HEADER_RUN_ID = "x-inspection-run-id";
+let a2aRpcId = 0;   // the A2A-style submissions' JSON-RPC ids
+// the remote hand-offs' gateway route names: with GATEWAY_URL set the
+// hand-off crosses the gateway as a tools/call it proxies to the remote
+// server (gateway/server.py REMOTE_TOOL_ROUTES — the same pattern as the
+// http tool calls' TOOL_ROUTES); whether the hand-off crosses an
+// enforcement point is the DESIGN's business, not the fixture's
+const F4_GATEWAY_TOOL = "f4_remote_task";
+const F5_GATEWAY_TOOL = "f5_remote_task";
+// the remote hand-offs' harness tool names (T4/T6): the remote call is a
+// REAL tool call through pi's tool pipeline — the tool_call hook (the
+// enforcement point) fires on it, and the tool's execute performs the
+// hand-off (see the extension entry)
+const T4_F4_TOOL = "f4_remote_tool";
+const T4_F5_TOOL = "f5_remote_agent";
+
+// one ordinary HTTP POST to a remote server, routed per the deployment:
+// GATEWAY_URL set -> MCP tools/call through the gateway (the gateway
+// proxies the request to the remote server and wraps its response as the
+// call's text; the gateway's own decision record is the enforcement
+// evidence), unset -> a direct POST. Either way the request is the same
+// ordinary HTTP call the remote server serves.
+async function remoteHttpPost(label: string, url: string, path: string,
+                              gatewayTool: string,
+                              headers: Record<string, string>,
+                              body: unknown): Promise<any> {
+  if (!GATEWAY_URL) {
+    const resp = await fetch(`${url.replace(/\/$/, "")}${path}`, {
+      method: "POST", headers, body: JSON.stringify(body) });
+    if (!resp.ok) {
+      let why = `HTTP ${resp.status}`;
+      try { why = `${why}: ${(await resp.json()).error ?? ""}`; }
+      catch { /* the far side's error text is best-effort */ }
+      throw new Error(`${label} (${why})`);
+    }
+    return await resp.json();
+  }
+  const msg = { jsonrpc: "2.0", id: ++gatewayRpcId, method: "tools/call",
+                params: withMetaCarriers(
+                  { name: gatewayTool,
+                    arguments: { path, headers, body } },
+                  headers[HEADER_ACTION_ID]) };
+  const resp = await fetch(`${GATEWAY_URL.replace(/\/$/, "")}/mcp`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(msg) });
+  if (!resp.ok) throw new Error(`${label} via gateway: HTTP ${resp.status}`);
+  const data: any = await resp.json();
+  if (data.error) throw new Error(`${label} via gateway: ${JSON.stringify(data.error)}`);
+  const text = data.result?.content?.[0]?.text;
+  if (typeof text !== "string") throw new Error(`${label} via gateway: no result text`);
+  return JSON.parse(text);   // the gateway wraps the far side's response verbatim
+}
+
+// the remote hand-off's dispatch record. Outside the harness tool pipeline
+// (T0-T3) the branch writes it itself with the http_header carrier (the
+// action id genuinely rides the request headers on both fixtures). In the
+// T4/T6 pipeline the call IS a harness tool call: the tool_result hook
+// writes the attempt's dispatch record (carrier "none"), so the branch
+// must not add a second one.
+function writeRemoteDispatch(actionId: string,
+                             result: Record<string, unknown> | null,
+                             error: string | null): void {
+  if (T4_MODE || T6_MODE) return;
+  writeDispatchRecord(actionId, "http_header", result, error);
+}
+
+// the shared remote hand-off exchange (F4/F5): ONE ordinary HTTP request
+// to the far server. The FULL response cycle (fetch + body read + parse)
+// sits inside the action timeout — a server that sends headers and then
+// stalls the body cannot hold the replay past the deadline. The response
+// echo is validated against the SENT delegation id: a missing or wrong
+// echo is a visible error, never a silent mismatch. On every error path
+// the row keeps the SENT record's echo (the hand-off was made; the answer
+// never arrived or did not answer as this hand-off) — and where a report
+// WAS parsed, it rides the row as evidence even when it says error (the
+// echo is evidence, not a success claim).
+async function remoteHandoff(cfg: {
+  action: any; delegationId: string;
+  label: string; url: string; path: string; gatewayTool: string;
+  toActor: string; serverLabel: string;
+  headers: Record<string, string>; body: unknown;
+  parse: (doc: any) => any;
+}): Promise<unknown> {
+  const { action, delegationId, label } = cfg;
+  try {
+    const doc: any = await withTimeout(
+      remoteHttpPost(label, cfg.url, cfg.path, cfg.gatewayTool,
+                     cfg.headers, cfg.body),
+      ACTION_TIMEOUT_MS, label);
+    // the far side's report: the parse step unwraps the transport's
+    // envelope; anything that is not a report is an error (the sent echo
+    // stays on the row — an unanswerable response is not a lost hand-off)
+    let report: any = null;
+    try { report = cfg.parse(doc); }
+    catch (exc: any) { throw new Error(String(exc?.message ?? exc)); }
+    if (!report || report.status === undefined ||
+        report.delegation_id !== delegationId) {
+      const msg = (!report || report.status === undefined)
+        ? `${label}: unreadable report in the response`
+        : `${label}: delegation id mismatch (sent ${delegationId}, ` +
+          `echoed ${report.delegation_id ?? "none"})`;
+      writeRemoteDispatch(action.id, null, msg);
+      const e: any = new Error(msg);
+      e.f2Report = { status: "error", delegation_id: delegationId,
+                     actor: cfg.toActor, machine: "executor",
+                     results: [], error: msg,
+                     server_report: report ?? null };
+      throw e;
+    }
+    // one dispatch record per attempt, exactly like the ordinary http
+    // executor path: to the controls this IS an ordinary tool call
+    writeRemoteDispatch(action.id,
+      { status: report.status === "ok" ? "ok" : "error",
+        detail: { server: cfg.serverLabel, machine: "executor" } },
+      report.status === "ok" ? null
+        : String(report.error ?? "tool call failed"));
+    if (report.status !== "ok") {
+      // the report (validated to echo the sent id) rides the error like
+      // the other fixtures: a hand-off that failed mid-work is not a lost
+      // one — the echo is evidence, not a success claim
+      const e: any = new Error(`${label} (delegation ${report.delegation_id}): ${report.error}`);
+      e.f2Report = report;
+      throw e;
+    }
+    // the report IS the row detail (its delegation_id is the echo the
+    // run's trace-back joins on), plus the remote-call shape
+    return { ...report, server: cfg.serverLabel, remote: true };
+  } catch (exc) {
+    if (!(exc as any)?.f2Report) {
+      writeRemoteDispatch(action.id, null,
+                          String((exc && (exc as Error).message) || exc));
+      // the transport crashed, stalled past the deadline, or the answer
+      // never came back: the hand-off is not lost — the echo (and the
+      // error detail) ride the row like every fixture's error path, so
+      // the trace-back stays resolvable
+      (exc as any).f2Report = { status: "error",
+                               delegation_id: delegationId,
+                               actor: cfg.toActor,
+                               machine: "executor", results: [],
+                               error: String((exc && (exc as Error).message) || exc) };
+    }
+    throw exc;
+  }
+}
+
+async function delegateToRemoteTool(action: any): Promise<unknown> {
+  // F4 — an agent hiding inside a REMOTE tool (channel "tool" over http):
+  // the adapter performs the marked action as what looks like an ORDINARY
+  // HTTP TOOL CALL: a plain POST over the network to the remote tool
+  // server (targets/mcp-agent/http-server.py) on the executor machine.
+  // The far server's internal agent performs the effect on ITS OWN
+  // MACHINE beyond the tool's response and returns the report — an
+  // ordinary request to every gateway/harness control; the far machine's
+  // effects are what only the far machine's kernel sensor can see.
+  if (!F4_TOOL_SERVER_URL) {
+    throw new Error("F4_TOOL_SERVER_URL is not set — the remote tool " +
+                    "server's address (compose/t0-remote.yaml overlay, " +
+                    "GUARDSCOPE_EXECUTOR_HOST)");
+  }
+  const delegationId = f2DelegationId();
+  // the giver's side, written BEFORE the call (machine "origin": this
+  // record was written on the harness machine)
+  writeDelegationRecord({
+    schema: 1,
+    record_id: ulid(),
+    run_id: INSPECTION_RUN_ID,
+    stream_id: "pi-root",
+    seq: f2Seq++,
+    ts: new Date().toISOString(),
+    event: "sent",
+    channel: "tool",
+    delegation_id: delegationId,
+    parent_delegation_id: null,
+    root_delegation_id: delegationId,
+    hop: 1,
+    from_actor: "pi-root",
+    to_actor: "f4-remote-tool-agent",
+    task_digest: f2TaskDigest([action.id]),
+    protocol: "http",
+    machine: "origin",
+    carrier: "http_header",
+    actor_pid: process.pid,
+  });
+  // the request: one ordinary HTTP POST whose headers carry the chain ids
+  // (the http_header carrier); routed per the deployment (gateway or
+  // direct — see remoteHttpPost)
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    [HEADER_ACTION_ID]: action.id,
+    [HEADER_ATTEMPT]: "0",
+    [HEADER_DELEGATION_ID]: delegationId,
+    [HEADER_ROOT_DELEGATION_ID]: delegationId,
+    [HEADER_HOP]: "1",
+    [HEADER_RUN_ID]: INSPECTION_RUN_ID,
+  };
+  return await remoteHandoff({
+    action, delegationId,
+    label: "f4 tool server", url: F4_TOOL_SERVER_URL, path: "/task",
+    gatewayTool: F4_GATEWAY_TOOL,
+    toActor: "f4-remote-tool-agent", serverLabel: "toy-mcp-agent-http",
+    headers, body: { steps: [action] },
+    parse: (doc: any) => doc,   // the response body IS the report
+  });
+}
+
+async function delegateToRemoteAgent(action: any): Promise<unknown> {
+  // F5 — a remote AGENT server (channel "network", the study's
+  // agent-to-agent boundary class): the adapter submits the marked action
+  // as a task message over the A2A-style protocol (v1: submit-and-get-
+  // result in one synchronous round trip) to the remote agent server
+  // (targets/a2a-agent/server.py) on the executor machine. The far agent
+  // performs the effect on ITS OWN MACHINE and returns the artifacts —
+  // one ordinary HTTP request to every control; the far machine's effects
+  // are what only the far machine's kernel sensor can see.
+  if (!F5_AGENT_SERVER_URL) {
+    throw new Error("F5_AGENT_SERVER_URL is not set — the remote agent " +
+                    "server's address (compose/t0-remote.yaml overlay, " +
+                    "GUARDSCOPE_EXECUTOR_HOST)");
+  }
+  const delegationId = f2DelegationId();
+  // the giver's side, written BEFORE the submission (machine "origin")
+  writeDelegationRecord({
+    schema: 1,
+    record_id: ulid(),
+    run_id: INSPECTION_RUN_ID,
+    stream_id: "pi-root",
+    seq: f2Seq++,
+    ts: new Date().toISOString(),
+    event: "sent",
+    channel: "network",
+    delegation_id: delegationId,
+    parent_delegation_id: null,
+    root_delegation_id: delegationId,
+    hop: 1,
+    from_actor: "pi-root",
+    to_actor: "f5-remote-agent",
+    task_digest: f2TaskDigest([action.id]),
+    protocol: "a2a",
+    machine: "origin",
+    carrier: "queue_payload",
+    actor_pid: process.pid,
+  });
+  // the chain ids ride the task message's metadata (the queue_payload
+  // carrier: the submitted message IS what travels) — the same
+  // io.inspection namespace the mcp_meta carrier uses; the ACTION id rides
+  // the submission's HTTP headers like every raw http tool call (the
+  // dispatch record's carrier names that transport), and the submission
+  // is routed per the deployment (gateway or direct — remoteHttpPost)
+  const message = {
+    messageId: delegationId,
+    metadata: {
+      [META_DELEGATION_ID]: delegationId,
+      [META_ROOT_DELEGATION_ID]: delegationId,
+      [META_HOP]: 1,
+      ["io.inspection/run_id"]: INSPECTION_RUN_ID,
+    },
+    data: { steps: [action] },
+  };
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    [HEADER_ACTION_ID]: action.id,
+    [HEADER_ATTEMPT]: "0",
+  };
+  return await remoteHandoff({
+    action, delegationId,
+    label: "f5 agent server", url: F5_AGENT_SERVER_URL, path: "/",
+    gatewayTool: F5_GATEWAY_TOOL,
+    toActor: "f5-remote-agent", serverLabel: "a2a-agent",
+    headers,
+    body: { jsonrpc: "2.0", id: ++a2aRpcId,
+            method: "message/send", params: { message } },
+    // the completed task's artifact IS the agent's report; a JSON-RPC
+    // error (a refused submission) and an answer without a report are
+    // both errors — the sent echo stays on the row either way
+    parse: (doc: any) => {
+      if (doc?.error) {
+        throw new Error(`f5 agent server denied the task: ${JSON.stringify(doc.error)}`);
+      }
+      return doc?.result?.artifacts?.[0]?.data ?? null;
+    },
+  });
+}
+
 // F9 — work that outlives its parent (channel "child", detached): the
 // adapter spawns the helper DETACHED, writes the sent record, DOES NOT
 // WAIT, marks the action submitted, and returns immediately — the parent
@@ -745,7 +1062,7 @@ async function delegateToToolAgent(action: any): Promise<unknown> {
 // replay volume (the storage that outlives the parent); the runner's
 // collection reads them after the window. The replay row keeps the
 // delegation_id echo so the trace-back attributes the moment the records
-// are collected, even before the acceptance lands.
+// are collected, even before the acceptance is recorded.
 async function delegateDetachedChild(action: any): Promise<unknown> {
   const delegationId = f2DelegationId();
   writeDelegationRecord({
@@ -997,7 +1314,7 @@ async function runReplay(trace: any) {
   await new Promise<void>((res) => log.end(res));
 
   // "submitted" (the F9 fixture's detached hand-off) is a deferred
-  // terminal state, not a failure: the effects land after the replay
+  // terminal state, not a failure: the effects occur after the replay
   // ended and the post-window collection carries them
   const failed = results.filter((r) => r.status !== "ok" && r.status !== "submitted");
   const result = {
@@ -1032,6 +1349,14 @@ function t4ToolCalls(trace: any): { id: string; tool: string; args: Record<strin
       const args: Record<string, unknown> = {};
       if (action.body !== undefined) args.body = action.body;
       calls.push({ id: action.id, tool: `mcp__${T4_HTTP_SERVER}__${tool}`, args });
+    } else if (action.performed_by === "remote-tool-agent") {
+      // F4 (remote hand-off): the remote call is a TOOL CALL — it crosses
+      // the harness tool pipeline like every other tool call; the custom
+      // tool's execute performs the hand-off
+      calls.push({ id: action.id, tool: T4_F4_TOOL, args: { action } });
+    } else if (action.performed_by === "remote-agent") {
+      // F5 (remote hand-off): the same pipeline crossing, the agent route
+      calls.push({ id: action.id, tool: T4_F5_TOOL, args: { action } });
     }
   }
   return calls;
@@ -1064,8 +1389,12 @@ function t4RecordResult(rec: Record<string, unknown>) {
   // pipeline carries the id as the toolCall id, not a protocol carrier, so
   // carrier_used is "none" (C5 skips carrier-less dispatches). Denied calls
   // are dispatched-then-denied: the denial is the attempt's terminal result.
+  // The remote hand-off tools' result carries the report (with the echo) as
+  // its text — the dispatch record's result keeps it exactly like the T0
+  // loop's row detail does.
   const status = String(rec.status ?? "ok");
-  writeDispatchRecord(String(rec.id), "none", { status },
+  writeDispatchRecord(String(rec.id), "none",
+    (rec.detail as Record<string, unknown> | undefined) ?? { status },
     status === "error" ? String(rec.error ?? "tool call failed") : null);
 }
 
@@ -1111,8 +1440,12 @@ async function t4CommandPhase(trace: any, ctx: any): Promise<void> {
                spec_sha256: trace.meta?.spec_sha256, harness: "pi", design: "t4" });
 
   // Process-level actions: agent code OUTSIDE the tool pipeline (bypass).
+  // The remote hand-offs (F4/F5) are NOT here: they are tool calls in this
+  // design — the agent turn issues them through the pipeline (t4ToolCalls).
   for (const action of trace.actions) {
     if (action.class === "stdio_tool_call" || action.class === "http_tool_call") continue;
+    if (action.performed_by === "remote-tool-agent" ||
+        action.performed_by === "remote-agent") continue;
     const t0 = ns();
     let status = "ok", detail: unknown = null, error: string | null = null;
     try {
@@ -1321,6 +1654,46 @@ async function getExternalEvaluator() {
 export default function (pi: ExtensionAPI) {
   piRef = pi;
   if (T4_MODE || T6_MODE) {
+    // F4/F5 (remote hand-offs): the remote call is a REAL harness tool
+    // call — the scripted provider issues it in the agent turn, the
+    // tool_call hook (the enforcement point) fires on it, and the tool's
+    // execute performs the hand-off (the sent/accepted records, the echo
+    // validation and the timeout are the hand-off's own, unchanged). No
+    // gateway means the tool POSTs the remote server directly; the routing
+    // is the design's business.
+    for (const [name, handoff] of [
+      [T4_F4_TOOL, delegateToRemoteTool],
+      [T4_F5_TOOL, delegateToRemoteAgent],
+    ] as [string, (a: any) => Promise<unknown>][]) {
+      pi.registerTool({
+        name,
+        label: name,
+        description: "the remote delegation fixture's hand-off: " +
+                     "performs the performed_by-marked action on the " +
+                     "remote server (F4/F5)",
+        parameters: { type: "object",
+                      properties: {
+                        action: { type: "object",
+                                 description: "the performed_by-marked " +
+                                              "compiled action" } },
+                      required: ["action"] },
+        async execute(_toolCallId: string, params: any) {
+          try {
+            const report = await handoff(params.action);
+            return { content: [{ type: "text",
+                                text: JSON.stringify(report) }] };
+          } catch (exc: any) {
+            if (!exc?.f2Report) throw exc;
+            // the failed hand-off's report (with the delegation_id echo)
+            // is evidence: return it as the call's error result so the
+            // row keeps the echo exactly like the T0 loop's error path
+            return { content: [{ type: "text",
+                                text: JSON.stringify(exc.f2Report) }],
+                     isError: true };
+          }
+        },
+      });
+    }
     // The enforcement point: the tool_call hook. T4: the harness permission
     // layer (allow-all v1). T6: the in-process policy engine (declarative
     // rules over tool names + argument values; denials block, fail-closed).
@@ -1381,10 +1754,20 @@ export default function (pi: ExtensionAPI) {
     pi.on("tool_result", (event) => {
       if (t4RecordedIds.has(event.toolCallId)) return {};  // denied: recorded at the hook
       const start = t4CallStart.get(event.toolCallId);
+      // F4/F5 (remote hand-offs): the tool result's text IS the report
+      // (the success report, or the error report with its echo — see the
+      // tools' execute); keep it as the row detail so the error path stays
+      // trace-back-resolvable exactly like the T0 loop's f2Report handling
+      let detail: unknown = undefined;
+      if (event.toolName === T4_F4_TOOL || event.toolName === T4_F5_TOOL) {
+        try { detail = JSON.parse(event.result?.content?.[0]?.text); }
+        catch { /* a non-report result stays detail-less */ }
+      }
       t4RecordResult({
         id: event.toolCallId,
         status: event.isError ? "error" : "ok",
         error: event.isError ? "tool execution failed" : null,
+        ...(detail !== undefined ? { detail } : {}),
         started_ns: start?.started_ns,
         ended_ns: ns(),
         started_epoch_ns: start?.started_epoch_ns,

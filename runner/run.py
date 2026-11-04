@@ -568,7 +568,8 @@ EXECUTOR_TRACEE_NAME = "tracee-events.json"
 
 
 def collect_executor_artifacts(out_dir: Path, executor_dir: Path,
-                               map_events_here: bool = True) -> dict:
+                               map_events_here: bool = True,
+                               run_id: str | None = None) -> dict:
     """The two-host collection (F4/F5): merge the executor host's
     delegation records into the run's delegation-records.jsonl — the two
     machines' hand-off records are written in ONE stream (the chain joins on
@@ -577,6 +578,14 @@ def collect_executor_artifacts(out_dir: Path, executor_dir: Path,
     machine's kernel observations as SEPARATE artifacts
     (tracee-events-executor / mapped-actions-executor), never merged
     into the origin host's effective counts.
+
+    Only THIS run's executor records merge: the run id travels with the
+    hand-off request (x-inspection-run-id / the task message's metadata)
+    and lands on every record the far server writes, and the executor
+    host's staging file is PERSISTENT across runs — an unfiltered append
+    would merge a previous run's acceptances into this run's stream.
+    run_id defaults to the run dir's name (run_one and the collect-remote
+    CLI pass it explicitly).
 
     The executor records are APPENDED to whatever the origin side wrote
     (run_one copies the replay volume's stream first), so the collection
@@ -587,27 +596,42 @@ def collect_executor_artifacts(out_dir: Path, executor_dir: Path,
     """
     out_dir = Path(out_dir)
     executor_dir = Path(executor_dir)
+    run_id = run_id or out_dir.name
     if not executor_dir.is_dir():
         raise RuntimeError(
             f"the executor artifacts directory {executor_dir} does not "
             f"exist — pull the executor host's side of the run first "
             f"(compose/executor.yaml header: docker logs executor-tracee "
             f"+ the staging dir's delegation-records.jsonl)")
-    summary = {"executor_dir": str(executor_dir),
+    summary = {"executor_dir": str(executor_dir), "run_id": run_id,
                "records_merged": 0, "artifacts": {}}
     # 1. the executor-side hand-off records (machine "executor") merge
-    #    into the run's stream
+    #    into the run's stream — only this run's (the far staging file
+    #    persists across runs; the run id selects this run's acceptances)
     src_records = executor_dir / EXECUTOR_RECORDS_NAME
     if src_records.is_file():
-        text = src_records.read_text(encoding="utf-8")
-        if text.strip():
-            if not text.endswith("\n"):
-                text += "\n"
+        kept, skipped_other_run = [], 0
+        for line in src_records.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                # an unparseable line is a reported problem in the summary,
+                # never silently merged into the chain stream
+                summary["records_unparseable"] = \
+                    summary.get("records_unparseable", 0) + 1
+                continue
+            if rec.get("run_id") != run_id:
+                skipped_other_run += 1
+                continue
+            kept.append(line)
+        summary["records_skipped_other_run"] = skipped_other_run
+        if kept:
             with open(out_dir / EXECUTOR_RECORDS_NAME, "a",
                       encoding="utf-8") as f:
-                f.write(text)
-            summary["records_merged"] = sum(
-                1 for line in text.splitlines() if line.strip())
+                f.write("".join(l + "\n" for l in kept))
+            summary["records_merged"] = len(kept)
             summary["artifacts"]["delegation-records"] = str(
                 out_dir / EXECUTOR_RECORDS_NAME)
     # 2. the far machine's OWN kernel observations: retained as separate
@@ -985,18 +1009,24 @@ def run_one(harness: str, run_id: str, runs_dir: Path, timeout_s: float | None =
 
     print(f"[{run_id}] replaying {harness} ({design}) ...", file=sys.stderr)
     result, replay_log_src = trigger_replay(harness, run_id, timeout_s, cfg)  # noqa: E501
+    replay_failed_actions: list = []
     if not result.get("ok"):
         # design-aware: failures are only tolerated for PREVENTED actions
         # (design t2/t3: refused by the egress policy with a refusal errno),
         # for the t7 kernel-denied instances (the fixture policy's kill rule
         # denies them at the kernel — the harness replay sees the SIGKILLed
         # child as an execution error; the deny decision record + C6 verify
-        # the denial downstream, this gate only decides abort-vs-continue),
+        # the denial downstream, this gate only decides the run's verdict),
         # and for DENIED tool calls (checked-DENY: the enforcement point
         # refused the call — a valid terminal state for t1+ designs; a
         # spurious denial, i.e. no backed decision, fails
-        # coverage/outcomes). Any other failure aborts the run before
-        # reconciliation.
+        # coverage/outcomes). Any other failure is a REPLAY FAILURE — but
+        # NOT a run abort: the run continues so BOTH hosts' evidence
+        # (the adapter's echo, the executor's acceptance) reaches the
+        # retained run artifacts, exactly like the single-machine pattern
+        # (a failed action is a replay failure, recorded and reconciled;
+        # only infrastructure errors abort the run — the replay result,
+        # the logs and the collection are the failure's evidence).
         prevented = rec_mod.PREVENTED_CLASSES.get(design, set())
         kernel_denied = (rec_mod.T7_KERNEL_DENIED_INSTANCES
                          if design == "t7" else frozenset())
@@ -1026,9 +1056,12 @@ def run_one(harness: str, run_id: str, runs_dir: Path, timeout_s: float | None =
 
         bad = [r for r in result.get("results") or [] if _bad(r)]
         if bad:
-            raise RuntimeError(
-                f"replay failed: {[b['id'] for b in bad]} "
-                f"({', '.join(str(b.get('error')) for b in bad)})")
+            replay_failed_actions = bad
+            print(f"[{run_id}] replay FAILED: "
+                  f"{[b['id'] for b in bad]} "
+                  f"({', '.join(str(b.get('error')) for b in bad)}) — "
+                  f"collecting the evidence (both hosts) and continuing "
+                  f"to the run record", file=sys.stderr)
 
     out_dir.mkdir(parents=True)
     (out_dir / "replay-result.json").write_text(json.dumps(result, indent=1) + "\n")
@@ -1082,7 +1115,7 @@ def run_one(harness: str, run_id: str, runs_dir: Path, timeout_s: float | None =
     executor_collection = None
     if executor_dir:
         executor_collection = collect_executor_artifacts(
-            out_dir, Path(executor_dir))
+            out_dir, Path(executor_dir), run_id=run_id)
         print(f"[{run_id}] executor-host artifacts: "
               f"{executor_collection['records_merged']} delegation "
               f"record(s) merged; far-machine kernel observations: "
@@ -1265,11 +1298,17 @@ def run_one(harness: str, run_id: str, runs_dir: Path, timeout_s: float | None =
     # self-reported (DESIGN.md 9)
     pipeline_status = ("pass" if cov_status == "pass" and out_status == "pass"
                       else "fail") if not sensor else report["status"]
+    # a replay failure is the run's verdict, not an abort (see the gate
+    # above): the run completed with its evidence collected, and the
+    # summary names the failed actions
+    if replay_failed_actions:
+        pipeline_status = "fail"
     return {"run_id": run_id, "harness": harness, "design": design,
             "out_dir": str(out_dir),
             "status": pipeline_status, "coverage": cov_status,
             "outcomes": out_status,
             "sensor_present": sensor,
+            "replay_failed_actions": [b["id"] for b in replay_failed_actions],
             "effective_counts": report["effective_counts"],
             "ground_truth_counts": run_record["ground_truth_counts"],
             "spec_sha256": run_record["spec"]["canonical_sha256"]}
@@ -1842,6 +1881,14 @@ def main() -> int:
             "replay-result": d / "replay-result.json",
             "replay-log": d / "replay-log.jsonl",
         }
+        # F4/F5 (the remote fixtures): the executor host's kernel artifacts
+        # are retained in the run dir by the collection — re-reconcile
+        # re-hashes them like every other raw artifact (the collect-remote
+        # CLI keeps these hashes current too)
+        for name, path in (("tracee-events-executor", d / "tracee-events-executor.json"),
+                           ("mapped-actions-executor", d / "mapped-actions-executor.jsonl")):
+            if path.is_file():
+                artifacts[name] = path
         artifacts.update(enforcement_artifacts(
             args.design, gw_dir if gateway_log is not None else None, d))
         rr_mod.add_artifact_hashes(manifest, artifacts)
@@ -1858,7 +1905,25 @@ def main() -> int:
     if args.cmd == "collect-remote":
         summary = collect_executor_artifacts(
             args.run_dir, args.executor_dir,
-            map_events_here=not args.no_map)
+            map_events_here=not args.no_map, run_id=args.run_dir.name)
+        # the run's manifest must reflect what the run now retains: the
+        # merged delegation stream CHANGED (the append), and the executor
+        # host's kernel artifacts are new — recompute every artifact hash
+        # (T0 criterion 4: raw artifacts retained + hashed)
+        manifest_path = args.run_dir / "manifest.json"
+        if manifest_path.is_file():
+            manifest = json.loads(manifest_path.read_text())
+            artifacts = {name: Path(a["path"])
+                        for name, a in (manifest.get("artifacts") or {}).items()
+                        if a.get("path")}
+            for name in ("delegation-records", "tracee-events-executor",
+                         "mapped-actions-executor"):
+                if name in summary["artifacts"]:
+                    artifacts[name] = Path(summary["artifacts"][name])
+            rr_mod.add_artifact_hashes(manifest, artifacts)
+            manifest_path.write_text(
+                json.dumps(manifest, indent=1, sort_keys=True) + "\n")
+            summary["manifest_updated"] = True
         print(json.dumps(summary, indent=1, sort_keys=True))
         return 0
 

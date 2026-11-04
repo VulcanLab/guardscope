@@ -1,0 +1,45 @@
+# compose/t0-remote.yaml — the ORIGIN host's remote-delegation overlay (the
+# F4/F5 fixtures). An ADDITIVE overlay merged onto the T0 base — the base is
+# untouched, and every run without this overlay keeps its byte-identical
+# behavior:
+#   docker compose -f compose/t0.yaml -f compose/t0-remote.yaml up -d --build
+#
+# The two-host topology (DESIGN: the remote delegation fixtures): the ORIGIN
+# host runs the standard design topology (harness + control + sensor); the
+# EXECUTOR host runs its own compose stack (compose/executor.yaml: the remote
+# tool server, the remote agent server, and its OWN sensor). One compose file
+# never spans both hosts — the cross-host addresses travel as environment
+# variables:
+#
+#   GUARDSCOPE_EXECUTOR_HOST   the executor host's address (public IP on
+#                              EC2) — the F4/F5 hand-off endpoints below
+#                              are built from it.
+#   GUARDSCOPE_EXECUTOR_ARTIFACTS  (runner-side, not compose) the executor
+#                              host's pulled artifacts directory: the
+#                              executor-side delegation records + the
+#                              executor host's Tracee events, collected
+#                              after the run (runner/run.py run_one /
+#                              collect-remote).
+#
+# What this overlay adds to the pi harness service only (the F4/F5 workloads
+# are pi-harness workloads, the delegation fixtures' performed_by branches):
+#   F4_TOOL_SERVER_URL   the F4 remote tool server's endpoint — the adapter
+#                        performs each remote-tool-agent-performed action as
+#                        an ordinary HTTP POST here.
+#   F5_AGENT_SERVER_URL  the F5 remote agent server's endpoint — the adapter
+#                        submits each remote-agent-performed action as a
+#                        task message here.
+# Without a baseline-f4/baseline-f5 workload the adapter never reads them
+# (existing traces carry no performed_by: remote-* markings).
+#
+# The same overlay pattern extends the other t{N} bases the same way when a
+# remote-fixture run needs them (declare the pi service's environment here;
+# nothing else moves).
+
+name: inspection-t0
+
+services:
+  pi:
+    environment:
+      F4_TOOL_SERVER_URL: http://${GUARDSCOPE_EXECUTOR_HOST:-localhost}:8091
+      F5_AGENT_SERVER_URL: http://${GUARDSCOPE_EXECUTOR_HOST:-localhost}:8092

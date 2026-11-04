@@ -38,6 +38,30 @@ Each target writes one JSON object per event: `{"ts", "target", "event", ...}`.
 | `SECRETS_DIR` | /run/secrets | credentials/seed.sh |
 | `WORKSPACE_DIR` | /workspace | fs/setup.sh |
 
+## The remote hand-off's routing (F4/F5)
+
+The remote servers are ORDINARY HTTP endpoints from the adapter's
+perspective; whether the hand-off crosses an enforcement point is the
+deployment DESIGN's business, not the fixtures':
+
+- unset `GATEWAY_URL` (the t0-remote overlay's shape): the adapter POSTs
+  the remote server directly.
+- `GATEWAY_URL` set: the hand-off crosses the gateway as MCP `tools/call`
+  (routes `f4_remote_task` / `f5_remote_task`, gateway/server.py
+  `REMOTE_TOOL_ROUTES`); the gateway enforces the call and PROXIES the
+  plain HTTP request to the remote server (the deployed policy must
+  allow the route names, exactly like any other tool). The gateway needs
+  `F4_TOOL_SERVER_URL` / `F5_AGENT_SERVER_URL` in ITS env for the
+  routes' addresses.
+- `T4_MODE`/`T6_MODE` set: the remote call is a REAL harness tool call
+  (`f4_remote_tool` / `f5_remote_agent`, registered by the adapter
+  extension) — it crosses pi's tool pipeline, so the `tool_call` hook
+  (the enforcement point) fires on it.
+
+The per-action response cycle (connect + headers + BODY READ + parse) is
+bounded by the adapter's 20 s action timeout
+(`INSPECTION_ACTION_TIMEOUT_MS` overrides it for the offline tests).
+
 ## Compose
 
 ```bash

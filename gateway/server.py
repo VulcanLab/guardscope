@@ -135,6 +135,45 @@ NATIVE_TOOL_ROUTES = {
     "put_state": ("PUT", "/state"),
 }
 
+# F4/F5 (remote hand-offs): tool name -> (base url, request path) for the
+# EXECUTOR host's remote servers. The remote servers are ordinary HTTP
+# endpoints, not MCP servers, so a tools/call for one of these routes is
+# PROXIED as the plain HTTP request the adapter would have made directly
+# (the chain ids ride the request headers verbatim; the response body is
+# wrapped as the call's text). Whether the remote hand-offs cross the
+# gateway at all is the deployment design's business: unset base = the
+# route is not offered (a tools/call for it is an error, never a silent
+# direct pass-through), and the deployed policy still decides allow/deny
+# exactly like every other tool.
+REMOTE_TOOL_ROUTES = {
+    "f4_remote_task": (os.environ.get("F4_TOOL_SERVER_URL", ""), "/task"),
+    "f5_remote_task": (os.environ.get("F5_AGENT_SERVER_URL", ""), "/"),
+}
+
+
+def remote_route(tool_name: str) -> tuple[str, str] | None:
+    """The remote hand-off route for a tool name, or None (not a remote
+    route, or the route's remote server address is unset)."""
+    base, path = REMOTE_TOOL_ROUTES.get(tool_name, ("", ""))
+    return (base, path) if base else None
+
+
+def proxy_remote_call(base_url: str, path: str, arguments: dict,
+                       timeout: float = 20.0) -> dict:
+    """Proxy one ordinary HTTP POST to a remote server (F4/F5): the
+    adapter's request (headers + body) is performed from the gateway and
+    the far server's response is wrapped as the tools/call result text —
+    the enforcement point stays on the path without changing what the
+    remote server sees."""
+    headers = {str(k): str(v) for k, v in (arguments.get("headers") or {}).items()}
+    headers.setdefault("Content-Type", "application/json")
+    body = json.dumps(arguments.get("body") or {})
+    req = urllib.request.Request(base_url.rstrip("/") + path, data=body.encode(),
+                                 method="POST", headers=headers)
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        text = resp.read().decode()
+    return {"content": [{"type": "text", "text": text}]}
+
 _CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 
 
@@ -405,9 +444,19 @@ class Handler(BaseHTTPRequestHandler):
             respond(200, json.dumps(jsonrpc_err(
                 msg.get("id"), -32001, f"gateway denied {tool_name!r}: {reason}")).encode())
             return
+        remote = remote_route(tool_name)
         try:
-            respond(200, json.dumps(forward(msg, route_upstream(tool_name)),
-                                    separators=(",", ":")).encode())
+            if remote is not None:
+                # F4/F5: the remote servers are ordinary HTTP endpoints —
+                # proxy the request instead of forwarding MCP (the far
+                # side's response is wrapped as the call's result text)
+                respond(200, json.dumps(
+                    {"jsonrpc": "2.0", "id": msg.get("id"),
+                     "result": proxy_remote_call(remote[0], remote[1], arguments)},
+                    separators=(",", ":")).encode())
+            else:
+                respond(200, json.dumps(forward(msg, route_upstream(tool_name)),
+                                        separators=(",", ":")).encode())
         except OSError as exc:
             respond(502, json.dumps(jsonrpc_err(msg.get("id"), -32000,
                                                 f"upstream unreachable: {exc}")).encode())

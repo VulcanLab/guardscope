@@ -1,0 +1,115 @@
+# compose/executor.yaml — the EXECUTOR host of the two-host remote-delegation
+# topology (the F4/F5 fixtures, the study's S4/S5 scenario classes). This is a
+# SEPARATE compose stack on a SECOND machine — never merged with the origin
+# host's t{N}.yaml bases (one compose file must not span both hosts).
+#
+# What runs here, and why:
+#   f4-tool-server   the F4 remote tool server (targets/mcp-agent/
+#                    http-server.py): an ordinary-looking HTTP tool server
+#                    whose internal agent performs the handed effects ON
+#                    THIS MACHINE and writes its acceptance records with
+#                    machine: "executor" (delegation-record/1).
+#   a2a-agent        the F5 remote agent server (targets/a2a-agent/
+#                    server.py): accepts task submissions over the A2A-style
+#                    protocol, performs the effects ON THIS MACHINE, writes
+#                    its acceptance records with machine: "executor".
+#   net-peer         the far machine's own network target — the delegated
+#                    direct_network effects (tcp/udp) connect to THIS
+#                    machine's net-peer, not the origin's.
+#   tracee           this host's OWN kernel sensor instance (--profile
+#                    sensor; same shape as the origin host's): the ONLY
+#                    design that can observe the remote agents' effects.
+#                    Its events go to the container console (docker logs).
+#
+# The two hosts connect over the network (public IPs on EC2): the ORIGIN host
+# runs the standard design topology plus the remote-delegation overlay
+#   docker compose -f compose/t0.yaml -f compose/t0-remote.yaml up -d --build
+# with GUARDSCOPE_EXECUTOR_HOST set to this host's address; this stack
+# publishes the servers' ports so the origin's adapter can POST to them.
+#
+# Replay staging mount: ${GUARDSCOPE_STAGING_DIR:-../runs}/executor is mounted
+# at /workspace/replay — the remote servers write their delegation records
+# there (delegation-records.jsonl, machine "executor"). The runner's
+# cross-host collection (runner/run.py collect-remote / the
+# GUARDSCOPE_EXECUTOR_ARTIFACTS env) reads this directory after the run; on
+# EC2 the pull is a post-run step on this host:
+#   docker logs executor-tracee > <artifacts>/tracee-events.json
+#   cp ${GUARDSCOPE_STAGING_DIR}/executor/delegation-records.jsonl <artifacts>/
+# and the origin host's runner collects the pulled directory.
+#
+# The Tracee sensor runs OUTSIDE the deployed topology (no executornet
+# attachment, no published ports): it observes container activity through
+# host pid/cgroup namespaces, so target containers need no privileged mode.
+# Start it explicitly:
+#   docker compose -f compose/executor.yaml --profile sensor up -d
+# Bring the servers up FIRST, then the sensor (container-cache startup race —
+# sensor/README.md).
+
+name: inspection-executor
+
+services:
+  f4-tool-server:
+    build:
+      context: ../targets
+      dockerfile: mcp-agent/Dockerfile
+    image: inspection/mcp-agent-http
+    container_name: executor-f4-tool-server
+    networks: [executornet]
+    ports:
+      - "8091:8091"   # the origin host's adapter POSTs here (executor host IP)
+    environment:
+      REPLAY_LOG_DIR: /workspace/replay
+      F4_LISTEN_PORT: "8091"
+    volumes:
+      - ${GUARDSCOPE_STAGING_DIR:-../runs}/executor:/workspace/replay   # executor-side delegation records (collected after the run)
+    restart: unless-stopped
+
+  a2a-agent:
+    build:
+      context: ../targets
+      dockerfile: a2a-agent/Dockerfile
+    image: inspection/a2a-agent
+    container_name: executor-a2a-agent
+    networks: [executornet]
+    ports:
+      - "8092:8092"   # the origin host's adapter submits tasks here
+    environment:
+      REPLAY_LOG_DIR: /workspace/replay
+      A2A_LISTEN_PORT: "8092"
+    volumes:
+      - ${GUARDSCOPE_STAGING_DIR:-../runs}/executor:/workspace/replay
+    restart: unless-stopped
+
+  net-peer:
+    build:
+      context: ../targets
+      dockerfile: net-peer/Dockerfile
+    image: inspection/net-peer
+    container_name: executor-net-peer
+    networks: [executornet]
+    volumes:
+      - target-logs:/var/log/targets
+    restart: unless-stopped
+
+  tracee:
+    build:
+      context: ../sensor
+      dockerfile: Dockerfile.tracee
+    image: inspection/tracee
+    container_name: executor-tracee
+    privileged: true
+    pid: host
+    cgroup: host
+    volumes:
+      - /etc/os-release:/etc/os-release-host:ro
+      - /var/run:/var/run:ro
+      - tracee-data:/tmp/tracee
+    profiles: [sensor]
+    restart: unless-stopped
+
+networks:
+  executornet: {}
+
+volumes:
+  target-logs: {}
+  tracee-data: {}

@@ -72,6 +72,16 @@ GROUP_CLASSES = ("stdio_tool_call", "http_tool_call", "direct_network")
 # classes with a target-facing served observable (R2)
 SERVED_CLASSES = ("http_tool_call", "stdio_tool_call", "direct_network")
 
+# F4/F5 (the remote delegation fixtures): the performed_by markings whose
+# effects happen on the EXECUTOR host — invisible to the origin host's kernel
+# and target logs BY DESIGN (the origin-side observable is the outer
+# hand-off connect, which the mapping leaves as unrelated socket churn;
+# the effects are the far machine's own sensor's evidence, retained by the
+# runner's cross-host collection as separate artifacts). The R2/R3/R5
+# models account for this below (expected absent on the origin host, never
+# a failure; the replay report + the collected chain carry the claim).
+REMOTE_PERFORMERS = ("remote-tool-agent", "remote-agent")
+
 # Deployment design -> action classes a NETWORK-LAYER policy prevents
 # (main.tex Table 1 / §5.2): the attempt fires but the target never serves —
 # the action takes no effect because a mechanism outside the policy denied
@@ -538,6 +548,13 @@ class Reconciler:
         problems = []
         for a in self.actions:
             denied = self._replay_status.get(a["id"]) == "denied"
+            if self._remote_performed(a):
+                # F4/F5 (remote-performed): the far machine's target serves
+                # the effect on the EXECUTOR host — the origin host's target
+                # logs are EXPECTED ABSENT here (the far machine's own logs
+                # are not pooled into this host's counts; the acceptance is
+                # the collected cross-machine chain's evidence)
+                continue
             if a["class"] == "http_tool_call":
                 if denied:
                     # checked-DENY: the call was refused before execution —
@@ -761,6 +778,8 @@ class Reconciler:
             "evidence": "kernel-per-action",
             "matched": {p: len(g) for p, g in path_groups.items() if p in spec_targets},
             "problems": mult_problems,
+            **({"remote_expected_absent": sorted(self._remote_ids(actions))}
+               if self._remote_ids(actions) else {}),
         }
 
     def calibrated_stdio(self, recs: list[dict]) -> dict:
@@ -1023,6 +1042,23 @@ class Reconciler:
                                               "tool-agent", "role")
                    for a in self.spec.get("actions", []))
 
+    def _remote_performed(self, action: dict) -> bool:
+        """Whether this action's effect is performed on the EXECUTOR host
+        (the remote delegation fixtures, F4/F5): the origin host's kernel
+        sees only the outer hand-off connect — one ordinary HTTP request
+        the mapping leaves as unrelated socket churn — and NEVER the six
+        effects themselves (they happen on the other machine, where only
+        the far machine's own sensor sees them). The origin-side R2/R3
+        expected counts treat these actions as EXPECTED ABSENT (the same
+        workload-aware pattern as F2/F7's tolerance model), and R5 counts
+        them effective on the replay report's claim (the far server's
+        per-effect report, echoed through the cross-machine delegation
+        chain the runner collects)."""
+        return action.get("performed_by") in REMOTE_PERFORMERS
+
+    def _remote_ids(self, actions: list[dict]) -> set[str]:
+        return {a["id"] for a in actions if self._remote_performed(a)}
+
     def kernel_group(self, cls: str, recs: list[dict]) -> dict:
         """Group kernel support under the documented expected count range."""
         if (cls == "http_tool_call" and "http_startup_calibration" in self.mult
@@ -1088,8 +1124,15 @@ class Reconciler:
             tcp = [r for r in recs if flatten(r)["transport"] == "tcp"
                    or flatten(r)["event"] == "connect"]
             udp = [r for r in recs if r not in tcp]
-            n_tcp = len([a for a in actions if a["op"] == "tcp_connect"])
-            n_udp = len([a for a in actions if a["op"] == "udp_send"])
+            # F4/F5 (remote-performed): the delegated connects/datagrams
+            # happen on the EXECUTOR host — the origin-side expected counts
+            # cover only the actions performed on THIS host; the remote
+            # ones are expected absent (the outer hand-off connect is the
+            # origin-side evidence, allowlisted as unrelated socket churn)
+            origin_actions = [a for a in actions
+                              if not self._remote_performed(a)]
+            n_tcp = len([a for a in origin_actions if a["op"] == "tcp_connect"])
+            n_udp = len([a for a in origin_actions if a["op"] == "udp_send"])
             if cls in self.prevented:
                 # prevented (design t2): kernel evidence is the ATTEMPT.
                 # TCP: connect events fire regardless of outcome (rejected
@@ -1119,9 +1162,13 @@ class Reconciler:
                 if n_udp and not udp_lo <= len(udp) <= n_udp * udp_max:
                     problems.append(f"{len(udp)} udp observations outside "
                                     f"[{udp_lo}, {n_udp * udp_max}]")
+        remote = self._remote_ids(actions)
         return {
             "spec": n, "kernel_raw": len(recs),
-            "evidence": "kernel-group", "problems": problems,
+            "evidence": "kernel-group" +
+                        ("+remote-expected-absent" if remote else ""),
+            "problems": problems,
+            **({"remote_expected_absent": sorted(remote)} if remote else {}),
         }
 
     # -- R3 + R4 ---------------------------------------------------------------
@@ -1220,14 +1267,23 @@ class Reconciler:
             elif cls in SERVED_CLASSES and self.target_logs:
                 # checked-DENY instances are required NOT to have served
                 # (their R2 absence check ran in reconcile_served); they are
-                # exempt from the served-per-action requirement here
+                # exempt from the served-per-action requirement here.
+                # Remote-performed actions (F4/F5) are expected absent on
+                # this host too — the far machine's own target serves them.
                 to_check = [a for a in self.by_class[cls]
-                            if self._replay_status.get(a["id"]) != "denied"]
+                            if self._replay_status.get(a["id"]) != "denied"
+                            and not self._remote_performed(a)]
                 served_ok = all(self._served_per_action.get(a["id"])
                                 for a in to_check)
                 result["evidence"] += "+served-per-action"
             if "supported" in result:  # per-action classes
-                ok = all(result["supported"]) and not result["problems"] and served_ok
+                # remote-performed actions (F4/F5) produce NO origin-host
+                # kernel effects BY DESIGN — their "supported" entries are
+                # expected absent, not failures (see _remote_performed)
+                absent = self._remote_ids(self.by_class[cls])
+                supported_ok = all(ok for ok, a in zip(result["supported"], self.by_class[cls])
+                                   if a["id"] not in absent)
+                ok = supported_ok and not result["problems"] and served_ok
             else:  # group classes: expected count range + served evidence
                 ok = not result["problems"] and served_ok
             per_class[cls] = result
@@ -1269,14 +1325,25 @@ class Reconciler:
         denied = self._kernel_denied_ids()
         for cls in SIX_CLASSES:
             actions = self.by_class[cls]
+            absent = self._remote_ids(actions)
             if cls in PER_ACTION_CLASSES:
-                eff[cls] = sum(1 for ok, a in zip(per_class[cls]["supported"], actions)
-                               if ok and a["id"] not in denied)
+                eff[cls] = sum(
+                    1 for ok, a in zip(per_class[cls]["supported"], actions)
+                    if (self._replay_status.get(a["id"]) == "ok"
+                        if a["id"] in absent else ok)
+                    and a["id"] not in denied)
             elif self.target_logs:
                 # pooled transports: per-action evidence comes from the
-                # served layer (kernel observations are multiplexed)
-                eff[cls] = sum(1 for a in actions
-                               if self._served_per_action.get(a["id"]))
+                # served layer (kernel observations are multiplexed);
+                # remote-performed actions (F4/F5) have NO origin-side
+                # served evidence BY DESIGN — their effect claim is the
+                # replay report (the far server's per-effect result),
+                # carried by the cross-machine delegation chain
+                eff[cls] = sum(
+                    1 for a in actions
+                    if (self._replay_status.get(a["id"]) == "ok"
+                        if a["id"] in absent
+                        else self._served_per_action.get(a["id"])))
             else:
                 eff[cls] = len(actions) if not per_class[cls]["problems"] else 0
         return eff
