@@ -9,7 +9,7 @@
 # file is the BASE: the topology is compose/t2.yaml verbatim (container names
 # re-prefixed, project distinct) MINUS the gateway control service — the
 # gateway SLOT is declared but the control arrives as a binding overlay (the
-# shipped binding: plugins/agt-gateway/overlay/t2-mock.yaml). The base
+# bundled binding: plugins/agt-gateway/overlay/t2-mock.yaml). The base
 # alone is NOT a validatable unit (the mock-harness and egress-jail services
 # depend on the slot's gateway service); base+overlay is. The NETWORK-FORCED
 # default-deny egress policy on the MOCK service's netns stays in the base
@@ -58,7 +58,7 @@ services:
     restart: unless-stopped
 
   # gateway: the design's control SLOT (compose/slots/t2.yaml), ABSENT from
-  # this base — it arrives as a binding overlay (the shipped binding:
+  # this base — it arrives as a binding overlay (the bundled binding:
   # plugins/agt-gateway/overlay/t2-mock.yaml, moved out of this file
   # verbatim).
 

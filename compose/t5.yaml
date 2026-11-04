@@ -40,7 +40,7 @@
 # This file is the BASE of the t5 fixture (DESIGN.md 7): the full design
 # structure (the harness-intrinsic permission chain included) with the
 # gateway SLOT declared but the control service ABSENT; the control arrives
-# as a binding overlay merged on top (the shipped binding:
+# as a binding overlay merged on top (the bundled binding:
 # plugins/agt-gateway/overlay/t5.yaml, expressed exactly like a third
 # party's). The base alone is NOT a validatable unit (the harness services
 # depend on the slot's gateway service; docker compose config fails loudly
@@ -77,7 +77,7 @@ services:
     restart: unless-stopped
 
   # T5's SECOND enforcement point: the gateway SLOT (compose/slots/t5.yaml),
-  # ABSENT from this base — it arrives as a binding overlay (the shipped
+  # ABSENT from this base — it arrives as a binding overlay (the bundled
   # binding: plugins/agt-gateway/overlay/t5.yaml, moved out of this file
   # verbatim). The first point (the harness permission chain) is
   # harness-intrinsic and stays in the base.

@@ -1,7 +1,7 @@
 # OpenClaw T4–T6 capability investigation
 
 **Status: C1, C3, and the MCP tool-id naming are CONFIRMED from the official
-docs (docs2.openclaw.ai + the docs shipped in the pinned image,
+docs (docs2.openclaw.ai + the docs bundled in the pinned image,
 `ghcr.io/openclaw/openclaw@sha256:6cb72e1…`, extracted locally — `/app/docs`).
 C2 is strongly indicated; ONE live check remains (does `/tools/invoke` fire
 `before_tool_call`?), with the check procedure below.**

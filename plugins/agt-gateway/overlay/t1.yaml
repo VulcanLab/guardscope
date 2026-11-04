@@ -2,7 +2,7 @@
 # design T1 (DESIGN.md 7): the service definition of the gateway slot, moved
 # verbatim out of compose/t1.yaml (the base) into the control's binding
 # bundle. Every fixture with a control slot is a placeholder base + a
-# control-binding overlay; this shipped binding is expressed exactly like a
+# control-binding overlay; this bundled binding is expressed exactly like a
 # third party's, nothing is special-cased for it.
 #
 # Merged bring-up (the base comes FIRST — the relative build context below
@@ -16,7 +16,7 @@
 # fails loudly without this overlay. The slot declaration lives in
 # compose/slots/t1.yaml (framework-side sidecar data, read by the overlay
 # validator; compose rejects unknown top-level keys, so the base stays pure
-# compose). The deployed policy this binding ships is gateway/policy.yaml
+# compose). The deployed policy this binding carries is gateway/policy.yaml
 # (the design's default; the enforcement_config component of the fixture
 # fingerprint, DESIGN.md 10).
 

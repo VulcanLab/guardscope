@@ -22,7 +22,7 @@
 # This file is the BASE of the t1 fixture (DESIGN.md 7): the full design
 # structure (networks, targets, harness services, sensor profile, log
 # volumes) with the gateway SLOT declared but the control service ABSENT.
-# The control arrives as a binding overlay merged on top (the shipped
+# The control arrives as a binding overlay merged on top (the bundled
 # binding: plugins/agt-gateway/overlay/t1.yaml, expressed exactly like a
 # third party's). The base alone is NOT a validatable unit: the harness
 # services below depend on the slot's gateway service, and `docker compose
@@ -71,7 +71,7 @@ services:
 
   # gateway: the design's control SLOT (compose/slots/t1.yaml). The control
   # service itself is ABSENT from this base: it arrives as a binding overlay
-  # (the shipped binding: plugins/agt-gateway/overlay/t1.yaml, whose gateway
+  # (the bundled binding: plugins/agt-gateway/overlay/t1.yaml, whose gateway
   # definition moved out of this file verbatim). The harness services below
   # depend on the slot service, so the base alone fails docker compose
   # validation loudly — base+overlay is the validatable unit.

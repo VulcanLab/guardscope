@@ -60,7 +60,7 @@ seeds the shim pid.)
 4. Block rules need BPF-LSM active. Ubuntu-family kernels: add `bpf` to
    the `lsm=` boot parameter in /etc/default/grub.d/
    50-cloudimg-settings.cfg and reboot (CONFIG_BPF_LSM=y is already set
-   in -aws kernels). AL2023 ships with bpf active by default.
+   in -aws kernels). AL2023 comes with bpf active by default.
 5. Commit bb89c77 (master, 2026-10-16) tested; crate 0.1.8 pinned binary
    re-verified on 6.17 — the existing target pin does not need a rebuild.
 

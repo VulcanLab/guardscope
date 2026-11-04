@@ -9,7 +9,7 @@
 # mock harness. This file is the BASE: the topology is compose/t3.yaml
 # verbatim minus the pi/openclaw harness services MINUS the gateway control
 # service (container names re-prefixed, project distinct); the gateway SLOT
-# is declared but the control arrives as a binding overlay (the shipped
+# is declared but the control arrives as a binding overlay (the bundled
 # binding: plugins/agt-gateway/overlay/t3-mock.yaml). The base alone is NOT
 # a validatable unit (the mock-harness and egress-jail services depend on
 # the slot's gateway service); base+overlay is. The default-deny egress
@@ -88,7 +88,7 @@ services:
     restart: unless-stopped
 
   # gateway: the design's control SLOT (compose/slots/t3.yaml), ABSENT from
-  # this base — it arrives as a binding overlay (the shipped binding:
+  # this base — it arrives as a binding overlay (the bundled binding:
   # plugins/agt-gateway/overlay/t3-mock.yaml, moved out of this file
   # verbatim; both tool classes routed behind it, the T3 policy).
 

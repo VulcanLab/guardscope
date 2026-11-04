@@ -39,7 +39,7 @@
 #
 # This file is the BASE of the t2 fixture (DESIGN.md 7): the full design
 # structure with the gateway SLOT declared but the control service ABSENT;
-# the control arrives as a binding overlay merged on top (the shipped
+# the control arrives as a binding overlay merged on top (the bundled
 # binding: plugins/agt-gateway/overlay/t2.yaml, expressed exactly like a
 # third party's). The base alone is NOT a validatable unit (the harness and
 # egress-jail services depend on the slot's gateway service; docker compose
@@ -92,7 +92,7 @@ services:
     restart: unless-stopped
 
   # gateway: the design's control SLOT (compose/slots/t2.yaml), ABSENT from
-  # this base — it arrives as a binding overlay (the shipped binding:
+  # this base — it arrives as a binding overlay (the bundled binding:
   # plugins/agt-gateway/overlay/t2.yaml, moved out of this file verbatim).
 
   net-peer:

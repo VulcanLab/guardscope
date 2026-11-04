@@ -6,7 +6,7 @@ Audience: an engineer whose control product (gateway, monitor, policy engine) wr
 
 ## 1. What a shim is and what it is for
 
-Your control emits decisions in its own format. A shim is a small translator you write: it turns each vendor log line into one `decision-record/1` record (`framework/schemas/decision-record/1.schema.json`). The framework never trusts the translation: it validates every record against the schema (the L1 run, `framework/conformance.py`) and reconciles them against kernel-level ground truth at measurement time. The shipped reference example is the v0 AuditEntry reader-side mapping in `framework/records.py` (`audit_entry_to_decision_record`): it parses the gateway's `decisions.jsonl` into standard records, marks them `record_source: "ingested"`, and carries provenance back to the original line.
+Your control emits decisions in its own format. A shim is a small translator you write: it turns each vendor log line into one `decision-record/1` record (`framework/schemas/decision-record/1.schema.json`). The framework never trusts the translation: it validates every record against the schema (the L1 run, `framework/conformance.py`) and reconciles them against kernel-level ground truth at measurement time. The bundled reference example is the v0 AuditEntry reader-side mapping in `framework/records.py` (`audit_entry_to_decision_record`): it parses the gateway's `decisions.jsonl` into standard records, marks them `record_source: "ingested"`, and carries provenance back to the original line.
 
 ## 2. The record you must produce
 
@@ -46,7 +46,7 @@ Required fields, and where they typically come from in a vendor log:
 | `ts` | RFC3339 with milliseconds; never an ordering key. The run manifest's measurement window decides which records count (C2): it scopes out lines from a previous run that leaked into the log volume. Map the vendor timestamp faithfully. |
 | `enforcement_point` | `{slot_id, product, product_version}`: your product's name/version and the slot it occupies. |
 | `producer` | `{plugin, plugin_version, record_source}`; a shim emits `record_source: "ingested"`. |
-| `action_class` | One of the six classes: `stdio_tool_call`, `http_tool_call`, `direct_network`, `process_spawn`, `file_write`, `credential_access`. Classify by what actually happened. The schema has no null here: when your product does not distinguish classes, derive the class from the tool/protocol the way the shipped v0 mapping does (a routing table plus a declared default). A wrong class puts decisions in the wrong grid row; derive it, do not guess. |
+| `action_class` | One of the six classes: `stdio_tool_call`, `http_tool_call`, `direct_network`, `process_spawn`, `file_write`, `credential_access`. Classify by what actually happened. The schema has no null here: when your product does not distinguish classes, derive the class from the tool/protocol the way the bundled v0 mapping does (a routing table plus a declared default). A wrong class puts decisions in the wrong grid row; derive it, do not guess. |
 | `protocol`, `tool` | `mcp` / `http` / `stdio`; the tool name. For HTTP, also the optional `method` and `path` when known (the v0 mapping fills them from the gateway routing table). |
 | `target` | Structured `{kind, value, digest?, note?}`; hashed where sensitive (the convention: `kind: "digest"` with the digest in `value`). |
 | `parameters_digest` | sha256 over canonical JSON of the redacted parameters; `framework.records.parameters_digest()` computes it. |
@@ -74,7 +74,7 @@ The evidence ceiling for translated records (DESIGN.md 3, 9):
 - **prevented: reachable through a shim.** A deny record in a translated
   log, plus the C6 check's kernel-verified absence of the action's effect,
   grounds `prevented`; a deny without action ids is attributed to its spec
-  action by target identity (the same priority order the shipped v0 mapping uses).
+  action by target identity (the same priority order the bundled v0 mapping uses).
   What native emission adds is id-based attribution (the correlation
   carriers) and the fidelity evidence, not `prevented` itself.
 
@@ -136,11 +136,11 @@ The golden set's lines must be one format: the v0 AuditEntry shape or decision-r
 | `C4-inspected-only` | A decision maps to a class the design does not inspect. |
 | `L1-outcomes` | The derived per-class outcomes differ from the expected outcomes. |
 
-A `pass` verdict is deterministic: the same inputs produce a byte-identical verdict. It carries its own registry key components (DESIGN.md 11): `plugin_id`, `plugin_version`, `contract_version`, `framework_line`, `suite_version`, and `golden_fixture_hash`; a change to any of them expires the verdict. Honesty note: with no framework CI yet, a recorded verdict is open-tier and self-attested (the shipped example, `registry/open/agt-gateway.json`, records the same limitation).
+A `pass` verdict is deterministic: the same inputs produce a byte-identical verdict. It carries its own registry key components (DESIGN.md 11): `plugin_id`, `plugin_version`, `contract_version`, `framework_line`, `suite_version`, and `golden_fixture_hash`; a change to any of them expires the verdict. Honesty note: with no framework CI yet, a recorded verdict is open-tier and self-attested (the bundled example, `registry/open/agt-gateway.json`, records the same limitation).
 
 ## 6. The upgrade path (native emission)
 
-The stronger path: emit `decision-record/1` directly from your product (`record_source: "native"`, no translation step) and echo the correlation carriers: `io.inspection/action_id` and `io.inspection/attempt` in the MCP `tools/call` `_meta`, or the `x-inspection-action-id` / `x-inspection-attempt` HTTP headers. The shipped gateway does both (a native `decision-records.jsonl` stream alongside its v0 log).
+The stronger path: emit `decision-record/1` directly from your product (`record_source: "native"`, no translation step) and echo the correlation carriers: `io.inspection/action_id` and `io.inspection/attempt` in the MCP `tools/call` `_meta`, or the `x-inspection-action-id` / `x-inspection-attempt` HTTP headers. The bundled gateway does both (a native `decision-records.jsonl` stream alongside its v0 log).
 
 Native emission unlocks:
 

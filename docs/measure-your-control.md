@@ -21,7 +21,7 @@ sensor additionally needs a supported kernel family.
 
 ## 2. Register your control as a plugin
 
-Ship a capability manifest at `plugins/<your-id>/manifest.json`, validated
+Provide a capability manifest at `plugins/<your-id>/manifest.json`, validated
 against `framework/schemas/capabilities-manifest/1.schema.json`. Minimum for
 `kind: "control"` (the loader, `framework/contracts.py`, enforces the
 per-kind fields):
@@ -55,7 +55,7 @@ per-kind fields):
 - Claims are never trusted. `correlation` claims
   (`echoes_meta`/`echoes_header`) stay false until a live fidelity check
   verifies them and publishes measured flags to `plugins/<id>/fidelity.json`.
-  The shipped reference (`plugins/agt-gateway/manifest.json`) follows the
+  The bundled reference (`plugins/agt-gateway/manifest.json`) follows the
   same rule.
 
 ## 3. Bind it into a design: the overlay
@@ -67,7 +67,7 @@ harness) plus your control-binding overlay:
 fixture). The slot's requirements live in the framework-side sidecar
 `compose/slots/<design>.yaml`: the compose service name you must define,
 the slot's network, the decision-log volume, the deployed policy artifact.
-The shipped overlays under `plugins/agt-gateway/overlay/` are the reference
+The bundled overlays under `plugins/agt-gateway/overlay/` are the reference
 examples.
 
 The on-matrix validator (`framework/overlay.py`, `validate_overlay`) checks
@@ -86,7 +86,7 @@ four rules:
 
 Violations do not fail you: the run is flagged `off_matrix` as a custom
 fixture, measured at full fidelity, with grid placement provisional. A
-supported design that ships no overlay, on the other hand, is a load-time
+supported design without an overlay, on the other hand, is a load-time
 hard error naming the missing file.
 
 Merged bring-up is plain compose file merge, base FIRST (the overlay's
@@ -104,7 +104,7 @@ Two paths:
 - **The shim path**: translate your product's log into
   `decision-record/1`, one record per decision. The full contract, the
   field-by-field mapping, and the L1 verification run are in
-  `docs/shim-guide.md`. The shipped reference shim is the v0 AuditEntry
+  `docs/shim-guide.md`. The bundled reference shim is the v0 AuditEntry
   reader-side mapping in `framework/records.py`.
 - **Native emission**: emit `decision-record/1` directly
   (`decision-records.jsonl`) and echo the correlation carriers

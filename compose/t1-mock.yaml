@@ -9,7 +9,7 @@
 # harness. This file is the BASE: the http-endpoint, mcp-http, and net-peer
 # services are compose/t1.yaml verbatim (container names re-prefixed,
 # project distinct) and the gateway SLOT is declared but the control
-# service ABSENT — it arrives as a control-binding overlay (the shipped
+# service ABSENT — it arrives as a control-binding overlay (the bundled
 # binding: plugins/agt-gateway/overlay/t1-mock.yaml). The base alone is NOT
 # a validatable unit (the mock-harness service depends on the slot's
 # gateway service); base+overlay is.
@@ -62,7 +62,7 @@ services:
     restart: unless-stopped
 
   # gateway: the design's control SLOT (compose/slots/t1.yaml), ABSENT from
-  # this base — it arrives as a binding overlay (the shipped binding:
+  # this base — it arrives as a binding overlay (the bundled binding:
   # plugins/agt-gateway/overlay/t1-mock.yaml, moved out of this file
   # verbatim).
 
