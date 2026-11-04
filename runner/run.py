@@ -585,14 +585,28 @@ def collect_executor_artifacts(out_dir: Path, executor_dir: Path,
     host's staging file is PERSISTENT across runs — an unfiltered append
     would merge a previous run's acceptances into this run's stream.
     run_id defaults to the run dir's name (run_one and the collect-remote
-    CLI pass it explicitly).
+    CLI pass it explicitly). A record from a different run is counted in
+    records_skipped_other_run, never appended.
 
-    The executor records are APPENDED to whatever the origin side wrote
-    (run_one copies the replay volume's stream first), so the collection
-    happens once per run: it is not idempotent (a manual collect-remote
-    re-run appends twice). Returns the summary written to
-    executor-collection.json; a missing executor dir raises (the env var
-    pointing nowhere is a configuration mistake, never a silent skip).
+    The merge is IDEMPOTENT: a record already present in the run's
+    delegation-records.jsonl (same record_id) is skipped and counted in
+    records_already_present, so calling this twice — run_one's automatic
+    collection (GUARDSCOPE_EXECUTOR_ARTIFACTS) followed by a manual
+    collect-remote pull — merges each far record exactly once.
+
+    DEPLOYMENT REQUIREMENT: the automatic collection only happens when
+    GUARDSCOPE_EXECUTOR_ARTIFACTS names the pulled executor-artifacts
+    directory at run time (run_one reads it once, right after the
+    origin-side stream is copied into the run dir). The existing remote
+    runs' evidence has no executor-collection.json anywhere precisely
+    because the variable was not set during those live runs — the
+    records were merged by hand afterwards, which is what produced the
+    stale cross-run contamination. Set the variable for every two-host
+    run; the collect-remote subcommand remains for post-run pulls.
+
+    Returns the summary written to executor-collection.json; a missing
+    executor dir raises (the env var pointing nowhere is a configuration
+    mistake, never a silent skip).
     """
     out_dir = Path(out_dir)
     executor_dir = Path(executor_dir)
@@ -610,7 +624,18 @@ def collect_executor_artifacts(out_dir: Path, executor_dir: Path,
     #    persists across runs; the run id selects this run's acceptances)
     src_records = executor_dir / EXECUTOR_RECORDS_NAME
     if src_records.is_file():
-        kept, skipped_other_run = [], 0
+        dst_records = out_dir / EXECUTOR_RECORDS_NAME
+        # the already-merged record ids (idempotence: a second call — or
+        # run_one's automatic collection followed by a manual
+        # collect-remote pull — must not append a record twice)
+        present_ids: set = set()
+        if dst_records.is_file():
+            for line in dst_records.read_text(encoding="utf-8").splitlines():
+                try:
+                    present_ids.add(json.loads(line).get("record_id"))
+                except ValueError:
+                    continue
+        kept, skipped_other_run, already_present = [], 0, 0
         for line in src_records.read_text(encoding="utf-8").splitlines():
             if not line.strip():
                 continue
@@ -625,15 +650,19 @@ def collect_executor_artifacts(out_dir: Path, executor_dir: Path,
             if rec.get("run_id") != run_id:
                 skipped_other_run += 1
                 continue
+            if rec.get("record_id") in present_ids:
+                already_present += 1
+                continue
             kept.append(line)
         summary["records_skipped_other_run"] = skipped_other_run
+        summary["records_already_present"] = already_present
         if kept:
-            with open(out_dir / EXECUTOR_RECORDS_NAME, "a",
+            with open(dst_records, "a",
                       encoding="utf-8") as f:
                 f.write("".join(l + "\n" for l in kept))
             summary["records_merged"] = len(kept)
             summary["artifacts"]["delegation-records"] = str(
-                out_dir / EXECUTOR_RECORDS_NAME)
+                dst_records)
     # 2. the far machine's OWN kernel observations: retained as separate
     #    artifacts, never reconciled into this (origin-host) run's counts
     src_events = executor_dir / EXECUTOR_TRACEE_NAME
@@ -835,7 +864,7 @@ def assemble_sensorless(spec_path: Path, profile: dict, replay: dict,
         coverage_report = cov_mod.compute(
             spec, decisions, parse_problems, design,
             (int(w["start"]), int(w["end"])) if w else None,
-            window_tolerance_ns)
+            window_tolerance_ns, replay=replay)
         pinned["gateway_package"] = versions.get("GATEWAY_PACKAGE", "unknown")
         pinned["gateway_package_version"] = versions.get(
             "GATEWAY_PACKAGE_VERSION", "unknown")

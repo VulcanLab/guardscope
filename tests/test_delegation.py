@@ -41,9 +41,19 @@ from framework.delegation import (  # noqa: E402
     AMBIGUOUS, ATTRIBUTED, UNRESOLVED, build_chains,
     first_break_hop, load_delegation_records, trace_back)
 
+from datetime import datetime, timezone
+
+
+def _iso_ns(ts: str) -> int:
+    return int(datetime.fromisoformat(ts.replace("Z", "+00:00"))
+               .timestamp() * 1_000_000_000)
+
+
 RID = "01ARZ3NDEKTSV4RRFFQ69G5FAV"          # a well-formed ULID
 RID2 = "01ARZ3NDEKTSV4RRFFQ69G5FAW"
 RID3 = "01ARZ3NDEKTSV4RRFFQ69G5FAZ"
+SEND_TS = "2026-11-02T10:00:00.000Z"       # the sent record's default ts
+SEND_NS = _iso_ns(SEND_TS)
 
 
 def rec(did, **kw):
@@ -90,7 +100,10 @@ def write(tmp_path, records, name="delegation-records.jsonl"):
 
 
 def effect(**kw):
-    e = {"ts_epoch_ns": kw.pop("ts_epoch_ns", 0)}
+    # realistic epochs: the fallback matches the sent record's RFC3339
+    # ts (1 ms after the send by default) — effects near epoch zero
+    # used to qualify only because the record-side read came back as 0
+    e = {"ts_epoch_ns": kw.pop("ts_epoch_ns", SEND_NS + 1_000_000)}
     e.update(kw)
     return e
 
@@ -184,7 +197,7 @@ def test_cycle_refused():
 def test_exact_echo_attributes_with_no_guessing():
     records = [rec(RID), accepted(RID)]
     t = build_chains(records)
-    res = trace_back([effect(delegation_id=RID, ts_epoch_ns=NS)], t)
+    res = trace_back([effect(delegation_id=RID)], t)
     assert res[0]["status"] == ATTRIBUTED
     assert res[0]["method"] == "id-echo"
     assert res[0]["chain"] == [RID]
@@ -193,7 +206,7 @@ def test_exact_echo_attributes_with_no_guessing():
 def test_exactly_one_live_candidate_attributes_labeled():
     records = [rec(RID, from_actor="pi-root"), accepted(RID)]
     t = build_chains(records)
-    res = trace_back([effect(actor="pi-root", ts_epoch_ns=NS)], t)
+    res = trace_back([effect(actor="pi-root")], t)
     assert res[0]["status"] == ATTRIBUTED
     assert res[0]["method"] == "actor-window"   # the labeled fallback
     assert res[0]["chain"] == [RID]
@@ -217,7 +230,10 @@ def test_two_live_candidates_refuse_the_answer():
          "carrier": "env"},
     ]
     t = build_chains(records)
-    res = trace_back([effect(actor="pi-root", ts_epoch_ns=NS)], t)
+    # the effect lands 600 ms after the first send — inside the window of
+    # BOTH hand-offs (the sends are 500 ms apart) and AFTER both
+    res = trace_back([effect(actor="pi-root",
+                             ts_epoch_ns=SEND_NS + 600_000_000)], t)
     assert res[0]["status"] == AMBIGUOUS
     assert sorted(res[0]["candidates"]) == sorted([RID, RID2])
     assert res[0]["chain"] == []          # refused: no chain is claimed
@@ -225,13 +241,13 @@ def test_two_live_candidates_refuse_the_answer():
 
 def test_zero_candidates_unresolved():
     t = build_chains([rec(RID), accepted(RID)])
-    res = trace_back([effect(actor="nobody", ts_epoch_ns=NS)], t)
+    res = trace_back([effect(actor="nobody")], t)
     assert res[0]["status"] == UNRESOLVED
 
 
 def test_unknown_echo_keeps_the_id_as_a_finding():
     t = build_chains([rec(RID), accepted(RID)])
-    res = trace_back([effect(delegation_id=RID2, ts_epoch_ns=NS)], t)
+    res = trace_back([effect(delegation_id=RID2)], t)
     assert res[0]["status"] == UNRESOLVED
     assert res[0]["method"] == "id-echo-unknown"
 
@@ -243,12 +259,60 @@ def test_the_traveling_record_is_a_policy_not_new_machinery():
     records = [rec(RID), accepted(RID)]
     t = build_chains(records)
     with_echo = trace_back(
-        [effect(delegation_id=RID, ts_epoch_ns=NS)], t)[0]
+        [effect(delegation_id=RID)], t)[0]
     without_echo = trace_back(
-        [effect(actor="pi-root", ts_epoch_ns=NS)], t)[0]
+        [effect(actor="pi-root")], t)[0]
     assert with_echo["status"] == without_echo["status"] == ATTRIBUTED
     assert with_echo["method"] == "id-echo"
     assert without_echo["method"] == "actor-window"
+
+
+# --- the actor-window fallback's timestamp handling (regressions) --------
+
+def test_fallback_reads_the_schema_valid_rfc3339_ts():
+    """The sent record carries RFC3339 `ts` (delegation-record/1 forbids
+    `ts_epoch_ns`); a same-actor effect 1 ms later must attribute via the
+    actor-window fallback. The fallback used to read the forbidden field,
+    get zero for every real record, and return unresolved."""
+    records = [rec(RID, from_actor="pi-root", ts=SEND_TS), accepted(RID)]
+    t = build_chains(records)
+    res = trace_back(
+        [effect(actor="pi-root", ts_epoch_ns=SEND_NS + 1_000_000)], t)
+    assert res[0]["status"] == ATTRIBUTED
+    assert res[0]["method"] == "actor-window"
+    assert res[0]["chain"] == [RID]
+
+
+def test_fallback_accepts_an_rfc3339_effect_ts_too():
+    """An effect record may carry the RFC3339 string instead of the raw
+    epoch ns; both parse to the same join."""
+    records = [rec(RID, from_actor="pi-root", ts=SEND_TS), accepted(RID)]
+    t = build_chains(records)
+    res = trace_back(
+        [effect(actor="pi-root", ts="2026-11-02T10:00:00.001Z")], t)
+    assert res[0]["status"] == ATTRIBUTED
+    assert res[0]["method"] == "actor-window"
+
+
+def test_effect_before_the_send_is_never_matched():
+    """Causal direction: an effect BEFORE the hand-off was sent cannot be
+    that hand-off's effect — the old abs()-distance join admitted it."""
+    records = [rec(RID, from_actor="pi-root", ts=SEND_TS), accepted(RID)]
+    t = build_chains(records)
+    res = trace_back(
+        [effect(actor="pi-root", ts_epoch_ns=SEND_NS - 1_000_000)], t)
+    assert res[0]["status"] == UNRESOLVED
+    assert res[0]["candidates"] == []
+
+
+def test_unparseable_effect_time_is_unresolved_not_guessed():
+    """An effect with no usable timestamp cannot join by time at all:
+    zero candidates, unresolved — never the old zero-vs-zero match."""
+    records = [rec(RID, from_actor="pi-root", ts=SEND_TS), accepted(RID)]
+    t = build_chains(records)
+    res = trace_back([effect(actor="pi-root", ts_epoch_ns=None)], t)
+    assert res[0]["status"] == UNRESOLVED
+    assert res[0]["candidates"] == []
 
 
 # --- the depth-decay analysis ------------------------------------------------------
@@ -263,7 +327,7 @@ def test_first_break_hop():
             stream_id="child-a", seq=2),
     ]
     t = build_chains(records)
-    effects = [effect(delegation_id=RID, ts_epoch_ns=NS)]
+    effects = [effect(delegation_id=RID)]
     res = trace_back(effects, t)
     fb = first_break_hop(res, t)
     assert fb[RID] == {"deepest_hand_off": 2, "deepest_traced": 1,
@@ -278,8 +342,8 @@ def test_fully_traced_chain_has_no_break():
     ]
     t = build_chains(records)
     res = trace_back(
-        [effect(delegation_id=RID, ts_epoch_ns=NS),
-         effect(delegation_id=RID2, ts_epoch_ns=2 * NS)], t)
+        [effect(delegation_id=RID),
+         effect(delegation_id=RID2, ts_epoch_ns=SEND_NS + 2 * NS)], t)
     fb = first_break_hop(res, t)
     assert fb[RID]["first_break_hop"] is None
     assert fb[RID]["deepest_traced"] == 2

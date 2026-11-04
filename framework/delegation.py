@@ -50,6 +50,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 
 import jsonschema
@@ -198,6 +199,30 @@ AMBIGUOUS = "ambiguous"
 UNRESOLVED = "unresolved"
 
 
+def _ts_to_epoch_ns(value) -> int | None:
+    """A delegation timestamp -> epoch ns, or None when unusable.
+
+    delegation-record/1 carries RFC3339 ms in `ts` (the schema forbids
+    `ts_epoch_ns`: additionalProperties false), so the record side is
+    always the string; an effect record may carry either the RFC3339
+    string or a raw epoch-ns integer (the replay rows' ts_epoch_ns).
+    Never a nearest-timestamp guess on an unparseable value: None means
+    the time-window join cannot run."""
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return int(value)          # epoch ns (ts_epoch_ns)
+    if isinstance(value, str):
+        try:
+            dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return int(dt.timestamp() * 1e9)
+    return None
+
+
 def trace_back(effects: list[dict], table: ChainTable,
                window_ns: int = 1_000_000_000) -> list[dict]:
     """For every effect record, where it traces back to.
@@ -227,7 +252,9 @@ def trace_back(effects: list[dict], table: ChainTable,
     ATTRIBUTED; everything else is reported by its status."""
     results = []
     for e in effects:
-        ts = int(e.get("ts_epoch_ns") or 0)
+        ts = _ts_to_epoch_ns(e.get("ts_epoch_ns"))
+        if ts is None:
+            ts = _ts_to_epoch_ns(e.get("ts"))
         echo = e.get("delegation_id")
         if echo is not None:
             if echo in table.by_id:
@@ -244,12 +271,19 @@ def trace_back(effects: list[dict], table: ChainTable,
             continue
         actor = e.get("actor")
         cands: list[str] = []
-        if actor:
+        if actor and ts is not None:
             for did, r in table.by_id.items():
-                send_ns = int(r.get("ts_epoch_ns") or 0)
+                # the sent record's RFC3339 ts (the schema-forbidden
+                # ts_epoch_ns read zero for every real record before this)
+                send_ns = _ts_to_epoch_ns(r.get("ts"))
+                if send_ns is None:
+                    continue
+                # causal direction: an effect BEFORE the hand-off was sent
+                # can never be that hand-off's effect; the window bounds
+                # only the send-to-effect distance
                 if (r.get("from_actor") == actor
                         or table.accepted.get(did) == actor):
-                    if ts and abs(ts - send_ns) <= window_ns:
+                    if send_ns < ts <= send_ns + window_ns:
                         cands.append(did)
         if len(cands) == 1:
             results.append({

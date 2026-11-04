@@ -1,0 +1,81 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="770" viewBox="0 0 1100 770" font-family="Helvetica, Arial, sans-serif">
+<defs>
+<marker id="ah" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#22303C"/></marker>
+<marker id="ahB" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#009ADE"/></marker>
+<marker id="ahP" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#AF58BA"/></marker>
+<marker id="ahK" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#5D6B76"/></marker>
+</defs>
+<rect x="0" y="0" width="1100" height="770" fill="#ffffff"/>
+<rect x="60" y="524" width="780" height="176" rx="10" fill="#A0B1BA" fill-opacity="0.18" stroke="#A0B1BA" stroke-width="2.5"/>
+<text x="450" y="692" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="15" font-weight="700" fill="#5D6B76">Host kernel · eBPF sensor</text>
+<path d="M462,148 C 640,55 835,60 848,185 C 842,260 850,380 864,474" fill="none" stroke="#009ADE" stroke-width="2.0" stroke-dasharray="7,5" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#ahB)"/>
+<path d="M567,420 C 680,430 780,480 852,505" fill="none" stroke="#AF58BA" stroke-width="2.0" stroke-dasharray="7,5" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#ahP)"/>
+<path d="M478,622 C 640,695 790,690 852,512" fill="none" stroke="#5D6B76" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#ahK)"/>
+<path d="M 403.0,172.0 L 130.0,516.0" fill="none" stroke="#22303C" stroke-width="2.0" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#ah)"/>
+<path d="M 415.0,172.0 L 250.0,516.0" fill="none" stroke="#22303C" stroke-width="2.0" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#ah)"/>
+<path d="M 429.0,172.0 L 370.0,516.0" fill="none" stroke="#22303C" stroke-width="2.0" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#ah)"/>
+<path d="M 441.0,172.0 L 540.0,516.0" fill="none" stroke="#22303C" stroke-width="2.0" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#ah)"/>
+<path d="M 453.0,172.0 L 700.0,516.0" fill="none" stroke="#22303C" stroke-width="2.0" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#ah)"/>
+<path d="M 465.0,172.0 L 800.0,516.0" fill="none" stroke="#22303C" stroke-width="2.0" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#ah)"/>
+<text x="130" y="560" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#22303C">in-process</text>
+<text x="250" y="560" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#22303C">subprocess</text>
+<text x="370" y="560" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#22303C">net egress</text>
+<text x="540" y="560" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#22303C">tool-server</text>
+<text x="700" y="560" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#22303C">delegation</text>
+<text x="800" y="560" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#22303C">deferred</text>
+<rect x="463" y="406" width="104" height="26" rx="4" fill="#AF58BA" fill-opacity="0.16" stroke="#AF58BA" stroke-width="2.5"/>
+<rect x="474" y="424" width="14" height="84" rx="3" fill="#AF58BA" fill-opacity="0.3" stroke="#AF58BA" stroke-width="2.5"/>
+<rect x="542" y="424" width="14" height="84" rx="3" fill="#AF58BA" fill-opacity="0.3" stroke="#AF58BA" stroke-width="2.5"/>
+<text x="515" y="396" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="14.5" font-weight="700" fill="#22303C">Runtime control</text>
+<path d="M 60,105 L 84,105 L 94,115 L 94,149 L 60,149 Z" fill="#F28522" fill-opacity="0.16" stroke="#F28522" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 84,105 L 84,115 L 94,115" fill="none" stroke="#F28522" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 66.0,123.0 L 88.0,123.0" fill="none" stroke="#F28522" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 66.0,131.0 L 88.0,131.0" fill="none" stroke="#F28522" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 66.0,139.0 L 88.0,139.0" fill="none" stroke="#F28522" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="77" y="180" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="13.5" font-weight="400" fill="#22303C">fixed workload</text>
+<path d="M 98.0,127.0 L 390.0,147.0" fill="none" stroke="#22303C" stroke-width="2.0" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#ah)"/>
+<rect x="398.0" y="128.0" width="64" height="44" rx="10" fill="#009ADE" fill-opacity="0.16" stroke="#009ADE" stroke-width="2.5"/>
+<path d="M 430.0,128.0 L 430.0,112.0" fill="none" stroke="#009ADE" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="430" cy="108.0" r="3.5" fill="#009ADE" fill-opacity="1.0" stroke="#009ADE" stroke-width="1.5"/>
+<circle cx="418" cy="147" r="4.5" fill="#22303C" fill-opacity="1.0" stroke="#22303C" stroke-width="1"/>
+<circle cx="442" cy="147" r="4.5" fill="#22303C" fill-opacity="1.0" stroke="#22303C" stroke-width="1"/>
+<path d="M 422.0,159.0 L 438.0,159.0" fill="none" stroke="#22303C" stroke-width="2.0" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="430" y="92" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="16.5" font-weight="700" fill="#22303C">Agent harness</text>
+<path d="M 400.0,612 Q 450,586.0 500.0,612 Q 450,638.0 400.0,612 Z" fill="#ffffff" fill-opacity="1.0" stroke="#5D6B76" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="450" cy="612" r="22.0" fill="#A0B1BA" fill-opacity="1.0" stroke="#5D6B76" stroke-width="1.5"/>
+<circle cx="450" cy="612" r="10.0" fill="#22303C" fill-opacity="1.0" stroke="#22303C" stroke-width="1"/>
+<circle cx="455.0" cy="606.0" r="3.5000000000000004" fill="#ffffff" fill-opacity="1.0" stroke="#ffffff" stroke-width="0.5"/>
+<rect x="860" y="200" width="220" height="245" rx="8" fill="#ffffff" fill-opacity="1.0" stroke="#5D6B76" stroke-width="1.5"/>
+<text x="970.0" y="226" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="14" font-weight="700" fill="#22303C">Coverage grid</text>
+<rect x="871" y="238" width="62" height="22" fill="#FF1F5B"/>
+<rect x="939" y="238" width="62" height="22" fill="#FF1F5B"/>
+<rect x="1007" y="238" width="62" height="22" fill="#00CD6C"/>
+<rect x="871" y="266" width="62" height="22" fill="#FF1F5B"/>
+<rect x="939" y="266" width="62" height="22" fill="#FF1F5B"/>
+<rect x="1007" y="266" width="62" height="22" fill="#00CD6C"/>
+<rect x="871" y="294" width="62" height="22" fill="#FF1F5B"/>
+<rect x="939" y="294" width="62" height="22" fill="#009ADE"/>
+<rect x="1007" y="294" width="62" height="22" fill="#00CD6C"/>
+<rect x="871" y="322" width="62" height="22" fill="#00CD6C"/>
+<rect x="939" y="322" width="62" height="22" fill="#00CD6C"/>
+<rect x="1007" y="322" width="62" height="22" fill="#00CD6C"/>
+<rect x="871" y="350" width="62" height="22" fill="#FF1F5B"/>
+<rect x="939" y="350" width="62" height="22" fill="#FF1F5B"/>
+<rect x="1007" y="350" width="62" height="22" fill="#00CD6C"/>
+<rect x="871" y="378" width="62" height="22" fill="#FF1F5B"/>
+<rect x="939" y="378" width="62" height="22" fill="#009ADE"/>
+<rect x="1007" y="378" width="62" height="22" fill="#00CD6C"/>
+<rect x="871" y="418" width="10" height="10" fill="#00CD6C"/>
+<text x="885" y="427" text-anchor="start" font-family="Helvetica, Arial, sans-serif" font-size="11.5" font-weight="400" fill="#22303C">checked</text>
+<rect x="946" y="418" width="10" height="10" fill="#FF1F5B"/>
+<text x="960" y="427" text-anchor="start" font-family="Helvetica, Arial, sans-serif" font-size="11.5" font-weight="400" fill="#22303C">bypassed</text>
+<rect x="1021" y="418" width="10" height="10" fill="#009ADE"/>
+<text x="1035" y="427" text-anchor="start" font-family="Helvetica, Arial, sans-serif" font-size="11.5" font-weight="400" fill="#22303C">prevented</text>
+<rect x="860" y="480" width="220" height="56" rx="8" fill="#FFC61E" fill-opacity="0.2" stroke="#FFC61E" stroke-width="2.5"/>
+<text x="970.0" y="514" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="16.5" font-weight="700" fill="#22303C">Reconciler</text>
+<path d="M 970.0,472.0 L 970.0,453.0" fill="none" stroke="#22303C" stroke-width="2.0" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#ah)"/>
+<path d="M 60.0,744.0 L 104.0,744.0" fill="none" stroke="#5D6B76" stroke-width="2.0" stroke-dasharray="7,5" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="112" y="748" text-anchor="start" font-family="Helvetica, Arial, sans-serif" font-size="12.5" font-weight="400" fill="#22303C">self-reported records</text>
+<path d="M 300.0,744.0 L 344.0,744.0" fill="none" stroke="#5D6B76" stroke-width="2.0" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="352" y="748" text-anchor="start" font-family="Helvetica, Arial, sans-serif" font-size="12.5" font-weight="400" fill="#22303C">kernel-observed events</text>
+</svg>

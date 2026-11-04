@@ -168,7 +168,8 @@ def assemble(spec_path: Path, profile: dict, replay: dict, mapped: list[dict],
         w = replay.get("window_epoch_ns") or {}
         coverage_report = cov_mod.compute(
             rec_mod.load_spec(spec_path), decisions, parse_problems, design,
-            (int(w["start"]), int(w["end"])) if w else None, window_tolerance_ns)
+            (int(w["start"]), int(w["end"])) if w else None, window_tolerance_ns,
+            replay=replay)
         pinned["gateway_package"] = versions.get("GATEWAY_PACKAGE", "unknown")
         pinned["gateway_package_version"] = versions.get(
             "GATEWAY_PACKAGE_VERSION", "unknown")

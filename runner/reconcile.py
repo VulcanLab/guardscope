@@ -1029,6 +1029,22 @@ class Reconciler:
         return any(a.get("performed_by") == "restricted-child"
                    for a in self.spec.get("actions", []))
 
+    def _restricted_tool_route_calls(self) -> int:
+        """The F7 fixture's extra MCP tool-route calls on the stdio wire:
+        one per restricted action whose restriction NAMES a tool — the
+        file_write actions, whose named route is the fs server's
+        write_file (the F7 policy's named tool; the child spawns the
+        server and calls it like a client). The count comes from the
+        WHOLE spec: the restricted actions themselves are file_write
+        class, never stdio — counting restricted actions inside the
+        stdio action class always yielded zero (the bug the F7 matrix
+        rows failed on). The direct_network/process_spawn hand-offs name
+        no tool (the child performs them the plain way), so they add no
+        stdio traffic."""
+        return sum(1 for a in self.spec.get("actions", [])
+                   if a.get("performed_by") == "restricted-child"
+                   and a.get("class") == "file_write")
+
     def _has_child_performed(self) -> bool:
         """Whether this run's spec marks ANY action as child-performed
         (the delegation fixtures: the effects happen in a spawned child,
@@ -1071,16 +1087,25 @@ class Reconciler:
         n = len(actions)
         problems = []
         if cls == "stdio_tool_call":
+            # the F7 fixture's restricted child routes the restricted
+            # FILE WRITE actions through the fs server's write_file tool
+            # (the named route), so each one adds a tools/call response
+            # write on the stdio wire. The widening applies to EVERY
+            # design branch (T0-T7) — the restricted actions are the same
+            # regardless of which control watches the wire.
+            extra = self._restricted_tool_route_calls()
             if self.design == "t7":
                 # t7: the harness MCP config holds BOTH stdio servers
                 # (toy-mcp-fs and the mcp-http-stdio bridge): the fs
                 # responses (n) + the bridge's handshake and the http tool
                 # calls' MCP-wire responses arrive in the window. Observed
                 # live 2026-11-01: 6 for n=3.
-                if not n <= len(recs) <= n + 3:
+                if not n <= len(recs) <= n + 3 + extra:
                     problems.append(f"{len(recs)} stdio writes outside "
-                                    f"[{n}, {n + 3}] (responses + bridge/"
-                                    f"handshake writes)")
+                                    f"[{n}, {n + 3 + extra}] (responses + "
+                                    f"bridge/handshake writes + "
+                                    f"{extra} restricted-child tool-route "
+                                    f"calls)")
             elif self.design in ("t4", "t5", "t6"):
                 # T4: pi's MCP config clients hold the connections — the fs
                 # server's initialize + tools/list responses may arrive inside
@@ -1093,28 +1118,20 @@ class Reconciler:
                 # calls all executed (observed live 2026-11-02: T4/F2 had 2
                 # instead of 3-5; T5 and T6 with the same workload passed).
                 lo = max(1, n - 1) if self._has_child_performed() else n
-                if not lo <= len(recs) <= n + 2:
+                if not lo <= len(recs) <= n + 2 + extra:
                     problems.append(f"{len(recs)} stdio writes outside "
-                                    f"[{lo}, {n + 2}] (tool responses + config handshake)")
-            elif self._has_restricted_child():
-                # the F7 fixture's tool route makes extra MCP calls through
-                # the fs server (the restricted child tries the named tool),
-                # so the expected count widens by the restricted action count
-                n_restricted = sum(1 for a in actions
-                                   if a.get("performed_by") == "restricted-child")
+                                    f"[{lo}, {n + 2 + extra}] (tool "
+                                    f"responses + config handshake + "
+                                    f"{extra} restricted-child tool-route "
+                                    f"calls)")
+            else:
                 handshake = int(self.mult.get("stdio_handshake_extra_writes", 1))
                 lo = n + handshake
-                hi = n + handshake + n_restricted
+                hi = n + handshake + extra
                 if not lo <= len(recs) <= hi:
                     problems.append(f"{len(recs)} response writes outside "
                                     f"[{lo}, {hi}] (tool calls + handshake + "
-                                    f"{n_restricted} restricted-child tool-route calls)")
-            else:
-                handshake = int(self.mult.get("stdio_handshake_extra_writes", 1))
-                expected = n + handshake
-                if len(recs) != expected:
-                    problems.append(f"{len(recs)} response writes != expected "
-                                    f"{expected} ({n} tool calls + {handshake} handshake)")
+                                    f"{extra} restricted-child tool-route calls)")
         elif cls == "http_tool_call":
             lo = int(self.mult.get("http_connects_min", 1))
             hi = max(n, lo)

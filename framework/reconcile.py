@@ -101,6 +101,15 @@ INSPECTED_CLASSES = {
     "t0": set(),  # bare harness: no enforcement point at all
 }
 
+# Mirrored from runner/reconcile.py.REMOTE_PERFORMERS: the F4/F5 remote
+# delegation fixtures' performed_by markings whose effects run on the
+# EXECUTOR host. A remote-performed action's effect happens on another
+# machine, so the origin host's kernel can never observe it: the t7
+# kernel join below excludes these actions (observed live 2026-11-04:
+# a remote-delegated /bin/sh spawn was credited to a local harness-
+# plumbing shell 660 ms before the measurement window).
+REMOTE_PERFORMERS = ("remote-tool-agent", "remote-agent")
+
 
 def ts_to_epoch_ns(ts) -> int | None:
     """AuditEntry timestamp -> epoch ns. Accepts epoch seconds (float/int,
@@ -126,6 +135,44 @@ def ts_to_epoch_ns(ts) -> int | None:
             return int(dt.timestamp() * 1e9)
         except ValueError:
             return None
+    return None
+
+
+def _replay_interval(row: dict) -> tuple[int, int] | None:
+    """One replay row's epoch interval (start, end), or None when the row
+    carries no usable interval.
+
+    The interval is the action's own execution span, NOT the run's window
+    tolerance: the t7 kernel join requires the observation inside this
+    span so a harness-plumbing event outside every action's span (a
+    cleanup shell before the window opens) cannot be swept into an
+    action by the ±1 s window tolerance.
+
+    Two row shapes exist: the mock harness writes both started_epoch_ns
+    and ended_epoch_ns; the pi/openclaw adapters write started_epoch_ns
+    plus a monotonic (started_ns, ended_ns) pair, and where the epoch
+    sample sits inside the span differs by adapter (the pi adapter
+    samples it at the span's end, the openclaw adapter at its start) —
+    both readings are covered by widening by the span's length, which
+    stays far tighter than the window tolerance.
+
+    None (fall back to the window tolerance, labeled) when the row is
+    absent, carries no epoch stamps, or ends in the terminal status
+    "submitted": a detached hand-off's effect happens after the replay
+    ended, so the row's span cannot bound it."""
+    if row.get("status") == "submitted":
+        return None
+    start, end = row.get("started_epoch_ns"), row.get("ended_epoch_ns")
+    if (isinstance(start, (int, float)) and not isinstance(start, bool)
+            and isinstance(end, (int, float)) and not isinstance(end, bool)):
+        return (int(min(start, end)), int(max(start, end)))
+    if isinstance(start, (int, float)) and not isinstance(start, bool):
+        started_ns, ended_ns = row.get("started_ns"), row.get("ended_ns")
+        if (isinstance(started_ns, (int, float))
+                and isinstance(ended_ns, (int, float))
+                and ended_ns > started_ns):
+            span = int(ended_ns - started_ns)
+            return (int(start) - span, int(start) + span)
     return None
 
 
@@ -177,17 +224,18 @@ def load_decisions(path: Path) -> tuple[list[dict], list[str]]:
 
 def _kernel_rows(spec, inspected, by_action, unaccounted, in_scope,
                  out_of_window, parse_problems, checks, design, window,
-                 lo, hi, prevented_classes):
+                 lo, hi, prevented_classes, notes=None, ambiguous=None):
     """The shared tail of compute() for the kernel-position branch (t7):
     per-action rows (the AuditEntry path builds `by_action` via tool
     routes; the kernel path joins class+target), then C3 and the per-class
     coverage. decision refs are the record seq (per-stream identity)."""
     actions = spec["actions"]
     rows = []
+    notes = notes or {}
     for a in actions:
         hits = by_action.get(a["id"], [])
         denied = any(e.get("allowed") is False for e in hits)
-        rows.append({
+        row = {
             "id": a["id"], "class": a["class"],
             "tool": (a.get("target") or ""),
             "crosses_enforcement_point": a["class"] in inspected,
@@ -199,7 +247,12 @@ def _kernel_rows(spec, inspected, by_action, unaccounted, in_scope,
             "decision_refs": [str(e.get("seq") or e.get("timestamp"))
                               for e in hits],
             "params_match": None,
-        })
+        }
+        if a["id"] in notes:
+            # the join labeled: these decisions matched inside the window
+            # tolerance, not inside the action's own replay interval
+            row["note"] = notes[a["id"]]
+        rows.append(row)
     missing = [r["id"] for r in rows
                if r["crosses_enforcement_point"] and not r["evaluated"]]
     checks.append({"id": "C3-evaluated",
@@ -236,6 +289,7 @@ def _kernel_rows(spec, inspected, by_action, unaccounted, in_scope,
             "in_window": len(in_scope),
             "out_of_window": len(out_of_window),
             "unaccounted": unaccounted,
+            "ambiguous": ambiguous or [],
             "parse_problems": parse_problems,
         },
         "checks": checks,
@@ -259,9 +313,15 @@ def _route_action(spec: dict) -> dict[tuple[str, str], list[str]]:
 
 def compute(spec: dict, decisions: list[dict], parse_problems: list[str],
             design: str, window: tuple[int, int] | None = None,
-            window_tolerance_ns: int = 1_000_000_000, prevented_classes: set | None = None) -> dict:
+            window_tolerance_ns: int = 1_000_000_000, prevented_classes: set | None = None,
+            replay: dict | None = None) -> dict:
     """Coverage report for one run. `window` is (start_ns, end_ns) from the
-    replay result; None counts every decision (no volume-persistence guard)."""
+    replay result; None counts every decision (no volume-persistence guard).
+    `replay` is the run's replay-result.json document: its per-action rows
+    carry each action's own execution span, which the t7 kernel join
+    requires (see _replay_interval); None or interval-less rows fall back
+    to the window tolerance, and every join made that way is labeled
+    `window-tolerance-match` on the action's coverage row."""
     if design not in INSPECTED_CLASSES:
         raise ValueError(f"unknown design {design!r} (known: "
                          f"{sorted(INSPECTED_CLASSES)})")
@@ -341,7 +401,29 @@ def compute(spec: dict, decisions: list[dict], parse_problems: list[str],
                     "http-endpoint": "172.28.0.11"}
         T7_INFRA_ENDPOINTS = {"127.0.0.11"}
 
-        def _kernel_match(a: dict, e: dict) -> bool:
+        # The join is class+target AND time: the observation must land
+        # inside the action's OWN replay interval (the replay result's
+        # per-action execution span), never merely inside the ±window
+        # tolerance — a harness-plumbing event outside every action's
+        # span (observed live 2026-11-04: the driver's cleanup shell
+        # 660 ms before the window opens, swept in by the 1 s tolerance
+        # and credited to a remote-delegated spawn) must not be able to
+        # become a check. An action whose row carries no usable interval
+        # falls back to the window tolerance and every join made that
+        # way is labeled on the action's coverage row.
+        intervals: dict[str, tuple[int, int] | None] = {}
+        for row in (replay or {}).get("results") or []:
+            if row.get("id") is not None:
+                intervals[row["id"]] = _replay_interval(row)
+        window_matches: set[str] = set()
+
+        def _remote(a: dict) -> bool:
+            # F4/F5 remote-performed actions: the effect happens on the
+            # EXECUTOR host — the origin's kernel cannot observe it, so
+            # the action can never be credited with a local observation
+            return a.get("performed_by") in REMOTE_PERFORMERS
+
+        def _target_match(a: dict, e: dict) -> bool:
             cls, tgt = a["class"], a.get("target") or ""
             # the credential actions carry the file:// scheme prefix
             # (trace schema); kernel targets are bare paths
@@ -367,13 +449,36 @@ def compute(spec: dict, decisions: list[dict], parse_problems: list[str],
                 return (a.get("args") or {}).get("path") == tv
             return False
 
+        def _kernel_match(a: dict, e: dict) -> bool:
+            if _remote(a) or not _target_match(a, e):
+                return False
+            iv = intervals.get(a["id"])
+            if iv is None:
+                # no usable interval (absent row, or a submitted
+                # hand-off whose effect happens after the replay ended):
+                # the window tolerance stands in, and the join is labeled
+                window_matches.add(a["id"])
+                return True
+            ts = ts_to_epoch_ns(e.get("timestamp"))
+            return iv[0] <= ts <= iv[1]
+
         by_action = {}
         expected_extras = []
         infra = []
         unaccounted = []
+        ambiguous = []
         for e in in_scope:
             hits = [a for a in spec["actions"]
                     if a["class"] in inspected and _kernel_match(a, e)]
+            if len(hits) > 1:
+                # two or more actions match: the answer is REFUSED — the
+                # same discipline as the delegation trace_back rules —
+                # never silently assigned to the first candidate
+                ambiguous.append({"tool_name": e.get("tool_name"),
+                                   "ts": e.get("timestamp"),
+                                   "target": e.get("target_value"),
+                                   "candidates": sorted(a["id"] for a in hits)})
+                continue
             if hits:
                 by_action.setdefault(hits[0]["id"], []).append(e)
                 continue
@@ -398,10 +503,13 @@ def compute(spec: dict, decisions: list[dict], parse_problems: list[str],
                                  "ts": e.get("timestamp"),
                                  "target": e.get("target_value")})
         cross_class = []
+        notes = {aid: "window-tolerance-match"
+                 for aid in by_action if aid in window_matches}
         check("C2-accounted", not unaccounted,
               f"{len(in_scope)} in-window kernel decisions, all mapped to "
               f"spec actions ({len(expected_extras)} expected-extras, "
-              f"effects of non-inspected actions; {len(infra)} infra)"
+              f"effects of non-inspected actions; {len(infra)} infra; "
+              f"{len(ambiguous)} ambiguous, refused)"
               if not unaccounted else
               f"{len(unaccounted)} in-window kernel decision(s) map to no "
               f"declared action instance: {unaccounted}")
@@ -411,7 +519,8 @@ def compute(spec: dict, decisions: list[dict], parse_problems: list[str],
         return _kernel_rows(spec, inspected, by_action, unaccounted,
                             in_scope, out_of_window, parse_problems,
                             checks, design, window, lo, hi,
-                            prevented_classes)
+                            prevented_classes, notes=notes,
+                            ambiguous=ambiguous)
     tool_decisions: dict[str, list[dict]] = {}
     unaccounted = []
     for e in in_scope:

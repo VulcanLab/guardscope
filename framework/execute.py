@@ -919,12 +919,23 @@ def _assemble_run_summary(descriptor: RunDescriptor, outcome: dict,
     window = outcome.get("window_epoch_ns")
     tolerance = _profile_window_tolerance(descriptor.harness)
     if records or outcome.get("coverage") is not None:
+        # the run's own replay rows feed the recompute too: the t7 kernel
+        # join must use the same per-action intervals the run's coverage
+        # used, or the consistency assertion compares two different joins
+        replay_doc = None
+        replay_path = Path(outcome["out_dir"]) / "replay-result.json"
+        if replay_path.is_file():
+            try:
+                replay_doc = json.loads(replay_path.read_text(
+                    encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                replay_doc = None
         recomputed = reconcile_lib.compute(
             spec,
             reconcile_lib.decision_records_to_log_entries(records),
             parse_problems, descriptor.design,
             (int(window["start"]), int(window["end"])) if window else None,
-            tolerance)
+            tolerance, replay=replay_doc)
         findings += [dict(check) for check in recomputed.get("checks") or []
                     if check.get("status") != "pass"]
         reported = outcome.get("coverage")

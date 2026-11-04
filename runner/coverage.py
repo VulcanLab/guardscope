@@ -56,11 +56,14 @@ def main() -> int:
     spec = rec_mod.load_spec(args.spec)
     decisions, problems = load_decisions(args.decisions)
     window = None
+    replay_doc = None
     if args.replay:
-        w = rec_mod.load_replay(args.replay).get("window_epoch_ns") or {}
+        replay_doc = rec_mod.load_replay(args.replay)
+        w = replay_doc.get("window_epoch_ns") or {}
         window = (int(w["start"]), int(w["end"]))
     report = compute(spec, decisions, problems, args.design, window,
-                     args.window_tolerance_ns)
+                     args.window_tolerance_ns,
+                     replay=replay_doc if args.replay else None)
 
     payload = json.dumps(report, indent=1, sort_keys=True) + "\n"
     if args.out:
