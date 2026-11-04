@@ -8,7 +8,9 @@ mismatches from first-class artifacts.
 | Target (dir) | Trace class | Runs as | Serves |
 |---|---|---|---|
 | `mcp-stdio/` | `stdio_tool_call` | harness-child process (stdio; wired into harness MCP config in M4/M5) | MCP tools `write_file`, `read_file`, `list_directory` (newline-delimited JSON-RPC 2.0) |
-| `mcp-agent/` | (the F3 delegation fixture's target-side addition; rides no canonical class) | harness-child process, opened only for the fixture's `tool-agent`-performed actions (adapter env `F3_SERVER_CMD`) | MCP tool `run_task`: an ordinary-looking local tool whose internal agent performs the handed effects beyond the tool's response and writes its hand-off records |
+| `mcp-agent/` | (the F3 delegation fixture's target-side addition; belongs to no canonical class) | harness-child process, opened only for the fixture's `tool-agent`-performed actions (adapter env `F3_SERVER_CMD`) | MCP tool `run_task`: an ordinary-looking local tool whose internal agent performs the handed effects beyond the tool's response and writes its hand-off records |
+| `mcp-agent/` (the `http-server.py` sibling) | (the F4 remote delegation fixture; belongs to no canonical class) | its own compose service on the EXECUTOR host of the two-host topology (`compose/executor.yaml`, port 8091) — never a harness child: the hand-off crosses the network | HTTP `POST /task`: the same hidden-agent pattern over HTTP; the far server's internal agent performs the effects ON ITS OWN MACHINE and writes its acceptance records with `machine: "executor"` |
+| `a2a-agent/` | (the F5 remote delegation fixture; belongs to no canonical class) | its own compose service on the EXECUTOR host of the two-host topology (`compose/executor.yaml`, port 8092) | A2A-style task submission (`message/send`, v1 synchronous): the far agent performs the effects on its own machine and returns the report as the completed task's artifact |
 | `http-endpoint/` | `http_tool_call` | compose service `http-endpoint:8080` | `POST /hook`, `GET /health`, `PUT /state` |
 | `net-peer/` | `direct_network` | compose service `net-peer` | TCP :9000, UDP :9001 (echo/ack) |
 | `credentials/` | `credential_access` | in-harness-container files via `seed.sh` | `/run/secrets/token`, `/run/secrets/db_password` |
@@ -30,6 +32,8 @@ Each target writes one JSON object per event: `{"ts", "target", "event", ...}`.
 |---|---|---|
 | `HTTP_PORT` | 8080 | http-endpoint |
 | `NET_TCP_PORT` / `NET_UDP_PORT` | 9000 / 9001 | net-peer |
+| `F4_LISTEN_PORT` | 8091 | mcp-agent/http-server.py (the executor host) |
+| `A2A_LISTEN_PORT` | 8092 | a2a-agent (the executor host) |
 | `TARGET_LOG_DIR` | /var/log/targets | all targets (log-file writer) |
 | `SECRETS_DIR` | /run/secrets | credentials/seed.sh |
 | `WORKSPACE_DIR` | /workspace | fs/setup.sh |

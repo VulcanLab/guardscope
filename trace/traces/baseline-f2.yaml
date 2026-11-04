@@ -15,7 +15,7 @@
 # What F2 adds: for each performed_by: child action, one hand-off record pair
 # (delegation-record/1: the adapter writes "sent", the child writes
 # "accepted"), with the delegation ids travelling to the child via env
-# (carrier: "env"). The per-action trace-back results land in the run's
+# (carrier: "env"). The per-action trace-back results are written in the run's
 # execution manifest (framework/execute.py, the "delegation" section).
 #
 # The delegated actions are the process-level effect classes — direct_network,

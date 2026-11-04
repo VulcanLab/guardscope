@@ -39,7 +39,7 @@ from the control — a REAL hook-coverage gap (the engine hooks
 exec/open/write/unlink/connect; no sendmsg hook), the instance-level
 refinement of the AAMAS derived T7 row. Kernel facts discovered live:
 the loader must run in TRACEPOINT mode (enforce-mode's larger program
-set trips the 6.17 verifier); the connect events carry the numeric IP
+set exceeds the 6.17 verifier's limits); the connect events carry the numeric IP
 without a port (the fixture pins static target addresses); docker-exec'd
 harness processes are children of the container SHIM, so the engine
 seeds the shim pid.)

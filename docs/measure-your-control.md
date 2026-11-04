@@ -13,7 +13,7 @@ git clone <repo-url> && cd guardscope
 pip install -e .        # editable, from the checkout; installs the guardscope command
 ```
 
-Writable artifacts never land in the repo; they go to the experiments
+Writable artifacts are never written in the repo; they go to the experiments
 workdir (`GUARDSCOPE_WORKDIR`, plus `GUARDSCOPE_STAGING_DIR` for the replay
 staging mount). The README quickstart carries the full sequence (topology
 bring-up included); runs execute on a Linux Docker host, and the kernel

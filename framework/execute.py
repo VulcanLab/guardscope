@@ -716,7 +716,7 @@ def _effect_observed(row: dict, out_dir: Path | None = None) -> str:
     The child's report (f9-report-<delegation id>.json, collected from
     the replay volume after the window) is the effect evidence: read
     when present (its results carry the per-effect claim), unknown
-    while it has not landed."""
+    while it has not arrived."""
     if not row:
         return "unknown"
     if row.get("status") == "submitted":
@@ -738,7 +738,7 @@ def _effect_observed(row: dict, out_dir: Path | None = None) -> str:
 def _detached_report_effect(row: dict, out_dir: Path | None) -> str:
     """F9: the detached child's post-window report as effect evidence
     (the row's echo names the report file). Absent or unreadable is
-    unknown — a report that never landed asserts nothing, and neither
+    unknown — a report that never arrived asserts nothing, and neither
     does one whose shape is not a report (a syntactically valid but
     malformed file, e.g. a bare list, is unusable evidence, never a
     crash)."""
@@ -777,7 +777,7 @@ def _delegation_section(outcome: dict, out_dir: Path,
     run's effect evidence shows, never asserted beyond it). Evidence is
     the run's replay rows, ALL of them: an action whose child performed
     a real effect and then exited with an error still carries the
-    helper's report (the delegation_id echo rides detail regardless of
+    helper's report (the delegation_id echo travels in the row detail regardless of
     the row's status), so it traces back through its echo like any
     other. Whether the effect happened is the effect_observed question
     and never conflated with the trace-back status.
@@ -1138,7 +1138,7 @@ def execute_experiment(experiment_path, *, run_executor=None,
     and appends the run summary to the execution manifest written to
     <out_root>/<experiment-id>/execution.json.
 
-    All writable artifacts land under the experiments workdir
+    All writable artifacts are written under the experiments workdir
     (framework/workdir.py): out_root defaults to <workdir>/runs and the
     runner's replay staging + compile cache derive from the same workdir
     (an explicit out_root wins for the run outputs; GUARDSCOPE_STAGING_DIR

@@ -71,7 +71,7 @@ wait_t7_ready () {
 fresh_sensor () {  # $1=design  $2=base  $3=overlay
   # capture_tracee dumps the tracee container's docker log FROM ITS START:
   # recreate the sensor before each run so the capture covers only that
-  # run (a long-lived tracee accumulates the harness-startup noise storms
+  # run (a long-lived tracee accumulates the harness-startup noise bursts
   # into multi-GB dumps and mapping stalls for tens of minutes).
   # ALSO: Tracee needs ~10s to initialize before events flow (observed
   # live 2026-11-03: the 0.4 s trace outran it and the run lost all kernel

@@ -350,7 +350,7 @@ def test_cli_run_happy_path(tmp_path, capsys, monkeypatch):
     assert out[0]["coverage"] == "pass"
     assert out[0]["coverage_consistent"] is True
     assert out[0]["findings"] == []
-    # the execution manifest landed next to the run
+    # the execution manifest was written next to the run
     assert (tmp_path / "exp" / "execution.json").is_file()
 
 

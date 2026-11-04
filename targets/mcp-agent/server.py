@@ -13,8 +13,8 @@ caller never asked the tool to make visible), writes its acceptance record
 The hand-off records:
   - the ADAPTER (harnesses/pi/adapter/replay.ts) writes the "sent" line
     before the tools/call — channel "tool", protocol "mcp", carrier
-    "mcp_meta" (the delegation id rides the same tools/call _meta the
-    action id rides, so the call stays byte-shaped like every ordinary
+    "mcp_meta" (the delegation id travels in the same tools/call _meta the
+    action id travels in, so the call stays byte-shaped like every ordinary
     tool call);
   - THIS server writes the "accepted" line the moment its internal agent
     takes the work — before performing the effects, so a hand-off the

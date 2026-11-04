@@ -35,13 +35,20 @@ DEFAULT_WORKLOAD = "baseline-15"
 # compile flag.
 WORKLOAD_TRACES: dict[str, str] = {
     "baseline-15": "baseline.yaml",
-    # F2 (landed): the child-process hand-off, hop 1 and hop 2
+    # F2 (implemented): the child-process hand-off, hop 1 and hop 2
     "baseline-f2": "baseline-f2.yaml",
     "baseline-f2h2": "baseline-f2h2.yaml",
     # F1: a role switch inside one process (channel inproc)
     "baseline-f1": "baseline-f1.yaml",
     # F3: an agent hiding inside a local tool (channel tool)
     "baseline-f3": "baseline-f3.yaml",
+    # F4: an agent hiding inside a REMOTE tool, on the executor host of
+    # the two-host topology (channel tool over http; machine "executor"
+    # on the accepted side)
+    "baseline-f4": "baseline-f4.yaml",
+    # F5: a remote agent server over the A2A-style task interface (channel
+    # network, protocol a2a)
+    "baseline-f5": "baseline-f5.yaml",
     # F7: the restricted child (two routes to the same effect)
     "baseline-f7": "baseline-f7.yaml",
     # F9: work that outlives its parent (detached child)

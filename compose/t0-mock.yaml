@@ -21,7 +21,7 @@
 # (t0 runs the driver's built-in default plan: raw http route, no gateway).
 #
 # The repo is mounted read-only at /repo (the image bakes no repo files; the
-# driver and the stdio twin's server import from the mounted tree).
+# driver and the stdio pair's server import from the mounted tree).
 #
 # The Tracee sensor runs OUTSIDE the deployed topology (no t0net attachment):
 #   docker compose -f compose/t0-mock.yaml --profile sensor up -d

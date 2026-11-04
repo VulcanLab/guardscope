@@ -2,7 +2,7 @@
 
 The repository tree is pure source (compose files, profiles, pinned
 manifests, the canonical spec — read from the repo, never written). Every
-writable artifact a run produces lands under ONE writable root, the
+writable artifact a run produces is written under ONE writable root, the
 workdir:
 
   <workdir>/runs/            replay staging (per-harness subdirs, mounted
@@ -15,7 +15,7 @@ workdir:
 Resolution order for the workdir: the CLI --workdir flag, then the
 GUARDSCOPE_WORKDIR env, then the process cwd. With no flag and no env,
 running from the repo root behaves exactly as before (the repo root
-becomes the workdir, so runs/ and the compile cache land where they
+becomes the workdir, so runs/ and the compile cache are written where they
 always did — under the repo root).
 
 Replay staging has one operator override: GUARDSCOPE_STAGING_DIR. The

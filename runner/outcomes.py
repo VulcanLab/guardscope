@@ -82,8 +82,8 @@ def _detached_effect(row: dict, detached_reports: dict | None) \
     """F9: what the collected evidence SHOWS for one submitted row —
     ("true" | "false" | "unknown", note). The row's own status says nothing
     about the effect; the child's collected report is the evidence: a
-    report that landed with a per-effect result says what happened, a
-    report that never landed (or is malformed) says nothing. A submitted
+    report that arrived with a per-effect result says what happened, a
+    report that never arrived (or is malformed) says nothing. A submitted
     row alone NEVER asserts the effect."""
     detail = row.get("detail")
     echo = detail.get("delegation_id") if isinstance(detail, dict) else None

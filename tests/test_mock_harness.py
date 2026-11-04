@@ -305,10 +305,10 @@ def test_manifest_inspection_expectations(manifest):
     # t0 has no enforcement point anywhere
     for path in manifest["paths"]:
         assert path["inspection_expectation"]["t0"]["disposition"] == "none"
-    # http twins cross the network-level gateway under the gateway route
+    # http pairs cross the network-level gateway under the gateway route
     for aid in ("a011", "a012", "a013", "a014"):
         assert paths[aid]["inspection_expectation"]["t1"]["disposition"] == "checked"
-    # stdio twins keep the t0 child transport: never gateway-inspected
+    # stdio pairs keep the t0 child transport: never gateway-inspected
     for aid in ("a001", "a002", "a003"):
         assert paths[aid]["inspection_expectation"]["t1"]["disposition"] == "bypassed"
 
@@ -332,7 +332,7 @@ def test_manifest_kernel_signatures_match_mapping_observables(manifest):
         in classes["direct_network"]["tcp_ports"]
     assert by_id["a022"]["kernel_signature"]["attributes"]["send"]["dst_port"] \
         in classes["direct_network"]["udp_ports"]
-    # http twin signature names the endpoint port (8080 raw / 8090 gateway)
+    # http pair signature names the endpoint port (8080 raw / 8090 gateway)
     assert {"raw", "gateway"}.issubset(
         by_id["a011"]["kernel_signature"]["attributes"])
     # credential signature names the seeded prefix + read flag
@@ -448,7 +448,7 @@ def test_mode_presets_and_select(monkeypatch, tmp_path, spec):
                                               mode="escape")
     assert len(escape_records) == 8
     assert {r["class"] for r in escape_records} == escape_classes
-    _, _, twin_records = run_driver(monkeypatch, tmp_path / "twin", mode="twins")
+    _, _, twin_records = run_driver(monkeypatch, tmp_path / "pair", mode="pairs")
     assert len(twin_records) == 7
     assert {r["class"] for r in twin_records} == twin_classes
     # --select preserves spec order even when given out of order
@@ -659,7 +659,7 @@ def test_syscall_layer_flags_match_manifest(tmp_path):
     assert "O_APPEND" in info["flags"] and "O_TRUNC" not in info["flags"]
 
 
-# --------------------------------------------------------------- tool twins
+# --------------------------------------------------------------- tool pairs
 
 def test_stdio_twin_speaks_mcp_stdio_protocol(monkeypatch, spec):
     fake = install_fake(monkeypatch, FakeSyscalls())
@@ -690,7 +690,7 @@ def test_stdio_twin_session_reused_per_run(monkeypatch, spec):
 
 
 def test_stdio_twin_gateway_route(monkeypatch, spec):
-    """T3 (routes.stdio=gateway): the twin performs ONE MCP tools/call
+    """T3 (routes.stdio=gateway): the pair performs ONE MCP tools/call
     JSON-RPC POST to the gateway /mcp endpoint per action — bare fs tool
     name, the action's own arguments, the _meta carriers — and spawns NO
     local server child (the stdio transport is eliminated; the harness
@@ -764,7 +764,7 @@ def test_stdio_twin_namespaced_tool_maps_to_bare_name(monkeypatch, spec):
 
 def test_stdio_twin_gateway_denial_is_an_error(monkeypatch, spec):
     """A gateway JSON-RPC error response (a denied/failed call) is an error
-    raised to the driver — errors-as-data, the twin never self-reports an
+    raised to the driver — errors-as-data, the pair never self-reports an
     outcome."""
 
     class DenyingGateway(FakeSyscalls):
@@ -963,7 +963,7 @@ def test_driver_does_not_abort_on_action_errors(monkeypatch, tmp_path):
                (tmp_path / "action-log.jsonl").read_text().splitlines()]
     assert len(records) == 15
     refused = [r for r in records if r["status"] == "error"]
-    assert {r["id"] for r in refused} == {"a021"}   # only the tcp twin refused
+    assert {r["id"] for r in refused} == {"a021"}   # only the tcp pair refused
     # the error record still names the channel it attempted (auditability)
     assert refused[0]["origin_channel"] == "raw-socket-tcp"
     assert "Connection refused" in refused[0]["error"]

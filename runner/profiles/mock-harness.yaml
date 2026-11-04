@@ -35,14 +35,14 @@
 # Design-awareness (t3): the profile itself stays one document — the t3
 # branches live in runner/reconcile.py, keyed off the run's design
 # (T3_SHARED_POOL_DESIGNS), exactly like the pi profile. Under the t3 plan
-# (mock_harness/plans/t3.json, routes.stdio=gateway) BOTH twins cross the
+# (mock_harness/plans/t3.json, routes.stdio=gateway) BOTH pairs cross the
 # gateway, so:
-#   - the stdio twins' kernel evidence becomes gateway connects (dst port
-#     8090), pooled with the http twins' — one shared expected count range
+#   - the stdio pairs' kernel evidence becomes gateway connects (dst port
+#     8090), pooled with the http pairs' — one shared expected count range
 #     [http_connects_min, n_tool_calls] over in-window connects from any
 #     testbed container (the t3 finding; per-action evidence moves to the
 #     served + decision layers);
-#   - the stdio twins spawn NO local server child: no local-server execve
+#   - the stdio pairs spawn NO local server child: no local-server execve
 #     (the mcp-server-spawn expected extra never fires under that route)
 #     and no stdio pipe/handshake writes (stdio_handshake_extra_writes is
 #     not consulted by the t3 pooled branch);
@@ -114,7 +114,7 @@ unrelated_events:
   - id: infra-read-opens
     reason: >
       python interpreter/runtime/library read-opens (the driver, the stdio
-      twin's server child, yaml/jsonschema module loads, the mounted trace
+      pair's server child, yaml/jsonschema module loads, the mounted trace
       spec and path manifest) are infrastructure; file READS are not a
       canonical action class, so they never map and must be allowlisted by
       prefix. /repo is mounted read-only, so no bytecode-cache writes occur.
@@ -137,7 +137,7 @@ unrelated_events:
   - id: tool-file-reads
     reason: >
       MCP fs read_file/list_directory opens of workspace files (read-mode,
-      from the stdio twin's server child): file reads are not a canonical
+      from the stdio pair's server child): file reads are not a canonical
       action class, so these stay unmapped by design. Deliberately narrow:
       READ-mode only, so a broken file_write mapping (write opens falling
       through to unmapped) still fails.
@@ -161,7 +161,7 @@ unrelated_events:
   - id: pipe-writes
     reason: >
       unmapped write() calls are pipe/socket/file transport traffic: the
-      driver's JSON-RPC request frames to the stdio twin's server child
+      driver's JSON-RPC request frames to the stdio pair's server child
       write to the child's stdin pipe (the child's fd-1 response writes are
       the records that map as stdio_tool_call). Residual risk, documented
       (same as the pi profile): a broken server registry degrades stdio
@@ -173,7 +173,7 @@ expected_extras:
     reason: >
       the runner docker-execs one mock-harness driver process per run; its
       execve maps as process_spawn but belongs to no canonical action (the
-      same treatment as the pi/openclaw lifecycle spawns). It usually lands
+      same treatment as the pi/openclaw lifecycle spawns). It usually occurs
       before the window opens (the driver stamps window start after module
       load), but the window tolerance can pull it in-scope.
     class: process_spawn
@@ -184,10 +184,10 @@ expected_extras:
 
   - id: mcp-server-spawn
     reason: >
-      the stdio twin's MCP tool server is spawned as a driver child (the
+      the stdio pair's MCP tool server is spawned as a driver child (the
       a001-a003 transport); its successful execve maps as process_spawn but
       belongs to no canonical action. Under the t3 plan (routes.stdio=
-      gateway) the twin never spawns a local server, so this extra never
+      gateway) the pair never spawns a local server, so this extra never
       fires there — allowances need not occur.
     class: process_spawn
     where:

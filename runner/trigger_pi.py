@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Minimal replay driver for the Pi harness (M5 slice of C9; run.py CLI lands in M7).
+"""Minimal replay driver for the Pi harness (M5 slice of C9; run.py CLI arrives in M7).
 
 Runs one pi RPC process per replay inside the t0-pi container:
 

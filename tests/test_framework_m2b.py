@@ -192,7 +192,7 @@ def test_c6_deny_without_action_id_resolves_by_target_identity(tmp_path):
 
 
 def test_c6_window_scoping(tmp_path):
-    # the denied action's signature lands OUTSIDE the window (+tolerance):
+    # the denied action's signature occurs OUTSIDE the window (+tolerance):
     # absence within the window still confirms the denial
     write_mapped(tmp_path, [
         mapped("direct_network", "connect", WINDOW[1] + 10 * 10**9,
@@ -388,7 +388,7 @@ def outcomes_doc(counts=None, prevented_ids=("a021", "a022")):
 
 class FakeC6Executor:
     """Fake run_executor writing the C6 inputs: a mapped-actions kernel
-    stream, a v0 decision log with one DENY (a014's twin), the run's
+    stream, a v0 decision log with one DENY (a014's pair), the run's
     outcomes.json, and (optionally) the native decision stream."""
 
     def __init__(self, sensor_present=True, kernel_effect=False,
@@ -404,7 +404,7 @@ class FakeC6Executor:
         out_dir.mkdir(parents=True, exist_ok=True)
         entries = [dict(e, timestamp=1.5 + i * 0.01, allowed=True)
                    for i, e in enumerate(HTTP_DECISIONS)]
-        # the a014 twin is denied by the enforcement point
+        # the a014 pair is denied by the enforcement point
         entries[1]["allowed"] = False
         (out_dir / "decisions.jsonl").write_text(
             "".join(json.dumps(e) + "\n" for e in entries))

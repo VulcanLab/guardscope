@@ -33,7 +33,7 @@ Usage:
       Validate a correlation-fidelity-check config (DESIGN.md 5: the marked
       tools/call per transport through a control) and print the plan.
       Requires a running topology to execute, so this validates the inputs
-      only; the live issuer/collector wiring lands in a later pass.
+      only; the live issuer/collector wiring arrives in a later pass.
   python -m framework.cli registry ls
       List registry entries with their tier and current/stale status
       (DESIGN.md 11: staleness downgrades the display, never hides it).

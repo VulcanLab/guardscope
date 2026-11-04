@@ -606,7 +606,7 @@ def test_t3_zero_gateway_connects_fail():
 def test_t3_pooled_connects_above_n_fail():
     """More pooled connects than the documented expected count range (n tool calls +
     n http downstream: a no-pooling client contributes one connect per
-    call, the gateway one downstream connect per http twin) fails loud."""
+    call, the gateway one downstream connect per http pair) fails loud."""
     s = t3_stream()
     s.append(rec("http_tool_call", "connect", 9_000_000, 100,
                  detail={"target_port": 8090, "transport": "tcp"}))

@@ -139,7 +139,7 @@ def assemble(spec_path: Path, profile: dict, replay: dict, mapped: list[dict],
 
     window_end_epoch_ns is the F9 fixture's effective kernel-observation
     window end (the post-window collection point): the detached
-    children's effects land after mark-end — beyond the mark-end
+    children's effects occur after mark-end — beyond the mark-end
     tolerance — and R3/R4 must scope them instead of excluding them.
     detached_reports is the collected F9 child-report evidence
     (runner/outcomes.py load_detached_reports) the submitted rows'

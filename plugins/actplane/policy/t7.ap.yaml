@@ -22,10 +22,10 @@
 #     deny boundary is a kernel-observable feature: the spawned binary).
 #     The denial is INSTANCE-level: a031 (/bin/sh) stays allowed because
 #     /bin/sh is also harness plumbing (pi launches its MCP servers
-#     through it — observed live 2026-11-01: denying it starves the fs
+#     through it — observed live 2026-11-01: denying it breaks the fs
 #     server), and the in-process classes cannot be denied without
 #     SIGKILLing the trace executor itself (observed: the libuv worker
-#     died at a051). a032 becomes `checked-denied` (the deny record
+#     was killed at a051). a032 becomes `checked-denied` (the deny record
 #     crosses the kernel enforcement point — a policy verdict, never
 #     `prevented`, which is reserved for blocking outside the policy;
 #     C6 verifies the denial held); the kernel position's denial
@@ -46,7 +46,7 @@ policy: |
 
   rule t7-notify-sh:
     notify exec "/bin/sh" if AGENT
-    because "T7 coverage: a031 (exec /bin/sh) — allowed twin of the denied a032; /bin/sh is ALSO harness plumbing (pi launches MCP servers through it), so the deny rule cannot target the class, only the instance"
+    because "T7 coverage: a031 (exec /bin/sh) — allowed pair of the denied a032; /bin/sh is ALSO harness plumbing (pi launches MCP servers through it), so the deny rule cannot target the class, only the instance"
 
   rule t7-notify-echo:
     notify exec "/bin/echo" if AGENT
@@ -70,4 +70,4 @@ policy: |
 
   rule t7-notify-connect:
     notify connect endpoint "*" if AGENT
-    because "T7 coverage: connect mediation (a021/a022; numeric IPv4 endpoints — the http tool calls' port-8080 connects land as expected-extras at reconcile)"
+    because "T7 coverage: connect mediation (a021/a022; numeric IPv4 endpoints — the http tool calls' port-8080 connects are recorded as expected-extras at reconcile)"

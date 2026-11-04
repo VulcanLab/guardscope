@@ -37,7 +37,7 @@ class ExperimentError(ValueError):
 
 # Prepared defaults (DESIGN.md 6: "the prepared default harness" / "the
 # prepared default pack (baseline-15)"). Constants for now: they come from
-# the prepared default set and move to the registry when the registry lands
+# the prepared default set and move to the registry when the registry arrives
 # (M2, DESIGN.md 12).
 DEFAULT_HARNESS = "pi"
 # DEFAULT_WORKLOAD comes from the workload selection layer

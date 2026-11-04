@@ -351,7 +351,7 @@ def test_adapter_timeout_kills_the_whole_child_tree(tmp_path):
     strips the erasable type annotations natively), pointed at a
     hanging helper that spawns a grandchild which would write a file
     AFTER the timeout. The whole tree must die; the late file must never
-    land. The live container path (jiti extension loading) stays
+    be written. The live container path (jiti extension loading) stays
     not-live-verified, as before."""
     node = shutil.which("node")
     if node is None:
@@ -419,7 +419,7 @@ def test_adapter_timeout_kills_the_whole_child_tree(tmp_path):
             pytest.fail(f"pid {pid} survived the timeout kill")
 
     # the grandchild's late effect (7s after spawn, well past the ~5s
-    # timeout) never landed
+    # timeout) never arrived
     time.sleep(3)
     assert not late.exists()
 
@@ -498,7 +498,7 @@ def test_delegation_section_over_a_synthetic_run(tmp_path):
 def test_error_rows_still_trace_back_through_their_echo(tmp_path):
     """Regression (the rework's HIGH finding): a child that performed a
     real effect and then failed is not silence. Its row carries the
-    helper's report — the delegation_id echo rides detail regardless of
+    helper's report — the delegation_id echo travels in the row detail regardless of
     the row's status — so the action traces back through its chain, and
     the effect-observed question reports what the evidence shows,
     separately from the trace-back status."""

@@ -32,7 +32,7 @@
 # The hand-off records are exactly the F2 shape (delegation-record/1:
 # channel "child", protocol "stdio", carrier "env" — the adapter writes
 # "sent", the child writes "accepted"), so the per-action trace-back
-# lands in the run's execution manifest (framework/execute.py, the
+# is written in the run's execution manifest (framework/execute.py, the
 # "delegation" section) unchanged.
 #
 # The restricted effect is a file write (the restriction names the

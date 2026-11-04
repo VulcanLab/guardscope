@@ -53,7 +53,7 @@ env-carried chain ids, the acceptance record, the effect executors):
                        reparented orphan still runs): a fixed delay is not
                        a measurement — the fixture's point is what happens
                        AFTER the parent is gone, and the effects must not
-                       land while the parent's replay window is still
+                       occur while the parent's replay window is still
                        open. Then the child performs the effects and
                        writes its report to
                        a FILE on the replay volume
@@ -132,7 +132,7 @@ GRANDCHILD_TIMEOUT_S = 30
 # fallback gives up and runs anyway (a reparented orphan must still
 # perform its handed work; the fallback is long on purpose — the normal
 # exit is the parent dying, and only a harness parent that never exits
-# rides it out). F9_PARENT_WAIT_S overrides (tests).
+# has to survive the wait). F9_PARENT_WAIT_S overrides (tests).
 F9_PARENT_EXIT_WAIT_S = 60.0
 # F7: the tool route's own bounded wait for the fs server's response — a
 # stalled server must not block the direct route (the parent's watchdog
@@ -435,13 +435,13 @@ def perform_actions_restricted(actions: list[dict],
     return results
 
 
-# --- the F9 detached mode (the effects land only after the parent is gone) ----
+# --- the F9 detached mode (the effects occur only after the parent is gone) ----
 
 def wait_for_parent_exit() -> None:
     """F9: block until the parent process is ACTUALLY GONE. The measurement
     is what happens after the parent exits (its replay window is closed,
     nobody is left watching the child) — a fixed delay cannot guarantee
-    that: a parent whose work outlives the delay would let the effects land
+    that: a parent whose work outlives the delay would let the effects occur
     while it (and its window) is still alive, defeating the fixture. The
     kernel reparents this process the moment its parent exits, so polling
     getppid() detects the exit directly; a signal-0 probe covers the pid
@@ -571,7 +571,7 @@ def main() -> None:
     #    are already on the volume — the child WAITS FOR THE PARENT TO
     #    ACTUALLY EXIT before performing the effects (the parent spawned
     #    this child detached, is not reading stdout, and the effects must
-    #    land only once the parent — and its replay window — is gone).
+    #    occur only once the parent — and its replay window — is gone).
     if mode == "detached":
         wait_for_parent_exit()
     if job.get("relay"):

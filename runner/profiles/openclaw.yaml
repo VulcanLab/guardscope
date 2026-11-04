@@ -10,7 +10,7 @@ profile: openclaw/v1
 harness: openclaw
 container_name: t0-openclaw
 
-# Tracee flushes events in batches; the LAST action's kernel events can land
+# Tracee flushes events in batches; the LAST action's kernel events can occur
 # slightly after the sampled window end (observed 139 us on the original local host).
 # Keep this well below the spacing between consecutive runs.
 window_tolerance_ns: 1000000000

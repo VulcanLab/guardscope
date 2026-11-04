@@ -16,7 +16,7 @@
 #
 #   mock-harness ──MCP over HTTP:8090──▶ t1-mock-gateway ──:8091──▶ t1-mock-mcp-http
 #        │ (mock_harness/plans/t1.json: routes.http=gateway, the inspected    │ raw HTTP:8080
-#        │  http twin; DESIGN.md 8 inspected-twin parity with the real        ▼
+#        │  http pair; DESIGN.md 8 inspected-pair parity with the real        ▼
 #        │  harness route)                                            t1-mock-http-endpoint
 #   mock-harness ── stdio MCP / raw socket / exec / fs / secrets (NO gateway) ──▶
 #
@@ -103,7 +103,7 @@ services:
     environment:
       TARGET_LOG_DIR: /var/log/targets
       REPLAY_LOG_DIR: /workspace/replay
-      GATEWAY_URL: http://gateway:8090      # T1: the http twin's gateway route
+      GATEWAY_URL: http://gateway:8090      # T1: the http pair's gateway route
     volumes:
       - target-logs:/var/log/targets
       - ${GUARDSCOPE_STAGING_DIR:-../runs}/mock:/workspace/replay   # driver artifacts retained per-run

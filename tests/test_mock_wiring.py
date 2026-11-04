@@ -151,8 +151,8 @@ def test_mock_replay_result_shape(tmp_path):
 
 @pytest.mark.parametrize("design", ["t1", "t2", "t3"])
 def test_pinned_plans_gateway_route(design):
-    """The t1/t2/t3 plans pin the gateway route so the http twin crosses the
-    design's enforcement point (the inspected-twin parity, DESIGN.md 8)."""
+    """The t1/t2/t3 plans pin the gateway route so the http pair crosses the
+    design's enforcement point (the inspected-pair parity, DESIGN.md 8)."""
     path = ROOT / "mock_harness" / "plans" / f"{design}.json"
     plan = json.loads(path.read_text())
     schema = json.loads(PLAN_SCHEMA.read_text())
@@ -167,7 +167,7 @@ def test_pinned_plans_gateway_route(design):
 
 
 def test_pinned_t3_plan_routes_stdio_via_gateway():
-    """The t3 plan routes the stdio twins through the gateway too (the fs
+    """The t3 plan routes the stdio pairs through the gateway too (the fs
     tools are proxied behind it — the T3 topology where the stdio transport
     is eliminated; DESIGN.md 7); the t1/t2 plans keep the local session."""
     t3 = json.loads((ROOT / "mock_harness" / "plans" / "t3.json").read_text())
@@ -220,7 +220,7 @@ def test_driver_emits_dispatch_records(monkeypatch, tmp_path):
 
 
 def test_dispatch_carriers_per_transport(monkeypatch, tmp_path):
-    """Raw route (t0 default plan): stdio twins -> mcp_meta, http twins ->
+    """Raw route (t0 default plan): stdio pairs -> mcp_meta, http pairs ->
     http_header. Gateway route (t1/t2 plan): both -> mcp_meta."""
     monkeypatch.delenv("INSPECTION_RUN_ID", raising=False)
     _, _ = _run_driver(monkeypatch, tmp_path)
@@ -263,25 +263,25 @@ def test_dispatch_record_on_tool_call_error(monkeypatch, tmp_path):
                (tmp_path / "dispatch-records.jsonl").read_text().splitlines()]
     http = {r["action_id"]: r for r in records
             if r["action_id"] in ("a011", "a012", "a013", "a014")}
-    assert http, "expected the http twins to fail against the fake"
+    assert http, "expected the http pairs to fail against the fake"
     for record in http.values():
         assert "error" in record and "result" not in record
         assert "Connection refused" in record["error"]["message"]
         validate_dispatch_record(record)
-    # the stdio twins' dispatches are results (exactly one of result|error)
+    # the stdio pairs' dispatches are results (exactly one of result|error)
     for record in records:
         if record["action_id"] in ("a001", "a002", "a003"):
             assert "result" in record and "error" not in record
 
 
 def test_carriers_travel_on_the_transports(monkeypatch, tmp_path):
-    """The twins inject the carriers where the real adapter does: _meta on
+    """The pairs inject the carriers where the real adapter does: _meta on
     the stdio and gateway tools/call frames, the x-inspection-* headers on
     the raw fetch (DESIGN.md 5)."""
     monkeypatch.setenv("INSPECTION_RUN_ID", "carrier-run")
     fake, _ = _run_driver(monkeypatch, tmp_path)
 
-    # stdio twin: every tools/call frame carries params._meta
+    # stdio pair: every tools/call frame carries params._meta
     stdio_frames = [json.loads(c[2]) for c in fake.calls
                     if c[0] == "write_fd" and c[1] > 2]
     calls = [f for f in stdio_frames if f.get("method") == "tools/call"]
@@ -290,7 +290,7 @@ def test_carriers_travel_on_the_transports(monkeypatch, tmp_path):
     assert all(f["params"]["_meta"]["io.inspection/attempt"] == 0
                for f in calls)
 
-    # raw http twin: the header carrier on each request
+    # raw http pair: the header carrier on each request
     https = [c for c in fake.calls if c[0] == "http_request"]
     assert len(https) == 4
     for c, aid in zip(https, ("a011", "a012", "a013", "a014")):
@@ -312,11 +312,11 @@ def test_carriers_travel_on_the_transports(monkeypatch, tmp_path):
 
 def test_t3_plan_full_driver_run(monkeypatch, tmp_path):
     """The pinned t3 plan end-to-end via the fake syscall layer: EVERY
-    tool-call twin goes through the gateway (one JSON-RPC POST per attempt,
+    tool-call pair goes through the gateway (one JSON-RPC POST per attempt,
     bare fs tool names + per-action carriers on the stdio frames), the
-    stdio twins spawn NO local server child, and all 7 dispatch records use
-    the mcp_meta carrier (the stdio twin's gateway route is a _meta carrier,
-    exactly like the http twin's)."""
+    stdio pairs spawn NO local server child, and all 7 dispatch records use
+    the mcp_meta carrier (the stdio pair's gateway route is a _meta carrier,
+    exactly like the http pair's)."""
     monkeypatch.setenv("INSPECTION_RUN_ID", "t3-run")
     plan = json.loads((ROOT / "mock_harness" / "plans" / "t3.json").read_text())
     fake = mh.install_fake(monkeypatch, mh.FakeSyscalls())
@@ -362,7 +362,7 @@ def test_t3_gateway_refusal_is_data_not_run_failure(monkeypatch, tmp_path):
     tool_ids = {"a001", "a002", "a003", "a011", "a012", "a013", "a014"}
     assert {aid for aid, r in records.items() if r["status"] == "error"} == tool_ids
     assert all("Connection refused" in records[aid]["error"] for aid in tool_ids)
-    # the failed stdio twins still name the channel they attempted
+    # the failed stdio pairs still name the channel they attempted
     assert records["a001"]["origin_channel"] == "http-connect"
     dispatch = [json.loads(l) for l in
                 (tmp_path / "dispatch-records.jsonl").read_text().splitlines()]
@@ -518,8 +518,8 @@ def test_mock_profile_reconciler_end_to_end():
 def test_mock_profile_t3_pooled_range():
     """Design-aware reconciliation consumes the mock profile under t3: BOTH
     tool classes take the shared pooled-gateway branch (runner/reconcile.py
-    T3_SHARED_POOL_DESIGNS — the stdio twins' gateway route produces the
-    same pooled gateway connects as the http twins, no local stdio
+    T3_SHARED_POOL_DESIGNS — the stdio pairs' gateway route produces the
+    same pooled gateway connects as the http pairs, no local stdio
     session), and with no kernel evidence the pooled count range fails loud,
     never silently. The profile adds no t3-specific keys: the range's
     lower bound IS http_connects_min."""

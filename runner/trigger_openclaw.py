@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Minimal replay driver for OpenClaw (M4 slice of C9; run.py CLI lands in M7).
+"""Minimal replay driver for OpenClaw (M4 slice of C9; run.py CLI arrives in M7).
 
 Posts the compiled trace to the harness gateway's POST /tools/invoke ->
 replay_trace tool (no LLM involved), and saves the result JSON.

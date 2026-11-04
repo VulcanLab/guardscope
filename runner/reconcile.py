@@ -114,7 +114,7 @@ PREVENTED_CLASSES = {
 # The harness replay sees the SIGKILLed child as an execution error (the
 # enforcement sits below the dispatch layer), so the replay-layer checks
 # (R1, and run.py's replay gate) tolerate exactly this instance BY ID, not
-# by class: the allowed twin a031 (exec /bin/sh) must still succeed, and
+# by class: the allowed pair a031 (exec /bin/sh) must still succeed, and
 # this set never feeds classification — the deny record does.
 T7_KERNEL_DENIED_INSTANCES = frozenset({"a032"})
 
@@ -381,7 +381,7 @@ class Reconciler:
         self.prevented = prevented_for(design, profile)
         # F9 (work that outlives its parent): the effective window END the
         # kernel scoping uses. The replay's window closes at mark-end, but
-        # the detached children's effects land AFTER it (that is the
+        # the detached children's effects occur AFTER it (that is the
         # fixture's point) — the runner records when its post-window
         # collection finished and passes that timestamp here, so R3/R4
         # scope the effects the fixture is supposed to measure instead of
@@ -450,7 +450,7 @@ class Reconciler:
                 # the kernel policy denied this instance (checked-denied:
                 # the deny decision record is attributed by the coverage
                 # layer and C6 verifies the denial held). The harness sees
-                # the SIGKILLed child as status error; the allowed twins of
+                # the SIGKILLed child as status error; the allowed pairs of
                 # the class (a031) must still succeed. The outcome classifier
                 # + C6 adjudicate; R1 does not.
                 continue
@@ -1014,7 +1014,7 @@ class Reconciler:
         """Whether this run's spec marks ANY action as child-performed
         (the delegation fixtures: the effects happen in a spawned child,
         which shifts kernel-observation timing — a child's async work can
-        land outside the parent's measurement window even though the
+        occur outside the parent's measurement window even though the
         effects ARE kernel-visible; the count model must account for
         the shifted patterns, not silently exclude the evidence)."""
         return any(a.get("performed_by") in ("child", "grandchild",
@@ -1039,7 +1039,7 @@ class Reconciler:
                 # t7: the harness MCP config holds BOTH stdio servers
                 # (toy-mcp-fs and the mcp-http-stdio bridge): the fs
                 # responses (n) + the bridge's handshake and the http tool
-                # calls' MCP-wire responses land in the window. Observed
+                # calls' MCP-wire responses arrive in the window. Observed
                 # live 2026-11-01: 6 for n=3.
                 if not n <= len(recs) <= n + 3:
                     problems.append(f"{len(recs)} stdio writes outside "
@@ -1047,7 +1047,7 @@ class Reconciler:
                                     f"handshake writes)")
             elif self.design in ("t4", "t5", "t6"):
                 # T4: pi's MCP config clients hold the connections — the fs
-                # server's initialize + tools/list responses may land inside
+                # server's initialize + tools/list responses may arrive inside
                 # the window (the command marks the window before the agent
                 # run; the config handshake completes around it). Expected:
                 # the 3 tool-response writes plus 0..2 config-handshake writes.
@@ -1112,7 +1112,7 @@ class Reconciler:
                     problems.append(f"{len(tcp)} tcp connects != {n_tcp}")
                 udp_max = int(self.mult.get("udp_max_per_action", 2))
                 # the delegation fixtures widen the lower bound: the child's
-                # async udp_send can land outside the window (the effects
+                # async udp_send can occur outside the window (the effects
                 # happen in a different process; the kernel still sees them
                 # but the mapping window may miss the observation)
                 udp_lo = 0 if self._has_child_performed() else n_udp
@@ -1190,7 +1190,7 @@ class Reconciler:
                     # The pooled expected count range upper bound: a
                     # pooling client contributes ~1 gateway connect (pi) and the gateway's
                     # downstream connects to the http endpoint (one per
-                    # http twin) are the per-call evidence; a no-pooling
+                    # http pair) are the per-call evidence; a no-pooling
                     # client (the mock harness, plain python) contributes
                     # one connect per tool call, so the bound that holds for
                     # both is n_tool_calls + n_http (e.g. t3: 1+4=5 pi,
@@ -1257,7 +1257,7 @@ class Reconciler:
         SIGKILLed the exec'd child, so the replay status is error; the
         deny decision record is attributed by the coverage layer and C6
         verifies the denial held). Keyed on the declared deny instances,
-        never on class: the allowed twins of the class take effect."""
+        never on class: the allowed pairs of the class take effect."""
         if self.design != "t7":
             return set()
         return {a["id"] for a in self.actions

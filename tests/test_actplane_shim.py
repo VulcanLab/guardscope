@@ -133,7 +133,7 @@ def test_plain_open_skipped():
 
 def test_decided_but_unlanded_is_error_not_allow():
     ev = json.loads(KILL_EVENT)
-    ev["killed"] = False          # decided kill, did not land
+    ev["killed"] = False          # decided kill, did not take effect
     recs = records([json.dumps(ev)])
     assert recs[0]["decision"] == "error"
 
@@ -190,7 +190,7 @@ def test_fixture_policy_wellformed_with_expected_rules():
     assert "kill read file" not in body          # reads are notified (v2)
     # v4: the spawn class is the deny rule (both instances; the class-level
     # outcome model needs the whole class denied, like t2's egress)
-    assert "notify exec" in body               # v5: a031's allowed twin
+    assert "notify exec" in body               # v5: a031's allowed pair
     assert 'kill exec "/bin/echo"' in body        # the instance deny rule
     assert 'kill exec "/bin/sh"' not in body      # harness plumbing
 

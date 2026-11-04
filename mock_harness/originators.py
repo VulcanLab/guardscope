@@ -7,7 +7,7 @@ compiles each spec action through the harness compiler
 (trace/compile/pi/compile.py) and dispatches it to exactly one originator
 function resolved by (class, op):
 
-  stdio_tool_call   -> the inspected twin of the harness's own T0-T2
+  stdio_tool_call   -> the inspected pair of the harness's own T0-T2
                        transport: one MCP stdio session per run (the fs tool
                        server as a mock-harness child), NDJSON JSON-RPC
                        initialize + tools/call over pipes; T3 plan route
@@ -60,7 +60,7 @@ MCP_CLIENT_INFO = {"name": "inspection-mock-harness", "version": __version__}
 # the driver is the id authority on the workload side and stamps the canonical
 # trace action ids onto the tool-call transports. Carrier 1: the tools/call
 # params._meta namespaced keys; carrier 2: the x-inspection-* HTTP headers on
-# raw (non-MCP) http requests. The mock harness sets them wherever the twins
+# raw (non-MCP) http requests. The mock harness sets them wherever the pairs
 # build a request, exactly like the real adapter (the ids are trace-derived
 # strings; the originators stay policy-blind — carriers are provenance, never
 # a policy check).
@@ -69,7 +69,7 @@ META_ATTEMPT = "io.inspection/attempt"
 HEADER_ACTION_ID = "x-inspection-action-id"
 HEADER_ATTEMPT = "x-inspection-attempt"
 
-# (method, path) -> gateway tool for the http twins under the gateway route.
+# (method, path) -> gateway tool for the http pairs under the gateway route.
 # Mirrors targets/mcp-http TOOL_ROUTES and the adapters' GATEWAY_TOOL_ROUTES
 # (one route can serve several spec instances: a011 and a014 share POST
 # /hook / post_hook — same shape as the coverage loader's routing).
@@ -103,8 +103,8 @@ def gateway_tools_call(ctx: "RunContext", tool: str,
                        arguments: dict) -> tuple[int, dict]:
     """One MCP tools/call JSON-RPC POST to the gateway /mcp endpoint, with
     the io.inspection carriers in params._meta (carrier 1, DESIGN.md 5) —
-    the shared request builder for BOTH twins' gateway routes: the http
-    twin's T1+ route and the stdio twin's T3 route (the fs tools proxied
+    the shared request builder for BOTH pairs' gateway routes: the http
+    pair's T1+ route and the stdio pair's T3 route (the fs tools proxied
     behind the gateway, UPSTREAM_FS_URL). A route without a gateway_url is
     an error raised to the driver (recorded as data, never a run failure)."""
     if not ctx.gateway_url:
@@ -163,7 +163,7 @@ def _exec_child(argv: list[str], stdin_fd: int | None = None,
     syscalls.exit_child(127)
 
 
-# --- MCP stdio session (the stdio twins' transport) ---------------------------
+# --- MCP stdio session (the stdio pairs' transport) ---------------------------
 
 class StdioSession:
     """One MCP stdio session per run over pipes to a tool-server child —
@@ -265,7 +265,7 @@ def _spawn_ordinary(argv: list[str], ctx: "RunContext") -> dict:
 
 def _spawn_outliving(argv: list[str], ctx: "RunContext") -> dict:
     """fork + execve with NO capture and NO wait: the record completes at
-    submission; the child's execve/effect land after the record's end (the
+    submission; the child's execve/effect occur after the record's end (the
     outliving-processes escape). The driver joins before process exit."""
     pid = syscalls.fork()
     if pid == 0:
@@ -326,7 +326,7 @@ def _spawn_daemon(argv: list[str], ctx: "RunContext") -> dict:
 # --- per-class originators ------------------------------------------------------
 
 def stdio_tool_call(rec: dict, ctx: "RunContext", variant: str = "default") -> dict:
-    """The inspected twin, plan-routed (routes.stdio, DESIGN.md 8):
+    """The inspected pair, plan-routed (routes.stdio, DESIGN.md 8):
 
     local (default)   the harness's own T0-T2 transport — tools/call over
                       the run's MCP stdio session to a local server child
@@ -369,7 +369,7 @@ def stdio_tool_call(rec: dict, ctx: "RunContext", variant: str = "default") -> d
 
 
 def http_tool_call(rec: dict, ctx: "RunContext", variant: str = "default") -> dict:
-    """The inspected twin, plan-routed: raw fetch to the trace's own endpoint
+    """The inspected pair, plan-routed: raw fetch to the trace's own endpoint
     (T0 shape) or MCP tools/call JSON-RPC POST to the gateway (T1+ shape)."""
     if ctx.http_route == "gateway":
         url_path = urlsplit(rec["url"]).path or "/"
@@ -380,7 +380,7 @@ def http_tool_call(rec: dict, ctx: "RunContext", variant: str = "default") -> di
         if rec.get("body") is not None:
             arguments["body"] = rec["body"]
         # the shared gateway request builder (same JSON-RPC POST + _meta
-        # carriers as the stdio twin's gateway route)
+        # carriers as the stdio pair's gateway route)
         status, _data = gateway_tools_call(ctx, tool, arguments)
         return {
             "via": "gateway",
@@ -525,10 +525,10 @@ def origin_channel(fn, variant: str, ctx: "RunContext") -> str:
     """The OS channel this originator performs its action through — known
     BEFORE execution (it is a property of the resolved originator + plan),
     so error records carry it too. Must equal the manifest's origin_channel
-    for the action, EXCEPT the stdio twin under the T3 gateway route: the
+    for the action, EXCEPT the stdio pair under the T3 gateway route: the
     route eliminates the local stdio child (the manifest's canonical
     mcp-stdio-child-pipe) and performs the tools/call as an HTTP connect to
-    the gateway — the same pooled origin as the http twin, which is the t3
+    the gateway — the same pooled origin as the http pair, which is the t3
     finding itself (kernel sees one pooled connect per tool call)."""
     if fn is stdio_tool_call:
         return ("http-connect" if ctx.stdio_route == "gateway"

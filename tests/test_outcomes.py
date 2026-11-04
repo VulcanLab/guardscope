@@ -175,7 +175,7 @@ def test_t7_kernel_kill_is_checked_denied():
     """T7's fixture policy kills exactly one spawn instance (a032) at the
     kernel: a policy verdict at the kernel enforcement point, so the
     instance classifies as checked-denied (never prevented); the allowed
-    twin a031 takes effect. The coverage rows mirror the live acceptance
+    pair a031 takes effect. The coverage rows mirror the live acceptance
     pair (targets/actplane/README.md): the effect classes are mediated,
     a022's unconnected udp sendto has no kernel hook (evaluated: false),
     and the tool-call classes are invisible at the kernel's semantic level.

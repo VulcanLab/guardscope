@@ -108,7 +108,7 @@ jobs:
           EOF
       - name: Repo tree stays clean
         run: |
-          # every writable artifact must have landed in the workdir, never
+          # every writable artifact must have been written in the workdir, never
           # in the read-only source tree
           git status --porcelain
           [ -z "$(git status --porcelain)" ]

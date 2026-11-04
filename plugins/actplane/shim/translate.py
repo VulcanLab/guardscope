@@ -110,7 +110,7 @@ def _decision(effect: str, blocked: bool, killed: bool) -> str:
     if effect == "notify":
         return "observe"
     if effect == "kill" or effect == "block":
-        # the effect was decided but did not land: the control's own
+        # the effect was decided but did not take effect: the control's own
         # accounting question — an error-class record, never silently
         # treated as an allow
         return "error"

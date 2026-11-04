@@ -221,7 +221,7 @@ def test_c1c4_equivalence_holds_on_failure_paths_too():
         SPEC, decision_records_to_log_entries(records), [], "t1",
         (WIN_START, WIN_END))
     assert mapped_report == raw_report
-    assert mapped_report["status"] == "fail"   # the unknown tool trips C2
+    assert mapped_report["status"] == "fail"   # the unknown tool fails C2
 
 
 def test_round_trip_preserves_timestamps_and_refs():

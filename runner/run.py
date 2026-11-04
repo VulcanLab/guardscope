@@ -4,7 +4,7 @@
 Orchestrates the full pipeline per run:  canonical trace -> compile (+ diff
 check against the spec) -> replay in the harness under Tracee -> map raw
 Tracee events -> reconcile expected-vs-observed -> run record + retained raw
-traces. All raw artifacts land under <workdir>/runs/<run-id>/ (first-class
+traces. All raw artifacts are written under <workdir>/runs/<run-id>/ (first-class
 artifacts, T0 done-criterion 4). The writable root — replay staging, run
 outputs, the compiled-trace cache — is the experiments workdir
 (framework/workdir.py): --workdir > GUARDSCOPE_WORKDIR > the process cwd,
@@ -28,6 +28,11 @@ Subcommands:
              artifacts (no replay) — debugging/re-mapping entry point; the
              run's own spec (the retained record's workload) is the spec,
              --workload overrides it explicitly
+  collect-remote
+             F4/F5 (the two-host topology): collect the executor host's
+             pulled artifacts (delegation records + the far machine's
+             Tracee events) into a finished run's dir; the same merge
+             run_one performs when GUARDSCOPE_EXECUTOR_ARTIFACTS is set
   report     summary table (per harness x per class counts) + done-criteria
              checklist over the run records of one design
 
@@ -127,9 +132,9 @@ HARNESSES = {
     # each action through the same pi compiler in-container). Plan per
     # design: t0 runs the driver's built-in default plan (raw http route +
     # local stdio session); t1/t2 run the pinned gateway-route plan for the
-    # http twin so it crosses the design's enforcement point (the
-    # inspected-twin parity, DESIGN.md 8); t3 routes BOTH twins via the
-    # gateway (the stdio twin's fs tools are proxied behind it — the T3
+    # http pair so it crosses the design's enforcement point (the
+    # inspected-pair parity, DESIGN.md 8); t3 routes BOTH pairs via the
+    # gateway (the stdio pair's fs tools are proxied behind it — the T3
     # topology where the stdio transport is eliminated).
     "mock-harness": {
         "container": "t0-mock",
@@ -234,9 +239,9 @@ def harness_cfg(harness: str, design: str = "t0",
         # container names from cfg["prefix"], so one prefix covers all)
         cfg["container"] = f"{prefix}-mock"
         cfg["prefix"] = f"{prefix}-mock"
-        # the twins' routes are plan data: t1/t2 run the pinned gateway
-        # plan for the http twin in-container (mock_harness/plans/t{N}.json);
-        # t3 routes BOTH twins via the gateway (the stdio twin's fs tools are
+        # the pairs' routes are plan data: t1/t2 run the pinned gateway
+        # plan for the http pair in-container (mock_harness/plans/t{N}.json);
+        # t3 routes BOTH pairs via the gateway (the stdio pair's fs tools are
         # proxied behind it, no local server child); t0 keeps the built-in
         # default plan (raw http fetch + local stdio session, no enforcement
         # point to cross)
@@ -261,7 +266,7 @@ TARGET_LOGS = {
 TRACEE_FLUSH_GRACE_S = 3.0
 TRACEE_RECAPTURE_WAIT_S = 10.0
 # F9 (work that outlives its parent): how long the runner waits (bounded)
-# after the replay for the detached children's report files to land on the
+# after the replay for the detached children's report files to be written to the
 # replay volume before collecting them — the children outlive the parent
 # process, so their artifacts arrive late but they do arrive.
 F9_REPORT_WAIT_S = 15.0
@@ -380,7 +385,7 @@ def mock_trigger_command(cfg: dict, run_id: str) -> list[str]:
     INSPECTION_RUN_ID; DESIGN.md 4), sets the container cwd to the mounted
     repo, and runs `python3 -m mock_harness.driver` with the canonical trace
     + the per-design plan (harness_cfg: t1/t2 the pinned gateway route for
-    the http twin, t3 the pinned gateway route for BOTH twins, t0 the
+    the http pair, t3 the pinned gateway route for BOTH pairs, t0 the
     driver's built-in default plan)."""
     cmd = ["docker", "exec",
            "-e", f"INSPECTION_RUN_ID={run_id}",
@@ -520,11 +525,11 @@ def collect_f9_reports(submitted_ids: list, staging: Path, out_dir: Path,
                        wait_s: float = F9_REPORT_WAIT_S) \
         -> tuple[list[str], int | None]:
     """F9 (work that outlives its parent): wait (bounded) for the detached
-    children's report files to land on the replay volume, then collect
+    children's report files to be written to the replay volume, then collect
     them into the run dir. Returns (the collected delegation ids, the
     collection-end epoch-ns timestamp). The timestamp is the run's
     EFFECTIVE kernel-observation window end for the reconciler: the
-    detached effects land after mark-end — beyond the mark-end tolerance
+    detached effects occur after mark-end — beyond the mark-end tolerance
     — and R3/R4 must scope what the fixture is supposed to measure
     (run_one passes it to the assembly as window_end_epoch_ns). No
     submitted rows -> no wait, no extension (every existing run's timing
@@ -533,9 +538,9 @@ def collect_f9_reports(submitted_ids: list, staging: Path, out_dir: Path,
         return [], None
     deadline = time.monotonic() + wait_s
     while time.monotonic() < deadline:
-        landed = [d for d in submitted_ids
+        arrived = [d for d in submitted_ids
                   if (Path(staging) / f"f9-report-{d}.json").is_file()]
-        if len(landed) == len(submitted_ids):
+        if len(arrived) == len(submitted_ids):
             break
         time.sleep(0.2)
     collected = []
@@ -545,6 +550,86 @@ def collect_f9_reports(submitted_ids: list, staging: Path, out_dir: Path,
             shutil.copyfile(report_src, out_dir / report_src.name)
             collected.append(did)
     return collected, time.time_ns()
+
+
+# F4/F5 (the remote delegation fixtures): the EXECUTOR host's artifacts
+# directory. The two-host topology runs the remote servers and their OWN
+# sensor on a second machine (compose/executor.yaml); a post-run pull step
+# on that host writes the far machine's side of the run there —
+#   docker logs executor-tracee > <dir>/tracee-events.json
+#   cp <staging>/executor/delegation-records.jsonl <dir>/
+# — and the runner collects the directory (GUARDSCOPE_EXECUTOR_ARTIFACTS
+# for run_one's automatic collection; the collect-remote subcommand for a
+# manual post-run pull; on EC2 the directory reaches the origin host by
+# scp/sshfs — the runner only needs it readable locally).
+EXECUTOR_ARTIFACTS_ENV = "GUARDSCOPE_EXECUTOR_ARTIFACTS"
+EXECUTOR_RECORDS_NAME = "delegation-records.jsonl"
+EXECUTOR_TRACEE_NAME = "tracee-events.json"
+
+
+def collect_executor_artifacts(out_dir: Path, executor_dir: Path,
+                               map_events_here: bool = True) -> dict:
+    """The two-host collection (F4/F5): merge the executor host's
+    delegation records into the run's delegation-records.jsonl — the two
+    machines' hand-off records are written in ONE stream (the chain joins on
+    the delegation id; the machine label stays on every line, and results
+    from different machines are never pooled) — and retain the far
+    machine's kernel observations as SEPARATE artifacts
+    (tracee-events-executor / mapped-actions-executor), never merged
+    into the origin host's effective counts.
+
+    The executor records are APPENDED to whatever the origin side wrote
+    (run_one copies the replay volume's stream first), so the collection
+    happens once per run: it is not idempotent (a manual collect-remote
+    re-run appends twice). Returns the summary written to
+    executor-collection.json; a missing executor dir raises (the env var
+    pointing nowhere is a configuration mistake, never a silent skip).
+    """
+    out_dir = Path(out_dir)
+    executor_dir = Path(executor_dir)
+    if not executor_dir.is_dir():
+        raise RuntimeError(
+            f"the executor artifacts directory {executor_dir} does not "
+            f"exist — pull the executor host's side of the run first "
+            f"(compose/executor.yaml header: docker logs executor-tracee "
+            f"+ the staging dir's delegation-records.jsonl)")
+    summary = {"executor_dir": str(executor_dir),
+               "records_merged": 0, "artifacts": {}}
+    # 1. the executor-side hand-off records (machine "executor") merge
+    #    into the run's stream
+    src_records = executor_dir / EXECUTOR_RECORDS_NAME
+    if src_records.is_file():
+        text = src_records.read_text(encoding="utf-8")
+        if text.strip():
+            if not text.endswith("\n"):
+                text += "\n"
+            with open(out_dir / EXECUTOR_RECORDS_NAME, "a",
+                      encoding="utf-8") as f:
+                f.write(text)
+            summary["records_merged"] = sum(
+                1 for line in text.splitlines() if line.strip())
+            summary["artifacts"]["delegation-records"] = str(
+                out_dir / EXECUTOR_RECORDS_NAME)
+    # 2. the far machine's OWN kernel observations: retained as separate
+    #    artifacts, never reconciled into this (origin-host) run's counts
+    src_events = executor_dir / EXECUTOR_TRACEE_NAME
+    if src_events.is_file() and src_events.read_text(encoding="utf-8").strip():
+        dst = out_dir / "tracee-events-executor.json"
+        shutil.copyfile(src_events, dst)
+        summary["artifacts"]["tracee-events-executor"] = str(dst)
+        if map_events_here:
+            mapped = out_dir / "mapped-actions-executor.jsonl"
+            try:
+                map_events(dst, mapped)
+                summary["artifacts"]["mapped-actions-executor"] = str(mapped)
+            except RuntimeError as exc:
+                # a far-machine capture that cannot map is a reported
+                # problem in the summary, never a lost run: the raw events
+                # are retained either way
+                summary["mapping"] = f"error: {exc}"
+    (out_dir / "executor-collection.json").write_text(
+        json.dumps(summary, indent=1, sort_keys=True) + "\n")
+    return summary
 
 
 def capture_tracee(out_path: Path, container: str) -> None:
@@ -737,7 +822,7 @@ def assemble_sensorless(spec_path: Path, profile: dict, replay: dict,
     # prevented entries are marked unverified claims (kernel corroboration
     # is impossible without the sensor; DESIGN.md 9). The F9 fixture's
     # submitted rows are adjudicated from the collected child reports:
-    # a report that never landed is effect-unknown, never a silent
+    # a report that never arrived is effect-unknown, never a silent
     # effect-happened claim
     outcomes = out_mod.compute(spec, replay, coverage_report, design,
                                detached_reports=detached_reports)
@@ -950,7 +1035,7 @@ def run_one(harness: str, run_id: str, runs_dir: Path, timeout_s: float | None =
     if Path(replay_log_src).is_file():
         shutil.copyfile(replay_log_src, out_dir / "replay-log.jsonl")
     # the adapter's dispatch records (M2a; DESIGN.md 3 collect(): dispatch-
-    # record flush) land next to the replay log on the mounted volume and are
+    # record flush) are written next to the replay log on the mounted volume and are
     # retained per run like every other raw artifact
     dispatch_src = Path(replay_log_src).parent / "dispatch-records.jsonl"
     if dispatch_src.is_file():
@@ -964,7 +1049,7 @@ def run_one(harness: str, run_id: str, runs_dir: Path, timeout_s: float | None =
     # same volume, same run.
     delegation_src = Path(replay_log_src).parent / "delegation-records.jsonl"
     # F9 (work that outlives its parent): the detached child keeps
-    # running AFTER the replay ended, so its artifacts land on the replay
+    # running AFTER the replay ended, so its artifacts are written to the replay
     # volume late — wait (bounded) for the submitted actions' report
     # files, then collect them and the (by then complete) record stream.
     # The collection is runner-side, exactly like every other artifact:
@@ -978,7 +1063,7 @@ def run_one(harness: str, run_id: str, runs_dir: Path, timeout_s: float | None =
     # collection: the collection-end timestamp extends the run's kernel
     # observation scope (R3/R4 see the post-window effects), and the
     # collected reports are the submitted rows' effect evidence (the
-    # outcome classifier reads them; a report that never landed leaves
+    # outcome classifier reads them; a report that never arrived leaves
     # the effect unknown, never bypassed)
     _f9_ids, f9_collection_end_ns = collect_f9_reports(submitted_ids, staging,
                                                        out_dir)
@@ -986,6 +1071,24 @@ def run_one(harness: str, run_id: str, runs_dir: Path, timeout_s: float | None =
                   if submitted_ids else None)
     if delegation_src.is_file():
         shutil.copyfile(delegation_src, out_dir / "delegation-records.jsonl")
+    # F4/F5 (the remote delegation fixtures): the two-host collection —
+    # the executor host's hand-off records merge into the run's stream
+    # (the chain joins on the delegation id; the machine label stays on
+    # every line), and the far machine's kernel observations are retained
+    # as SEPARATE artifacts, never pooled into the origin host's counts.
+    # The directory is a post-run pull from the executor host (its header
+    # is in compose/executor.yaml); unset = single-machine run, unchanged.
+    executor_dir = os.environ.get(EXECUTOR_ARTIFACTS_ENV)
+    executor_collection = None
+    if executor_dir:
+        executor_collection = collect_executor_artifacts(
+            out_dir, Path(executor_dir))
+        print(f"[{run_id}] executor-host artifacts: "
+              f"{executor_collection['records_merged']} delegation "
+              f"record(s) merged; far-machine kernel observations: "
+              f"{sorted(k for k in executor_collection['artifacts']
+                        if k != 'delegation-records') or 'none'}",
+              file=sys.stderr)
     if harness == "mock-harness":
         # the driver's own run manifest (trace/plan pins, window, digest) is
         # retained as the mock-run provenance artifact (named to avoid
@@ -1120,6 +1223,13 @@ def run_one(harness: str, run_id: str, runs_dir: Path, timeout_s: float | None =
     }
     if harness == "mock-harness" and (out_dir / "mock-run-manifest.json").is_file():
         artifacts["mock-run-manifest"] = out_dir / "mock-run-manifest.json"
+    # F4/F5: the executor host's kernel observations are hashed as the
+    # run's artifacts too (T0 criterion 4 — raw artifacts retained +
+    # hashed; present only when the two-host collection ran)
+    if executor_collection:
+        for name in ("tracee-events-executor", "mapped-actions-executor"):
+            if name in executor_collection["artifacts"]:
+                artifacts[name] = Path(executor_collection["artifacts"][name])
     if sensor:
         artifacts["tracee-events"] = out_dir / "tracee-events.json"
         artifacts["mapped-actions"] = out_dir / "mapped-actions.jsonl"
@@ -1623,6 +1733,20 @@ def main() -> int:
                          "retained run record's own spec — the run's "
                          "provenance, never silently the baseline")
 
+    p = sub.add_parser("collect-remote",
+                       help="collect the executor host's artifacts into a "
+                            "finished run's dir (F4/F5, the two-host "
+                            "topology)")
+    p.add_argument("--run-dir", type=Path, required=True,
+                   help="the run's output dir (runs/<run-id>)")
+    p.add_argument("--executor-dir", type=Path, required=True,
+                   help="the pulled executor-host artifacts directory "
+                        "(the same directory GUARDSCOPE_EXECUTOR_ARTIFACTS "
+                        "names at run time)")
+    p.add_argument("--no-map", action="store_true",
+                   help="retain the far machine's Tracee events without "
+                        "mapping them (raw only)")
+
     p = sub.add_parser("report", help="summary table + done-criteria checklist")
     p.add_argument("--design", default="t0", choices=sorted(DESIGNS))
     p.add_argument("--runs-dir", type=Path, default=None,
@@ -1730,6 +1854,13 @@ def main() -> int:
         print(json.dumps({"run_id": run_id, "status": report["status"],
                           "effective_counts": report["effective_counts"]}, indent=1))
         return 0 if report["status"] == "pass" else 1
+
+    if args.cmd == "collect-remote":
+        summary = collect_executor_artifacts(
+            args.run_dir, args.executor_dir,
+            map_events_here=not args.no_map)
+        print(json.dumps(summary, indent=1, sort_keys=True))
+        return 0
 
     if args.cmd == "report":
         runs_dir = args.runs_dir if args.runs_dir is not None \

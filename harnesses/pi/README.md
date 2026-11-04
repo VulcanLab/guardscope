@@ -2,7 +2,7 @@
 
 Replay injection for the Pi coding harness (C2, C3): the canonical trace is
 executed **inside the pi agent process** — no LLM anywhere. (OpenCode was
-spiked first and deferred: 1.18.30 has no no-LLM tool-execute route; see the
+investigated first and deferred: 1.18.30 has no no-LLM tool-execute route; see the
 implementation-plan M5 note.)
 
 ## Injection point (validated 2026-09-10, pi 0.85.1)

@@ -17,7 +17,7 @@
 # environment topology, hashed into the fixture fingerprint, never part of
 # the control — DESIGN.md 3).
 #
-# Both twins cross the gateway under the pinned plan
+# Both pairs cross the gateway under the pinned plan
 # mock_harness/plans/t3.json (routes.http=gateway AND routes.stdio=gateway):
 # each stdio action becomes one MCP tools/call JSON-RPC POST to
 # gateway:8090 (no local stdio server child), carrying the
@@ -25,7 +25,7 @@
 #
 #   mock-harness ──MCP tools/call POST:8090──▶ t3-mock-gateway ──▶ t3-mock-mcp-http    (http tools)
 #        │                                        │ (route by tool name, FS_TOOLS)      │ raw HTTP:8080
-#        │ (stdio twins: the same pooled gateway origin, no stdio child)  ▼
+#        │ (stdio pairs: the same pooled gateway origin, no stdio child)  ▼
 #        │                                        └──▶ t3-mock-mcp-fs-http (fs tools)   t3-mock-http-endpoint
 #   mock-harness ──▶ net-peer (REJECTED by the netns output policy: prevented)
 #   mock-harness ── raw exec/fs/secrets (NO gateway, NO egress — inside the netns)
@@ -129,7 +129,7 @@ services:
     environment:
       TARGET_LOG_DIR: /var/log/targets
       REPLAY_LOG_DIR: /workspace/replay
-      GATEWAY_URL: http://gateway:8090      # T3: both twins' gateway route
+      GATEWAY_URL: http://gateway:8090      # T3: both pairs' gateway route
     volumes:
       - target-logs:/var/log/targets
       - ${GUARDSCOPE_STAGING_DIR:-../runs}/mock:/workspace/replay   # driver artifacts retained per-run

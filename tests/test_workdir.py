@@ -2,7 +2,7 @@
 for run artifacts — replay staging, run outputs, the compiled-trace cache.
 
 The repository tree is pure source; every writable artifact a run produces
-must land under the workdir, resolved as --workdir > GUARDSCOPE_WORKDIR >
+must be written under the workdir, resolved as --workdir > GUARDSCOPE_WORKDIR >
 cwd (so running from the repo root keeps today's layout). The compose
 files mount the staging dir env-driven (${GUARDSCOPE_STAGING_DIR:-../runs})
 and the runner honors the same env when it stages.
@@ -135,7 +135,7 @@ def test_harness_cfg_compiled_trace_under_the_cache(tmp_path):
 
 def test_compile_harness_writes_under_the_cache(tmp_path):
     """The compile entry point stays (trace/compile/<harness>/compile.py);
-    its output lands under <workdir>/cache/compile/<harness>/ — nothing is
+    its output is written under <workdir>/cache/compile/<harness>/ — nothing is
     written into the source tree (trace/compile/<h>/out/ is history)."""
     wd = tmp_path / "wd"
     compiled = run_mod.compile_harness("pi", workdir=wd)
@@ -219,7 +219,7 @@ def test_execute_out_root_defaults_to_cwd_runs(tmp_path, monkeypatch):
 def test_execute_threads_workdir_into_the_default_executor(tmp_path,
                                                             monkeypatch):
     """The default executor (the runner machinery) receives the resolved
-    workdir so replay staging + the compile cache land there too."""
+    workdir so replay staging + the compile cache are written there too."""
     seen = {}
 
     def fake_default(descriptor, run_id, out_root, sensor=True,
@@ -311,7 +311,7 @@ def test_compose_staging_mount_uses_the_env_everywhere():
     relative default, an operator-exported absolute path moves staging into
     the experiments workdir."""
     compose_files = sorted((ROOT / "compose").glob("*.yaml"))
-    assert len(compose_files) == 12
+    assert len(compose_files) == 14
     for f in compose_files:
         doc = yaml.safe_load(f.read_text())
         mounts = []
@@ -319,6 +319,13 @@ def test_compose_staging_mount_uses_the_env_everywhere():
             for v in svc.get("volumes") or []:
                 if isinstance(v, str) and v.endswith(":/workspace/replay"):
                     mounts.append(v)
+        # a stack that RUNS something (a base topology, or the executor
+        # host's own stack) stages a replay volume; an overlay that adds
+        # only environment (the origin-side remote-delegation overlay)
+        # owns no mounts — its base does
+        if f.name == "t0-remote.yaml":
+            assert not mounts, f"{f.name}: an env-only overlay has no mounts"
+            continue
         assert mounts, f"{f.name}: no replay staging mount found"
         for m in mounts:
             assert m.startswith("${GUARDSCOPE_STAGING_DIR:-../runs}/"), \

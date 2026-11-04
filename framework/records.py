@@ -242,7 +242,7 @@ def audit_entry_to_decision_record(entry: dict, *, run_id: str, stream_id: str,
     parameters = entry.get("parameters") or {}
     ids = {k: entry[k] for k in ("agent_id", "tool_call_id",
                                 "approval_status") if entry.get(k) is not None}
-    # the raw v0 timestamp rides along for the exact round trip (see docstring)
+    # the raw v0 timestamp is carried along for the exact round trip (see docstring)
     ids["v0_timestamp"] = entry.get("timestamp")
 
     fields = {

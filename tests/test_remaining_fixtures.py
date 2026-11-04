@@ -31,10 +31,10 @@ Covers, offline only (no Docker, no network beyond loopback):
     is enforced by the fixture itself;
   - F9 (work that outlives its parent): the helper spawned DETACHED as a
     real subprocess (the parent does not wait) performs the effects
-    AFTER the parent handed off and lands its report FILE on the replay
+    AFTER the parent handed off and writes its report FILE to the replay
     volume; the manifest's delegation section attributes the submitted
     row through its echo and the effect-observed question reads the
-    collected report (unknown while it has not landed);
+    collected report (unknown while it has not arrived);
   - the outcome classifier and the R1 replay check treat a submitted row
     on a detached-child action as its valid terminal state (bypassed
     under t0, no R1 problem) and a submitted row on any other action as
@@ -361,7 +361,7 @@ def _mcp_client(proc, msg_id, method, params):
 def test_f3_agent_server_performs_effects_beyond_the_tool_response(tmp_path):
     """The hidden-agent server, run as a REAL local subprocess: the tool
     call arrives looking like an ordinary stdio tools/call (the delegation
-    id rides the _meta), the server's internal agent performs a real file
+    id travels in the _meta), the server's internal agent performs a real file
     write BEYOND the tool's response, writes its acceptance record, and
     answers with the report as the tool's text."""
     log_dir = tmp_path / "replay"
@@ -397,7 +397,7 @@ def test_f3_agent_server_performs_effects_beyond_the_tool_response(tmp_path):
                   encoding="utf-8") as f:
             f.write(json.dumps(sent) + "\n")
 
-        # the ordinary-looking tool call: the delegation id rides _meta
+        # the ordinary-looking tool call: the delegation id travels in _meta
         resp = _mcp_client(proc, 3, "tools/call", {
             "name": "run_task",
             "arguments": {"steps": [
@@ -693,7 +693,7 @@ def spawn_detached_via_parent(job: dict, env: dict, hold_s: float = 0.0):
 def test_f9_detached_child_performs_effects_after_the_parent_hands_off(tmp_path):
     """The F9 child, spawned DETACHED as a real subprocess: the parent
     (this test) writes the job, closes the pipe and does NOT wait; the
-    child performs the effects after the hand-off, lands its report FILE
+    child performs the effects after the hand-off, writes its report FILE
     on the replay volume, and its records chain with the parent's sent
     line."""
     log_dir = tmp_path / "replay"
@@ -731,7 +731,7 @@ def test_f9_detached_child_performs_effects_after_the_parent_hands_off(tmp_path)
             break
         time.sleep(0.1)
     else:
-        raise AssertionError("the detached child's artifacts never landed")
+        raise AssertionError("the detached child's artifacts never arrived")
 
     # the effects happened AFTER the parent handed off, from the child
     assert target.read_text() == "detached write"
@@ -765,7 +765,7 @@ def test_f9_submitted_row_effect_observed_reads_the_collected_report(tmp_path):
     """The manifest's delegation section over a synthetic F9 run: the
     submitted row traces back through its echo the moment the records are
     collected, and the effect-observed question reads the child's
-    post-window report (unknown while it has not landed — a submitted row
+    post-window report (unknown while it has not arrived — a submitted row
     never asserts the effect)."""
     out_dir = tmp_path / "run"
     out_dir.mkdir()
@@ -779,7 +779,7 @@ def test_f9_submitted_row_effect_observed_reads_the_collected_report(tmp_path):
                        from_actor="pi-root", to_actor="f9-child",
                        stream_id="f9-child-1")]))
     # the replay row the adapter writes: terminal status submitted, the
-    # echo kept in the detail (the acceptance and the effects land later)
+    # echo kept in the detail (the acceptance and the effects occur later)
     row = {"id": "a041", "status": "submitted", "started_epoch_ns": 1,
            "detail": {"delegation_id": "d-f9-1", "actor": "f9-child",
                       "detached": True}}
@@ -792,7 +792,7 @@ def test_f9_submitted_row_effect_observed_reads_the_collected_report(tmp_path):
                      for aid in DELEGATED_IDS]}))
 
     spec = _yaml(BASELINE)
-    # while the report has not landed: the trace-back already attributes
+    # while the report has not arrived: the trace-back already attributes
     # (the echo names the sent hand-off), the effect question says unknown
     section = execute_mod._delegation_section({}, out_dir, spec)
     a041 = section["per_action"]["a041"]
@@ -942,7 +942,7 @@ def test_adapter_fixture_branches_run_under_node(tmp_path):
     effect in-process; the F3 tool call hides the hand-off in an
     ordinary-looking tools/call and the server's agent performs the
     effect; the F9 detached child is NOT waited for and the node parent
-    exits before the child's report lands (the collection reads it
+    exits before the child's report arrives (the collection reads it
     after)."""
     node = subprocess.run(["which", "node"], capture_output=True,
                           text=True).stdout.strip()
@@ -992,7 +992,7 @@ def test_adapter_fixture_branches_run_under_node(tmp_path):
 
     # the record stream: F1's pair (sent + accepted, both from the
     # adapter), F3's pair (the adapter's sent, the server's accepted),
-    # F9's sent (the acceptance lands after the parent is gone — the
+    # F9's sent (the acceptance is recorded after the parent is gone — the
     # bounded wait below is the runner's job, mirrored here)
     deadline = time.monotonic() + 20
     while time.monotonic() < deadline:

@@ -3,7 +3,7 @@
 # enforcement point — all tools are behind it (DESIGN.md 7): the fs tool
 # server is proxied through the gateway (UPSTREAM_FS_URL) and the stdio
 # transport is eliminated at the harness. The mock harness crosses it with
-# BOTH twins under the pinned plan mock_harness/plans/t3.json
+# BOTH pairs under the pinned plan mock_harness/plans/t3.json
 # (routes.http=gateway + routes.stdio=gateway: one MCP tools/call JSON-RPC
 # POST per action, no local stdio server child), and exercises the escape
 # classes policy-blind (DESIGN.md 8); the direct-network attempts are

@@ -140,7 +140,7 @@ def load_fidelity_config(path, *, plugins_dir=None) -> dict:
     issued at), transports (optional; subset of the checkable carriers,
     default both), schema (optional; must be the bare 1 stamp).
 
-    The live issuer/collector wiring over the compose stack lands in a later
+    The live issuer/collector wiring over the compose stack arrives in a later
     pass; this validates the inputs only.
     """
     p = Path(path)

@@ -23,7 +23,7 @@ harness: pi
 container_name: t0-pi
 
 # Tolerance (ns) added to both ends of the replay window before scoping.
-# Tracee flushes events in batches; the LAST action's kernel events can land
+# Tracee flushes events in batches; the LAST action's kernel events can occur
 # slightly after the sampled window end (observed 139 us on the original local host).
 # Keep this well below the spacing between consecutive runs.
 window_tolerance_ns: 1000000000
@@ -181,7 +181,7 @@ expected_extras:
       the MCP tool server is spawned as a harness child (stdio transport);
       its successful execve maps as process_spawn but belongs to no canonical
       action. In T4 the harness MCP config spawns it at pi startup (plus the
-      toy-mcp-http server); either can land inside the window.
+      toy-mcp-http server); either can occur inside the window.
     class: process_spawn
     where:
       any_of:

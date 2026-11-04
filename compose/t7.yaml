@@ -45,7 +45,7 @@ services:
     networks:
       t7net:
         # FIXED address (same reason as net-peer; the http tool calls'
-        # kernel-side connects land as expected-extras, not direct_network)
+        # kernel-side connects are recorded as expected-extras, not direct_network)
         ipv4_address: 172.28.0.11
     volumes:
       - target-logs:/var/log/targets

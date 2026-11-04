@@ -31,7 +31,7 @@ Design points, all inherited from the framework's rules:
   framework's comparability keys stay exactly what they are.
 - `ready: false` ROWS DO NOT RUN. A frozen list may contain measurements
   whose fixtures do not exist yet (the delegation scenarios until phase
-  1 lands). Such rows expand and validate — so the plan stays one
+  1 arrives). Such rows expand and validate — so the plan stays one
   artifact — but the runner skips them unless --include-pending is
   given. Nothing runs that is not listed; nothing listed runs before its
   fixture exists.
@@ -223,7 +223,7 @@ def run_batch(path, *, out_root=None, workdir=None, rows=None,
     """Expand + execute the plan (DESIGN.md 6): per row, the warm-up run
     first (excluded from the merge set), then the real runs; per run the
     existing execute path writes the run dir + execution.json. The batch
-    manifest lands at <out_root>/batch-manifest.json.
+    manifest is written at <out_root>/batch-manifest.json.
 
     `runs_per_measurement` <= 1 means no warm-up run (measurements whose
     design already has a warm run from an earlier session may use 1).

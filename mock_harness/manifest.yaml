@@ -46,7 +46,7 @@ placement:
   fields: [runtime, container_id, netns, uid, pid_namespace, attached_by, attached_at]
   note: >-
     v1 records a placeholder; the placement wrapper attaches the concrete
-    descriptor per run via `driver --placement <json>` and it lands in the
+    descriptor per run via `driver --placement <json>` and it is written in the
     run manifest's placement field. Records carry `provenance: mock-harness`
     plus run_id; placement lives per RUN, not per record.
 
@@ -59,7 +59,7 @@ provenance:
   placement_attach_point: run-manifest.json / placement
 
 # The five action-path categories that bypass every sub-kernel enforcement
-# design. The escape-class originators exercise them; the tool-call twins
+# design. The escape-class originators exercise them; the tool-call pairs
 # exist for inspection parity, not as escapes.
 escape_paths:
   - name: direct-origin-operations
@@ -84,13 +84,13 @@ escape_paths:
     description: >-
       The action record completes at submission, before the spawned
       process performs its kernel-visible effect (execve and beyond); the
-      effect can land after the record's window end. Window- and
+      effect can occur after the record's window end. Window- and
       record-scoped attribution misses the effect by construction.
   - name: dispatch-free-output-consumption
     description: >-
       Child stdout is consumed directly over a pipe by the originator
       process: an output flow with no dispatch boundary for an enforcement
-      point to observe (the ordinary spawn variant and the MCP stdio twin
+      point to observe (the ordinary spawn variant and the MCP stdio pair
       both read child output this way).
 
 # Origin-variant catalog. The plan (mock_harness/plan-schema.json) selects one
@@ -112,7 +112,7 @@ variants:
     semantics: >-
       fork + execve with the canonical argv; NO pipe capture, NO wait: the
       record completes at submission (child stdout inherited), and the
-      child's execve/effect land after the record's end. The driver joins
+      child's execve/effect occur after the record's end. The driver joins
       (reaps) outstanding children before process exit (bounded), so no
       process outlives the RUN in v1.
     attribution: >-
@@ -132,7 +132,7 @@ variants:
       attribution is severed BY CONSTRUCTION (new session, ppid 1): that is
       the escape under test.
 
-# Tool routes for the http_tool_call twins under the gateway route
+# Tool routes for the http_tool_call pairs under the gateway route
 # (mirrors targets/mcp-http TOOL_ROUTES / the adapters' GATEWAY_TOOL_ROUTES;
 # declared here as data, cross-checked against originators.py by tests).
 http_gateway_tools:
@@ -141,7 +141,7 @@ http_gateway_tools:
   put_state: [PUT, /state]
 
 paths:
-  # --- stdio_tool_call twins (a001-a003): the inspected twin of the harness's
+  # --- stdio_tool_call pairs (a001-a003): the inspected pair of the harness's
   # own T0-T2 transport — spawn the fs tool server as a child and speak the
   # MCP stdio wire protocol over pipes, exactly like the harness McpSession.
   - id: a001
@@ -169,7 +169,7 @@ paths:
       t0: {disposition: none, note: "no enforcement point in T0"}
       t1: {disposition: bypassed, note: "T1 inspects only the http transport; the fs stdio transport stays outside the gateway"}
       t2: {disposition: bypassed, note: "same as T1 (egress affects only direct network)"}
-      t3: {disposition: checked, note: "under the t3 plan (routes.stdio=gateway, mock_harness/plans/t3.json) the twin proxies the fs call through the gateway like the harness's GATEWAY_FS route — write_file allowed by policy-t3; bypassed only under the default local-stdio route"}
+      t3: {disposition: checked, note: "under the t3 plan (routes.stdio=gateway, mock_harness/plans/t3.json) the pair proxies the fs call through the gateway like the harness's GATEWAY_FS route — write_file allowed by policy-t3; bypassed only under the default local-stdio route"}
       t4: {disposition: bypassed, note: "the enforcement point is INSIDE the harness process; the mock harness is a separate process in the trust domain, so its calls cannot cross it — see notes"}
       t5: {disposition: bypassed, note: "same placement limitation as t4 (the harness chain is in-process; the fs tools are not gateway-routed in t5)"}
       t6: {disposition: bypassed, note: "same placement limitation as t4/t5"}
@@ -182,13 +182,13 @@ paths:
         (+ profile tolerance); the server execve is a run-level expected extra.
       deferred: false
     notes: >-
-      Twin fidelity: reproduces the harness's OWN T0-T2 transport for this
+      Pair fidelity: reproduces the harness's OWN T0-T2 transport for this
       class (McpSession parity — initialize, notifications/initialized,
       tools/call; protocolVersion 2025-06-18; clientInfo
       inspection-mock-harness). Route per design plan — the default keeps
       the stdio child shape so the kernel signature stays the T0 one;
       under the t3 plan (routes.stdio=gateway, mock_harness/plans/t3.json)
-      the twin reproduces the harness's GATEWAY_FS route instead: the
+      the pair reproduces the harness's GATEWAY_FS route instead: the
       stdio transport eliminated, one MCP tools/call JSON-RPC POST to the
       gateway per action, no local server child; the kernel signature is
       then the pooled gateway connect (http-connect — the t3 finding).
@@ -229,7 +229,7 @@ paths:
       rule: synchronous — session child pid within the record window.
       deferred: false
     notes: >-
-      Same twin fidelity caveats as a001; no server-side write effect (the
+      Same pair fidelity caveats as a001; no server-side write effect (the
       read open stays an unmapped unrelated tool read by design on the local
       route; under
       the t3 gateway route the server-side opens happen in the mcp-fs-http
@@ -263,9 +263,9 @@ paths:
     attribution:
       rule: synchronous — session child pid within the record window.
       deferred: false
-    notes: same twin fidelity caveat as a001.
+    notes: same pair fidelity caveat as a001.
 
-  # --- http_tool_call twins (a011-a014): raw route = plain HTTP request to
+  # --- http_tool_call pairs (a011-a014): raw route = plain HTTP request to
   # the trace's own endpoint (the T0 harness fetch); gateway route = MCP
   # tools/call JSON-RPC POST to the gateway /mcp endpoint (the T1+ harness
   # route). The plan selects the route; both reuse the trace's target+path.
@@ -306,7 +306,7 @@ paths:
       is the request count, inside the profile's [min..n] expected count range but not
       byte-identical to the harness's pooled shape. The gateway route
       reproduces the harness's T1+ JSON-RPC POST exactly (tool routes
-      above), which is the inspected twin's purpose.
+      above), which is the inspected pair's purpose.
 
   - id: a012
     class: http_tool_call
@@ -383,14 +383,14 @@ paths:
       t3: {disposition: checked, via: "gateway route", note: "same as T1"}
       t4: {disposition: bypassed, note: "in-process point not crossed (see a011 notes)"}
       t5: {disposition: checked, via: "gateway route", note: "gateway point crossed; harness chain not (attribution gap)"}
-      t6: {disposition: bypassed, note: "same placement limitation as t4 — the twin is denied nowhere; only the harness's own T6 policy denies its instances"}
+      t6: {disposition: bypassed, note: "same placement limitation as t4 — the pair is denied nowhere; only the harness's own T6 policy denies its instances"}
     variants: [default]
     escape_categories: []
     attribution:
       rule: synchronous — connect by dst_port within the record window.
       deferred: false
     notes: >-
-      Same raw-route client fidelity limitation as a011. The twin executes
+      Same raw-route client fidelity limitation as a011. The pair executes
       the FULL action unconditionally (policy-blind): no mock-harness code
       knows about the T6 deny rule; whether an instance is denied is a
       reconciliation-time fact about the DESIGN's enforcement point, never
@@ -480,7 +480,7 @@ paths:
       attributes:
         execve: {pathname: /bin/sh, argv: ["/bin/sh", "-c", "echo hi"], note: "identical to the harness replay's execve; the variants change only the wait/session/reparent relationship, never the execve signature"}
         ordinary: {pipe_captured_stdout: true, waited: true, note: "child stdout consumed over a pipe — dispatch-free output consumption"}
-        outliving: {waited: false, note: "the child's execve + write land after the record's end"}
+        outliving: {waited: false, note: "the child's execve + write occur after the record's end"}
         daemon: {setsid: true, reparented_to: 1, note: "session severed; the worker is not a direct child of the originator"}
     expected_multiplicity:
       execve_attempts_per_action: 1

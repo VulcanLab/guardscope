@@ -20,9 +20,9 @@
 # class S3: an agent hiding inside a local tool) — the ADAPTER writes the
 # "sent" line before the tool call, the SERVER's internal agent writes
 # its own "accepted" line — protocol "mcp", carrier "mcp_meta" (the
-# delegation id rides the same tools/call _meta the action id rides, so
+# delegation id travels in the same tools/call _meta the action id travels in, so
 # the call stays byte-shaped like every ordinary tool call). The
-# per-action trace-back results land in the run's execution manifest
+# per-action trace-back results are written in the run's execution manifest
 # (framework/execute.py, the "delegation" section).
 #
 # THE KEY MEASUREMENT: to every gateway or harness-side control the outer

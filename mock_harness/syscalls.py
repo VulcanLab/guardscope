@@ -60,13 +60,13 @@ def close_socket(sock) -> None:
     sock.close()
 
 
-# --- http (http_tool_call twins: raw fetch / gateway JSON-RPC POST) ----------
+# --- http (http_tool_call pairs: raw fetch / gateway JSON-RPC POST) ----------
 
 def http_request(method: str, url: str, body: str | None = None,
                  headers: dict[str, str] | None = None) -> tuple[int, bytes]:
     """One plain HTTP request; returns (status, response body bytes).
 
-    The raw-route twin's kernel signature is one connect per request (no
+    The raw-route pair's kernel signature is one connect per request (no
     pooling; see manifest notes on the client fidelity limitation).
     `headers` is the correlation-carrier interface for the raw route (the
     x-inspection-* headers travel on the request exactly like the real
@@ -80,7 +80,7 @@ def http_request(method: str, url: str, body: str | None = None,
         return resp.status, resp.read()
 
 
-# --- child processes (spawn variants + the MCP stdio twin session) -----------
+# --- child processes (spawn variants + the MCP stdio pair session) -----------
 
 def pipe() -> tuple[int, int]:
     """os.pipe() -> (read_fd, write_fd)."""

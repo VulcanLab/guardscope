@@ -2,7 +2,7 @@
 
   python3 -m mock_harness.driver --trace trace/traces/baseline.yaml \
       [--plan <plan.yaml>] --out <dir> \
-      [--select a031,a032] [--mode {all,escape,twins}] \
+      [--select a031,a032] [--mode {all,escape,pairs}] \
       [--run-id ID] [--placement placement.json]
 
 Reads the canonical trace spec (the single source of the action list,
@@ -70,7 +70,7 @@ DIGEST_EXCLUDES = ["started_epoch_ns", "ended_epoch_ns", "pid", "*_pid"]
 #
 # One dispatch-record/1 line per TOOL-CALL attempt, emitted next to the
 # action log (dispatch-records.jsonl). The driver is the id authority on the
-# workload side: the twins carry the canonical trace action ids onto the
+# workload side: the pairs carry the canonical trace action ids onto the
 # transports (originators.py injects them) and this layer records one line
 # per attempt with the carrier used — mirroring harnesses/pi/adapter/
 # replay.ts writeDispatchRecord, so the dispatch tooling (C5, M2a) is shared
@@ -78,11 +78,11 @@ DIGEST_EXCLUDES = ["started_epoch_ns", "ended_epoch_ns", "pid", "*_pid"]
 # harness formally implements this contract in reduced form ... so the
 # dispatch tooling is shared").
 #
-# Carriers per twin (DESIGN.md 5 priority order):
-#   stdio twin + gateway-routed http twin  params._meta namespaced keys
+# Carriers per pair (DESIGN.md 5 priority order):
+#   stdio pair + gateway-routed http pair  params._meta namespaced keys
 #                                          io.inspection/action_id + attempt
 #                                          -> carrier_used "mcp_meta"
-#   raw http twin                          x-inspection-action-id /
+#   raw http pair                          x-inspection-action-id /
 #                                          x-inspection-attempt headers via
 #                                          the http_request interface
 #                                          -> carrier_used "http_header"
@@ -106,7 +106,7 @@ def dispatch_run_id() -> str:
 
 
 def carrier_for(plan: dict, action: dict) -> str | None:
-    """The correlation carrier the twins set for this action, or None when
+    """The correlation carrier the pairs set for this action, or None when
     no carrier exists (process-level actions)."""
     cls = action["class"]
     if cls == "stdio_tool_call":
@@ -214,7 +214,7 @@ def check_plan_against_spec(plan: dict, spec: dict) -> list[str]:
 
 def select_actions(spec: dict, mode: str, select: list[str] | None) -> list[dict]:
     """Selection preserves trace order. mode presets are class-derived (the
-    escape preset = the four escape classes; twins = the two tool classes);
+    escape preset = the four escape classes; pairs = the two tool classes);
     --select takes precedence over --mode."""
     if select:
         wanted = {s.strip() for s in select if s.strip()}
@@ -225,7 +225,7 @@ def select_actions(spec: dict, mode: str, select: list[str] | None) -> list[dict
         return [a for a in spec["actions"] if a["id"] in wanted]
     if mode == "escape":
         return [a for a in spec["actions"] if a["class"] in ESCAPE_CLASSES]
-    if mode == "twins":
+    if mode == "pairs":
         return [a for a in spec["actions"] if a["class"] in TWIN_CLASSES]
     return list(spec["actions"])
 
@@ -236,7 +236,7 @@ def git_state() -> dict:
     """Best-effort git provenance; recorded null when unavailable (the
     checkout may not be a git work tree). When git is not installed, skip
     the calls entirely: a missing-binary subprocess call leaves a failed
-    execve attempt in every PATH entry, and those kernel events land in the capture
+    execve attempt in every PATH entry, and those kernel events are recorded in the capture
     (the mock harness runs its provenance stamp after its window closes)."""
     import shutil
     if shutil.which("git") is None:
@@ -511,9 +511,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--select", default=None,
                         help="comma-separated action ids to execute (spec order)")
     parser.add_argument("--mode", default="all",
-                        choices=["all", "escape", "twins"],
+                        choices=["all", "escape", "pairs"],
                         help="preset: all 15 paths; escape = the four escape "
-                             "classes; twins = the two tool-call classes")
+                             "classes; pairs = the two tool-call classes")
     parser.add_argument("--run-id", default="mock-run")
     parser.add_argument("--placement", type=Path, default=None,
                         help="placement descriptor JSON attached to the run "

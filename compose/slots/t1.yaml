@@ -20,5 +20,5 @@ service: gateway          # the compose service name the overlay must define
 network: t1net
 harness_env:               # env the base's harness services point at the slot
   GATEWAY_URL: http://gateway:8090
-log_volume: gateway-logs   # where the control's decision records land
+log_volume: gateway-logs   # where the control's decision records are written
 policy: gateway/policy.yaml

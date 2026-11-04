@@ -269,7 +269,7 @@ Workload packs are registered and versioned like plugins, but follow their own s
 | Generation provenance | For generated packs: model + prompt pinned; exploratory until replay-conformance passes |
 | Minimum kernel-signature requirements | What the sensor must be able to see for the pack to be reconcilable |
 
-`baseline-15` is the default pack and the reference workload, pinned per science release. The mock harness is the reference path-originator: a hash-pinned path manifest (all 15 paths with class, operation, origin channel, expected kernel-visible signature, expected inspection points per design, attribution rules for deferred/async instances), a policy-blind originator library (one deterministic primitive per action, syscall-level for the bypass classes, plus an inspected twin per bypass path as negative control; no code shared with the inspection layer or the mapper), and a thin deterministic driver reading the canonical trace from the shared package (one definition used by both replay injection and the mock harness, so the two cannot drift apart). The driver executes the full action surface unconditionally and never knows which paths are expected to bypass; classification comes only from reconciliation.
+`baseline-15` is the default pack and the reference workload, pinned per science release. The mock harness is the reference path-originator: a hash-pinned path manifest (all 15 paths with class, operation, origin channel, expected kernel-visible signature, expected inspection points per design, attribution rules for deferred/async instances), a policy-blind originator library (one deterministic primitive per action, syscall-level for the bypass classes, plus an inspected pair per bypass path as negative control; no code shared with the inspection layer or the mapper), and a thin deterministic driver reading the canonical trace from the shared package (one definition used by both replay injection and the mock harness, so the two cannot drift apart). The driver executes the full action surface unconditionally and never knows which paths are expected to bypass; classification comes only from reconciliation.
 
 **Mock harness placement modes** (configuration of the same code, not separate codebases):
 
@@ -281,7 +281,7 @@ Workload packs are registered and versioned like plugins, but follow their own s
 
 1. Reanalysis of existing traces first; reconcile and attribution rules fixed on real-harness data before any mock-harness cell is recorded.
 2. T0 calibration diff: mock-harness kernel signatures indistinguishable from real-harness captures for inspected paths; bypass paths validated against manifest signatures.
-3. Inspected-twin check per design: the twin must classify as `checked` under that design before that design's bypass rows are recorded.
+3. Inspected-pair check per design: the pair must classify as `checked` under that design before that design's bypass rows are recorded.
 4. Capability/placement diff documented per run (exposure claims depend on the privileges of the process).
 5. Tracee integrity check on the target kernel before the T7 row.
 
@@ -394,4 +394,4 @@ Scope rule: v1 ships only what has an existing consumer among the two harnesses 
 
 - **Open:** the JSON Schema `$id` host and distribution form (stable framework host vs. a relative-$id convention plus run-manifest-local type records) must be fixed before the first public release; the run-manifest recording mechanism is settled either way.
 - **Open:** whether a `focus`-style field is needed to mark deployment-authoritative runs (platform-team stacks pinning a named fixture) beyond what the optional `fixture` override plus `control: null` already expresses; current reading is that no such field is needed, but the platform-team comparison workflow (two single-control runs against the same named fixture) has not been exercised end to end.
-- **Open:** the mock harness's Mode H (hosted) placement lands with the mock-harness plugin in M1 only if the extension-mechanism timebox succeeds; otherwise M1 ships Modes C and R and Mode H follows, per the generic-harness sequencing.
+- **Open:** the mock harness's Mode H (hosted) placement arrives with the mock-harness plugin in M1 only if the extension-mechanism timebox succeeds; otherwise M1 ships Modes C and R and Mode H follows, per the generic-harness sequencing.

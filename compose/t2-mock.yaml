@@ -17,9 +17,9 @@
 # fingerprint, never part of the control — DESIGN.md 3).
 #
 # Outcomes per action class (main.tex Table 1): the mock harness's gateway-
-# routed http twin is checked (mock_harness/plans/t2.json); the direct-
+# routed http pair is checked (mock_harness/plans/t2.json); the direct-
 # network attempts are PREVENTED (rejected at the netns output hook); the
-# stdio twin, spawns, file writes, and credential reads stay inside the
+# stdio pair, spawns, file writes, and credential reads stay inside the
 # netns and bypass — the local-transport escapes T2 leaves open.
 #
 # The runner gates the replay on the jail's clean exit (run.py docker-waits
@@ -99,7 +99,7 @@ services:
     environment:
       TARGET_LOG_DIR: /var/log/targets
       REPLAY_LOG_DIR: /workspace/replay
-      GATEWAY_URL: http://gateway:8090      # T2: the http twin's gateway route
+      GATEWAY_URL: http://gateway:8090      # T2: the http pair's gateway route
     volumes:
       - target-logs:/var/log/targets
       - ${GUARDSCOPE_STAGING_DIR:-../runs}/mock:/workspace/replay   # driver artifacts retained per-run

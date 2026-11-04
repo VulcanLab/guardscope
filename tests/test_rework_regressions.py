@@ -22,7 +22,7 @@ Each test pins one of the nine reworked behaviors:
   6. the F7 tool route has its own bounded timeout: a stalled server is
      reported as timed-out and the direct route still runs;
   7. the adapter's F1/F3 error paths keep the delegation id echo (the
-     same pattern as the child branches: the report rides the error);
+     same pattern as the child branches: the report travels in the error);
   8. per-stream monotonic seq + fresh record_ids: repeated F1 hand-offs
      and repeated F3 acceptances in one server process never repeat
      seq 0 or reuse a record_id (delegation-record/1's frozen contract);
@@ -180,8 +180,8 @@ def test_load_detached_reports_reads_the_run_dir(tmp_path):
 
 def test_f9_child_waits_for_the_parent_to_actually_die(tmp_path):
     """While the parent is ALIVE the child takes the hand-off (its
-    acceptance + marker land) but performs NO effect and writes no report;
-    the effects land only after the parent exited. A fixed delay could not
+    acceptance + marker are recorded) but performs NO effect and writes no report;
+    the effects occur only after the parent exited. A fixed delay could not
     guarantee that — this pins the actual parent-death wait."""
     log_dir = tmp_path / "replay"
     target = tmp_path / "out" / "b.txt"
@@ -226,7 +226,7 @@ def test_f9_child_waits_for_the_parent_to_actually_die(tmp_path):
             break
         time.sleep(0.1)
     else:
-        raise AssertionError("the effects never landed after the parent died")
+        raise AssertionError("the effects never arrived after the parent died")
     assert target.read_text() == "late write"
     report = json.loads((log_dir / "f9-report-d-f9-2.json").read_text())
     assert report["status"] == "ok"
@@ -237,7 +237,7 @@ def test_f9_child_waits_for_the_parent_to_actually_die(tmp_path):
 
 def test_collect_f9_reports_collects_and_stamps_the_collection_end(tmp_path):
     """The runner-side collection helper: no submitted rows -> no wait and
-    no extension; landed reports are collected into the run dir and the
+    no extension; arrived reports are collected into the run dir and the
     collection-end timestamp (the effective window end) is stamped."""
     run_mod = _load_module("run_rework", RUN_PY)
     staging, out_dir = tmp_path / "staging", tmp_path / "run"
@@ -262,7 +262,7 @@ def test_collect_f9_reports_collects_and_stamps_the_collection_end(tmp_path):
     ids, end = run_mod.collect_f9_reports(["d2"], staging, out_dir,
                                           wait_s=5)
     assert ids == ["d2"]
-    assert time.monotonic() - t0 < 4     # it returned when the file landed
+    assert time.monotonic() - t0 < 4     # it returned when the file arrived
 
 
 def _post_window_record(spec_actions, aid, ts):

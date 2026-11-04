@@ -124,7 +124,7 @@ from it at run time. Do not delete or move the checkout after installing.
 
 ## Quickstart
 
-All writable artifacts land under one writable root, the experiments
+All writable artifacts are written under one writable root, the experiments
 workdir, resolved as: the `--workdir` flag, then the `GUARDSCOPE_WORKDIR`
 env, then the process cwd. Keep the repo tree clean by working from a
 separate experiments directory:
@@ -154,14 +154,14 @@ Without kernel privileges (or without bringing the sensor up), add
 `--no-sensor` to the run: it completes in the degraded mode and every
 output is labeled `self-reported` (`verified: false`).
 
-Outputs land in the workdir: `runs/<run-id>/` (run outputs, plus the
+Outputs are written in the workdir: `runs/<run-id>/` (run outputs, plus the
 execution manifest `runs/<experiment-id>/execution.json`) and
 `cache/compile/` (compiled traces). The first run also pays one-time
 warmup costs: the compose images build on first `up`, and the first run
 per harness compiles the reference trace into `cache/compile/` (reused
 afterwards). The repo stays read-only source.
 
-The first run of a design also pays a warmup run: warmup run IDs
+The first run of a design also incurs a warmup run: warmup run IDs
 (`warmup-` prefix) are pre-measurement first runs excluded from
 acceptance; the first live run of a design produces leftover
 bookkeeping records (harness startup writes) and fails the leftover
@@ -251,7 +251,7 @@ The repo is source-shaped and stays that way in v1. Read-only source:
 topologies + the `compose/slots/` sidecar slot declarations), `gateway/`,
 `harnesses/`, `mock_harness/`, `runner/`, `sensor/`, `targets/`,
 `trace/`, `plugins/` (manifests + the controls' binding overlay bundles),
-`registry/`, `examples/`, `env/`. Writable artifacts never land in the
+`registry/`, `examples/`, `env/`. Writable artifacts are never written in the
 repo; they go to the experiments workdir (`GUARDSCOPE_WORKDIR`),
 described above.
 

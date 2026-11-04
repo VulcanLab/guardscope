@@ -2,7 +2,7 @@
 tests for the importable pure parts (policy loading, audit writer, tool-action
 mapping). The full intercept path (agent_os only available in the container)
 is exercised live in T1-5; the policy-to-GovernancePolicy contract is pinned
-here against the shape observed in the agent-os-kernel 3.7.0 spike.
+here against the shape observed in the agent-os-kernel 3.7.0 investigation.
 
 Run from experiments/mediation/:  python3 -m pytest tests/test_gateway.py -v
 """
@@ -53,7 +53,7 @@ def test_policy_is_allow_all_for_trace_tools():
 
 def test_load_policy_yaml_matches_governancepolicy_shape():
     """The loader output has every field build_gateway() passes to
-    GovernancePolicy (spike-verified signature of agent-os-kernel 3.7.0)."""
+    GovernancePolicy (signature verified during the agent-os-kernel 3.7.0 investigation)."""
     kwargs = gateway_server.load_policy_yaml(POLICY_PATH)
     assert set(kwargs) == {"name", "allowed_tools", "denied_tools",
                            "sensitive_tools", "max_tool_calls", "blocked_patterns"}

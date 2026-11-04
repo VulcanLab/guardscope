@@ -20,7 +20,7 @@
 # process — with channel "inproc" (the boundary class S1: a role switch
 # inside one process), protocol "inproc", carrier "inproc_state" (the
 # chain ids travel in the process's own state). The per-action trace-back
-# results land in the run's execution manifest (framework/execute.py, the
+# results are written in the run's execution manifest (framework/execute.py, the
 # "delegation" section).
 #
 # The key difference from F2 (the child-process hand-off): no child
