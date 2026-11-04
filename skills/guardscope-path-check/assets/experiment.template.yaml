@@ -1,0 +1,8 @@
+# Experiment file template (the only user-facing config format, DESIGN.md 6).
+# Copy as one file per design; mock-harness experiments first, then real
+# harnesses. Reference examples: examples/t1-mock.yaml, examples/t1-pi.yaml.
+schema: 1
+control: REPLACE-control-id            # must match plugins/<id>/manifest.json
+designs: [REPLACE-tX]                  # must be inside the manifest's supported_designs
+harness: REPLACE-mock-harness-or-pi-or-openclaw
+workload: baseline-15

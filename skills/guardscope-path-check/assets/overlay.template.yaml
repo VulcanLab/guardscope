@@ -1,0 +1,40 @@
+# Control-binding overlay for design REPLACE-tX (and its -mock variant).
+# Copy as plugins/<id>/overlay/tX.yaml and plugins/<id>/overlay/tX-mock.yaml.
+#
+# FIRST read compose/slots/tX.yaml: it names the compose service you must
+# define (below, `gateway` for t1 — use the slot sidecar's `service` value),
+# the slot `network`, the `log_volume` for decision records, and the
+# `policy` artifact path.
+#
+# The overlay validator (framework/overlay.py, validate_overlay) enforces:
+# 1. Define exactly the declared slot service; it must carry `image` or
+#    `build`. You may set/override that service's fields.
+# 2. Auxiliary services only under names starting `control-*`, attached
+#    only to the slot's network or the slot service's netns
+#    (`network_mode: "service:<slot>"`).
+# 3. Never remove or redeclare a base service (redeclaring is a
+#    modification; compose merge cannot remove).
+# 4. No other top-level structure: networks, volumes, and the rest belong
+#    to the base file (compose/tX.yaml or compose/tX-mock.yaml).
+#
+# Bring-up is a plain compose merge, base FIRST (the relative build context
+# below resolves against the FIRST compose file's directory, i.e. the repo
+# root; keep the `..` convention used by plugins/agt-gateway/overlay/):
+#   docker compose -f compose/tX-mock.yaml -f plugins/<id>/overlay/tX-mock.yaml up -d
+#   docker compose -f compose/tX-mock.yaml -f plugins/<id>/overlay/tX-mock.yaml --profile sensor up -d tracee
+
+services:
+  REPLACE-slot-service-name:        # from compose/slots/tX.yaml `service`
+    build:
+      context: ..                    # repo root (FIRST file's directory)
+      dockerfile: REPLACE-path-to-control-Dockerfile
+    image: REPLACE-control-image
+    container_name: REPLACE-tX-<id>  # mock variant: distinct name from tX-mock
+    networks: [REPLACE-slot-network] # from compose/slots/tX.yaml `network`
+    environment:
+      REPLACE_SLOT_UPSTREAM_URL: http://REPLACE-upstream:PORT   # from the slot sidecar's harness_env conventions
+      REPLACE_LOG_DIR: /var/log/REPLACE-control                 # write decision records to the log volume
+    volumes:
+      - REPLACE-log-volume:/var/log/REPLACE-control             # from compose/slots/tX.yaml `log_volume`
+    depends_on: [REPLACE-upstream-service]
+    restart: unless-stopped

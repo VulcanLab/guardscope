@@ -1,0 +1,24 @@
+{
+  "schema": 1,
+  "id": "REPLACE-control-id",
+  "version": "REPLACE-0.1.0",
+  "kind": "control",
+  "slot_kinds": ["REPLACE-one-or-more-of: container, attached_process, log_ingest, embedded, kernel"],
+  "positions": [
+    {
+      "id": "REPLACE-position-id",
+      "designs": ["REPLACE-designs-must-stay-inside-supported_designs"],
+      "note": "REPLACE-optional-plain-what-this-placement-is"
+    }
+  ],
+  "record_source": "REPLACE-native-or-ingested",
+  "observable_action_classes": ["REPLACE-subset-of: stdio_tool_call, http_tool_call, direct_network, process_spawn, file_write, credential_access"],
+  "can_enforce": "REPLACE-enforce-or-observe",
+  "emitted_schema_versions": ["decision-record/1"],
+  "correlation": {
+    "echoes_meta": false,
+    "echoes_header": false
+  },
+  "supported_designs": ["REPLACE-t1-t6-currently-t7-has-no-validated-fixture"],
+  "notes": "REPLACE-optional-factual-notes"
+}
