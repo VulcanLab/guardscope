@@ -1093,7 +1093,11 @@ class Reconciler:
             # write on the stdio wire. The widening applies to EVERY
             # design branch (T0-T7) — the restricted actions are the same
             # regardless of which control watches the wire.
-            extra = self._restricted_tool_route_calls()
+            # Each restricted tool-route call spawns its own MCP session
+            # (initialize + tools/call response = ~2 extra wire writes
+            # per restricted action, observed live: T0/F7 had 8 for
+            # n=3+1+2, not n=3+1+2*1=6)
+            extra = self._restricted_tool_route_calls() * 2
             if self.design == "t7":
                 # t7: the harness MCP config holds BOTH stdio servers
                 # (toy-mcp-fs and the mcp-http-stdio bridge): the fs

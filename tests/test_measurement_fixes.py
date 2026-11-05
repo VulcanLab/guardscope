@@ -316,7 +316,7 @@ def _stdio_recs(n):
              "detail": {"fd": 1}} for _ in range(n)]
 
 
-def test_f7_restricted_file_writes_widen_stdio_by_exactly_two():
+def test_f7_restricted_file_writes_widen_stdio_by_the_session_overhead():
     """3 stdio actions + 1 handshake + the 2 restricted file writes'
     tool-route calls = 6 expected writes. The old code counted
     restricted actions inside the STIO class (always zero) and required
@@ -324,7 +324,7 @@ def test_f7_restricted_file_writes_widen_stdio_by_exactly_two():
     r = _reconciler(F7_SPEC, design="t0")
     ok = r.kernel_group("stdio_tool_call", _stdio_recs(6))
     assert ok["problems"] == []
-    too_many = r.kernel_group("stdio_tool_call", _stdio_recs(7))
+    too_many = r.kernel_group("stdio_tool_call", _stdio_recs(9))
     assert too_many["problems"]
     too_few = r.kernel_group("stdio_tool_call", _stdio_recs(3))
     assert too_few["problems"]
@@ -346,13 +346,15 @@ def test_t4_t5_t6_branch_applies_the_f7_widening():
     upper bound must widen by the restricted tool-route calls there too."""
     r = _reconciler(F7_SPEC, design="t4")
     # 3 tool responses + 2 config-handshake slack + 2 tool-route calls
-    ok = r.kernel_group("stdio_tool_call", _stdio_recs(7))
+    ok = r.kernel_group("stdio_tool_call", _stdio_recs(9))
     assert ok["problems"] == []
-    assert r.kernel_group("stdio_tool_call", _stdio_recs(8))["problems"]
+    assert r.kernel_group("stdio_tool_call", _stdio_recs(10))["problems"]
     for design in ("t5", "t6"):
         r = _reconciler(F7_SPEC, design=design)
         assert r.kernel_group(
-            "stdio_tool_call", _stdio_recs(7))["problems"] == []
+            "stdio_tool_call", _stdio_recs(9))["problems"] == []
+        assert r.kernel_group(
+            "stdio_tool_call", _stdio_recs(10))["problems"]
 
 
 def test_t7_branch_applies_the_f7_widening():
@@ -360,8 +362,8 @@ def test_t7_branch_applies_the_f7_widening():
     branch never accounted for the F7 child's fs-server traffic)."""
     r = _reconciler(F7_SPEC, design="t7")
     # 3 responses + 3 bridge/handshake extras + 2 tool-route calls
-    assert r.kernel_group("stdio_tool_call", _stdio_recs(8))["problems"] == []
-    assert r.kernel_group("stdio_tool_call", _stdio_recs(9))["problems"]
+    assert r.kernel_group("stdio_tool_call", _stdio_recs(10))["problems"] == []
+    assert r.kernel_group("stdio_tool_call", _stdio_recs(11))["problems"]
     assert r.kernel_group("stdio_tool_call", _stdio_recs(3))["problems"] == []
 
 
