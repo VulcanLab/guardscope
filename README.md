@@ -1,5 +1,9 @@
 # guardscope
 
+<p align="center">
+  <img src="assets/guardscope-horizontal.svg" alt="guardscope logo" width="438">
+</p>
+
 ## What guardscope does
 
 guardscope determines which of an LLM agent's action paths a runtime control (an agent gateway, a guardrail engine, an in-process policy engine, a kernel monitor) actually checks. A control can only evaluate the actions that cross the point where it is placed, and an agent can act through far more paths than the tool-call channel: subprocesses, direct network egress, local tool servers, sub-agents, scheduled tasks. guardscope addresses the question in two stages:
