@@ -152,10 +152,6 @@ The fixture fingerprint records the base and overlay hashes separately, so your 
 - `docs/shim-guide.md`: translating a control's vendor log into `decision-record/1` records, and verifying the translation with the L1 conformance run.
 - `docs/measure-your-control.md`: the onboarding walk-through for bringing a control to measurement: manifest, binding overlay, validation, measurement, and reading your coverage column honestly.
 
-## Repository layout
-
-The repo is source-shaped and stays that way in v1. Read-only source: `framework/` (the measurement core + schemas), `compose/` (fixture base topologies + the `compose/slots/` sidecar slot declarations), `gateway/`, `harnesses/`, `mock_harness/`, `runner/`, `sensor/`, `targets/`, `trace/`, `plugins/` (manifests + the controls' binding overlay bundles), `registry/`, `examples/`, `env/`, `skills/` (the `guardscope-path-check` agent skill for the static path check). Writable artifacts are never written in the repo; they go to the experiments workdir (`GUARDSCOPE_WORKDIR`), described above.
-
 ## License
 
 Apache-2.0 (see `LICENSE`).
