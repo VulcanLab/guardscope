@@ -16,7 +16,7 @@ SCHEMA_DIR = Path(__file__).resolve().parent
 SCHEMA_TYPES = {
     "decision-record": "decision-record",
     "dispatch-record": "dispatch-record",
-    # the delegation study's record layer (0.3.0): one record per agent
+    # the delegation study's record layer: one record per agent
     # hand-off / acceptance, from the harness/fixture side
     "delegation-record": "delegation-record",
     "experiment": "experiment",

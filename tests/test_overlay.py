@@ -127,7 +127,7 @@ def test_no_slot_designs_declare_none(design):
         load_slot(design)
 
 
-# --- the T7 kernel slot (0.2.0) ---------------------------------------------------
+# --- the T7 kernel slot ---------------------------------------------------
 
 def test_t7_slot_descriptor_loads():
     """The kernel slot: kind kernel, the kernel-control service, the

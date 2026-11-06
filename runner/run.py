@@ -182,7 +182,7 @@ DESIGNS = {
     # as the auditable policy artifact.
     "t6": {"prefix": "t6", "compose": "t6.yaml", "gateway": True,
            "enforcement_record": "harness", "harness_policy": "/opt/inspection/t6-policy.json"},
-    # t7: kernel-level enforcement (0.2.0). The enforcement-point record is
+    # t7: kernel-level enforcement. The enforcement-point record is
     # the kernel CONTROL's decision-records stream on the control-logs
     # volume: the control service (a kernel slot, compose/slots/t7.yaml)
     # translates its engine's match events into decision-record/1 via its

@@ -107,7 +107,7 @@ PREVENTED_CLASSES = {
     # in-process policy; the process-level actions bypass (invisible by
     # construction), nothing prevented
     "t6": set(),
-    # t7 (0.2.0): nothing prevented. The kernel position mediates through
+    # t7: nothing prevented. The kernel position mediates through
     # a POLICY (the actplane engine), so its kill rule's denial is a policy
     # decision — the denied instance (a032) crosses the kernel enforcement
     # point and classifies as checked-denied, not prevented; every

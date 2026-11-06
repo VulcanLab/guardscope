@@ -1,5 +1,5 @@
 """Delegation records and tracing back (the delegation study's record
-layer; delegation-record/1, added 0.3.0).
+layer; delegation-record/1).
 
 Three jobs, in plain words:
 

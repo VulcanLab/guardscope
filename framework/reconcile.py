@@ -54,7 +54,7 @@ PREVENTED_CLASSES = {
     "t4": set(),
     "t5": set(),
     "t6": set(),
-    # t7 (0.2.0): nothing prevented. The kernel position mediates through
+    # t7: nothing prevented. The kernel position mediates through
     # a POLICY (the actplane engine), so its kill rule's denial is a policy
     # decision — the denied instance (a032) crosses the kernel enforcement
     # point and classifies as checked-denied (the deny decision record is
@@ -92,7 +92,7 @@ INSPECTED_CLASSES = {
     # t6: in-process policy engine — same placement as t4, so the same
     # inspected set; the decisions carry argument-level rule matches
     "t6": {"http_tool_call", "stdio_tool_call"},
-    # t7 (0.2.0): the kernel position mediates the EFFECT classes — exec,
+    # t7: the kernel position mediates the EFFECT classes — exec,
     # write, connect, and the seeded secret reads — at syscall granularity
     # (no tool/session identity; the tool-call classes are invisible at
     # their own level and appear only as kernel-level expected-extras)
@@ -386,7 +386,7 @@ def compute(spec: dict, decisions: list[dict], parse_problems: list[str],
         compared = [k for k in args if k in params]
         return bool(compared) and all(params[k] == args[k] for k in compared)
 
-    # --- the kernel-position attribution (t7; 0.2.0) -------------------------
+    # --- the kernel-position attribution (t7) -------------------------
     # Kernel-control records carry no tool identity (DESIGN.md 1: the
     # least-semantic position identifies actors): the join is class+target —
     # paths exact (the trace's declared targets), spawns by binary basename

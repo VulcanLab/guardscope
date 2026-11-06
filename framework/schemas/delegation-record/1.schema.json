@@ -3,7 +3,7 @@
   "$id": "https://guardscope.dev/schemas/delegation-record/1",
   "title": "delegation-record/1",
   "description": "One record per agent hand-off (or its acceptance) from the harness/fixture side (the delegation fixtures, DESIGN.md 7; the delegation study's scenario classes S1-S8). Sibling of dispatch-record/1 sharing the identity fields. The record says WHO handed WHAT to WHOM, through WHICH channel, on WHICH machine — and, through the parent pointer, which earlier hand-off caused this one (the chain the study's tracing-back metric walks).",
-  "$comment": "Added with the delegation study (0.3.0). The records come from the harness adapter / fixture side (the side that originates the delegation), never from the control: controls stay workload-blind (DESIGN.md 5). Emitted as delegation-records.jsonl on the replay staging volume (the storage that outlives the parent process — the study's outlives-parent scenario reads it after the parent exits). outcome-shaped keys are rejected by the validation-time reject list in framework/records.py (reconciler-only).",
+  "$comment": "Added with the delegation study. The records come from the harness adapter / fixture side (the side that originates the delegation), never from the control: controls stay workload-blind (DESIGN.md 5). Emitted as delegation-records.jsonl on the replay staging volume (the storage that outlives the parent process — the study's outlives-parent scenario reads it after the parent exits). outcome-shaped keys are rejected by the validation-time reject list in framework/records.py (reconciler-only).",
   "type": "object",
   "required": [
     "schema",

@@ -147,7 +147,7 @@ Sibling schema sharing the identity fields with `decision-record/1`: `run_id`, `
 - Full identity (type + namespace + version) lives only in the JSON Schema `$id` (e.g. `https://<framework-host>/schemas/decision-record/1`) and in the run manifest, which records which format versions were used for everything in the run.
 - Versioning is additive-only within `/1`; unknown-field tolerance is mandatory in every consumer and is kit-tested. Breaking changes go to `/2`. Fixtures are pinned per major.
 - v0 `AuditEntry` (the gateway `decisions.jsonl` format) remains a valid input via a declared reader-side mapping; existing data remains readable.
-- The user-facing schema set: `experiment/1`, `decision-record/1`, `dispatch-record/1`, `delegation-record/1` (0.3.0: the delegation study's record layer — one record per agent hand-off or acceptance, from the harness/fixture side, never from controls; carries the came-from pointer chain, the which-machine label, and the carrier that says how the id travelled), `capabilities-manifest/1` (a small identity/capabilities block inside the plugin package: id, version, positions, emitted schema versions). The grid-plan and composition schema families are dropped (§6, §10).
+- The user-facing schema set: `experiment/1`, `decision-record/1`, `dispatch-record/1`, `delegation-record/1` (the delegation study's record layer — one record per agent hand-off or acceptance, from the harness/fixture side, never from controls; carries the came-from pointer chain, the which-machine label, and the carrier that says how the id travelled), `capabilities-manifest/1` (a small identity/capabilities block inside the plugin package: id, version, positions, emitted schema versions). The grid-plan and composition schema families are dropped (§6, §10).
 
 ## 5. Correlation
 
@@ -240,7 +240,7 @@ Reference designs and fixtures:
 | T4 | Harness-native permission chain | `control: null`; permission chain is harness-intrinsic, configured by `enforcement_config` |
 | T5 | Harness permission chain + gateway (two points) | Gateway is selected; chain is harness-intrinsic; the attribution gap between the two record streams is what this design measures |
 | T6 | In-process policy engine (declarative rules at the harness tool-call hook) | Harness-embedded control registers with an `embedded` slot |
-| T7 | Kernel-level enforcement | Kernel slot (0.2.0): the exemplar actplane binding loads the engine on the pinned 6.17.x host kernel; `control: null` keeps the observation row (kernel observability, no enforcement) |
+| T7 | Kernel-level enforcement | Kernel slot: the exemplar actplane binding loads the engine on the pinned 6.17.x host kernel; `control: null` keeps the observation row (kernel observability, no enforcement) |
 
 **Custom fixtures** run off-matrix: full measurement fidelity (all streams, all evidence classes), but only grid placement is provisional. They carry an `off_matrix` flag, a mandatory **nearest-design projection** (which core design the fixture most resembles, plus a divergence note), and registry-tracked recurrence. Custom fixtures arrive two ways: an experiment `fixture` block, or an on-matrix rule violation by a control-binding overlay (above; the violations are recorded). The flag controls whether results enter the grid, not whether they are published: off-matrix results appear in an extension section with their own evidence class.
 

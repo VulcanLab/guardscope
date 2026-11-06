@@ -1,5 +1,5 @@
 # compose/t7.yaml — deployment design T7: kernel-level enforcement
-# (materialized 0.2.0; DESIGN.md 7). The harness runs in its T0
+# (DESIGN.md 7). The harness runs in its T0
 # configuration (no intrinsic enforcement, no gateway): the enforcement
 # point of this design is the HOST KERNEL, occupied by the selected
 # kernel control (a privileged service sharing the host pid namespace —

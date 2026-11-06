@@ -4,7 +4,7 @@
 # not exist for t7 (the mock originator's kernel-position measurement is
 # follow-up work; plugins/mock-harness/manifest.json declares t0-t3).
 #
-# The T7 slot is a KERNEL slot (0.2.0): the control enforces from the host
+# The T7 slot is a KERNEL slot: the control enforces from the host
 # kernel — a privileged container sharing the host pid namespace — not from
 # a network position. The slot's network attachment exists only for compose
 # topology consistency (aux control-* services and healthchecks); the

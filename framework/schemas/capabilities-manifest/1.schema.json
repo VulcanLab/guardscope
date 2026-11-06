@@ -46,7 +46,7 @@
           "embedded",
           "kernel"
         ],
-        "$comment": "DESIGN.md 3 provision(slot): slot kinds supported. 'kernel' (added 0.2.0 with the T7 fixture): the control enforces from the host kernel (privileged, host pid namespace); a control binding a kernel slot must declare kernel_interference (DESIGN.md 3 'eBPF-enforcing controls')."
+        "$comment": "DESIGN.md 3 provision(slot): slot kinds supported. 'kernel' (added with the T7 fixture): the control enforces from the host kernel (privileged, host pid namespace); a control binding a kernel slot must declare kernel_interference (DESIGN.md 3 'eBPF-enforcing controls')."
       }
     },
     "positions": {

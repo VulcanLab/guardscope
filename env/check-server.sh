@@ -22,7 +22,7 @@ KVER=$(uname -r)
 KMINOR=$(echo "$KVER" | grep -oE '^\[0-9]+\.[0-9]+' | cut -d. -f2)
 KMAJOR=$(echo "$KVER" | cut -d. -f1)
 if [[ -z "$KMINOR" ]] || (( KMAJOR > 5 || (KMAJOR == 5 && KMINOR >= 8) )); then ok "kernel version $KVER (>= 5.8 required for Tracee)"; else bad "kernel version $KVER (Tracee needs >= 5.8, ideally >= 5.10)"; fi
-# T7 kernel-slot pin (0.2.0; probe 2026-10-31, targets/actplane/README.md):
+# T7 kernel-slot pin (probe 2026-10-31, targets/actplane/README.md):
 # the exemplar kernel control's eBPF engine loads on 6.17.x; it fails on
 # 6.8 (verifier combined-stack limit), 7.0 (verifier 1M-insn budget), and
 # <6.2 (bpf_user_ringbuf_drain helper missing). Only warn when the host

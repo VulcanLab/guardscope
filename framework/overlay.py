@@ -216,7 +216,7 @@ def validate_overlay(design: str, overlay_path,
                 f"slot service {slot.service!r} defines neither image nor "
                 f"build")
         # kernel slots (DESIGN.md 3 'eBPF-enforcing controls'; slot kind
-        # introduced with the T7 fixture, 0.2.0): the control enforces
+        # introduced with the T7 fixture): the control enforces
         # from the HOST KERNEL, so the slot service must be privileged and
         # share the host pid namespace — anything less cannot reach the
         # kernel enforcement surface, and the violation is a custom-fixture

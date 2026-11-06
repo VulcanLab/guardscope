@@ -130,7 +130,7 @@ def test_null_control_with_t4_requires_hostable_harness(tmp_path):
 
 
 def test_designs_checked_against_harness_t_modes(tmp_path):
-    # pi supports t0-t7 (t7 since 0.2.0); openclaw has no t4 fixture
+    # pi supports t0-t7 ; openclaw has no t4 fixture
     p = write_experiment(tmp_path, base_doc(designs=["t4"],
                                             harness="openclaw"))
     with pytest.raises(ExperimentError) as exc:
@@ -275,7 +275,7 @@ def test_plan_flags_t7_observation_only(tmp_path):
 
 
 def test_t7_control_bound_is_a_kernel_placement(tmp_path):
-    """0.2.0: a control-bound t7 run composes the kernel slot — the
+    """A control-bound t7 run composes the kernel slot — the
     composed fixture id, the binding overlay, and NOT the observation-row
     flag (that stays the control:null expression)."""
     p = write_experiment(tmp_path, base_doc(control="actplane",
