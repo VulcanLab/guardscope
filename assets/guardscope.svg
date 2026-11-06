@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <!-- guard's field of view: covers only the paths inside the cone -->
+  <path d="M24 50 L84 3 L84 97 Z" fill="#fde047" fill-opacity="0.2"/>
+  <!-- action paths inside the guard's scope: checked -->
+  <circle cx="68" cy="50" r="9" fill="#fde047"/>
+  <circle cx="64" cy="31" r="9" fill="#fde047"/>
+  <circle cx="64" cy="69" r="9" fill="#fde047"/>
+  <!-- action paths outside the scope: bypassed, faded -->
+  <circle cx="46" cy="12" r="8" fill="#6b7280" fill-opacity="0.35"/>
+  <circle cx="46" cy="88" r="8" fill="#6b7280" fill-opacity="0.35"/>
+  <!-- the agent -->
+  <circle cx="24" cy="50" r="11" fill="#ffca3a"/>
+</svg>
