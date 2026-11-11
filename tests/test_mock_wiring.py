@@ -303,7 +303,8 @@ def test_carriers_travel_on_the_transports(monkeypatch, tmp_path):
             "routes": {"http": "gateway", "gateway_url": "http://gateway:8090"}}
     fake = mh.install_fake(monkeypatch, mh.FakeSyscalls())
     drv.execute(BASELINE, plan, out)
-    gw_frames = [json.loads(c[3]) for c in fake.calls if c[0] == "http_request"]
+    gw_frames = [json.loads(c[3]) for c in fake.calls
+                 if c[0] == "http_request" and '"tools/call"' in c[3]]
     assert all(f["params"]["_meta"]["io.inspection/attempt"] == 0
                for f in gw_frames)
     assert [f["params"]["_meta"]["io.inspection/action_id"] for f in gw_frames] \
@@ -322,11 +323,18 @@ def test_t3_plan_full_driver_run(monkeypatch, tmp_path):
     fake = mh.install_fake(monkeypatch, mh.FakeSyscalls())
     run_manifest = drv.execute(BASELINE, plan, tmp_path)
     # 3 stdio + 4 http tool calls, all one JSON-RPC POST to the gateway each
+    # (plus the ONE streamable-HTTP session handshake both pairs share:
+    # initialize + the initialized notification, one session per run)
     posts = [c for c in fake.calls if c[0] == "http_request"]
-    assert len(posts) == 7
-    assert all(c[1] == "POST" and c[2] == "http://gateway:8090/mcp" for c in posts)
     frames = [json.loads(c[3]) for c in posts]
-    stdio_frames = [f for f in frames if f["params"]["name"]
+    tools_calls = [f for f in frames if f.get("method") == "tools/call"]
+    assert len(tools_calls) == 7
+    assert sorted(f["method"] for f in frames
+                  if f.get("method") in ("initialize",
+                                          "notifications/initialized")) == \
+        ["initialize", "notifications/initialized"]
+    assert all(c[1] == "POST" and c[2] == "http://gateway:8090/mcp" for c in posts)
+    stdio_frames = [f for f in tools_calls if f["params"]["name"]
                     in ("write_file", "read_file", "list_directory")]
     assert [f["params"]["name"] for f in stdio_frames] == \
         ["write_file", "read_file", "list_directory"]
@@ -350,7 +358,7 @@ def test_t3_gateway_refusal_is_data_not_run_failure(monkeypatch, tmp_path):
     monkeypatch.setenv("INSPECTION_RUN_ID", "t3-refused")
 
     class RefusingGateway(mh.FakeSyscalls):
-        def http_request(self, method, url, body=None, headers=None):
+        def http_request_full(self, method, url, body=None, headers=None):
             raise OSError(111, "Connection refused")
 
     fake = mh.install_fake(monkeypatch, RefusingGateway())

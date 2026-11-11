@@ -1,0 +1,63 @@
+# plugins/agentgateway/collect.yaml — the binding's runner recipe: how the
+# runner collects this control's enforcement-point record per design and
+# which artifacts the binding actually deploys (the ingested record path,
+# DESIGN.md 3; the framework loader is framework/contracts.py
+# load_collect_recipe).
+#
+# A binding that ships this recipe replaces the runner's DEFAULT collection
+# (the v0 gateway's docker-exec'd decisions.jsonl) with the ingested path:
+#   1. the vendor rows are cat'd from the binding's collector container (the
+#      control image is distroless — there is no shell in the gateway
+#      container to exec; the python-based collector mounts the same slot
+#      log volume) and window-scoped to THIS run before translation;
+#   2. the plugin shim translates them into decision-record/1
+#      (gateway/decision-records.jsonl; the shim's stderr problems are
+#      retained as gateway/shim-problems.txt, never dropped);
+#   3. the same records (minus the readiness probe's pre-window record —
+#      runner plumbing, not workload traffic) are written as
+#      gateway/decisions.jsonl, the C1-C4 coverage input (the same
+#      decision-record/1-in-decisions.jsonl shape the t7 kernel control
+#      uses);
+#   4. the deployed config is copied as the run's policy artifact
+#      (gateway/policy.json) and hashed into the fixture fingerprint's
+#      enforcement_config component — the config the binding mounts, not
+#      the design's default gateway/policy.yaml.
+#
+# Readiness (framework/contracts.py READINESS_TOOL): the deployed config
+# carries a dedicated deny rule for the reserved tool, so the runner issues
+# one pre-window tools/call and requires its deny record in the collected
+# stream — a started gateway is not a ready one.
+#
+# session_shape (the binding-declared gateway session shape, threaded by
+# the runner into reconciliation): this binding fronts the harness's http
+# tool route with a STATEFUL streamable-HTTP MCP session (the client
+# module below / the mock harness's GatewaySession: initialize +
+# notifications/initialized on their own sockets, then one tools/call per
+# action) — the shape the harness profiles' http_startup_calibration pins
+# are calibrated on and gate on. A binding whose client speaks the direct
+# shape (one stateless POST per call — the v0 AGT gateway) declares
+# nothing here and its runs keep the plain pooled-connect range.
+#
+# Vendor-log scoping: the slot's log volume ACCUMULATES rows across runs
+# (the collector appends for the topology's lifetime); the runner scopes the
+# rows to this run before translating them (from the readiness probe's
+# issuance time through the replay window's end), so the translated
+# decision records carry this run's identity honestly.
+
+schema: 1
+designs: [t1]
+session_shape: streamable-mcp-session
+vendor_log: agentgateway-trace.jsonl
+vendor_log_path: /var/log/gateway/agentgateway-trace.jsonl
+collect_container: agentgateway-trace
+shim: shim/translate.py
+policy: config/t1-allow-all.json
+readiness: true
+harness_client_modules:
+  # the pi adapter's GATEWAY_CLIENT_MODULE hook: a streamable-HTTP MCP
+  # client (Accept + Mcp-Session-Id + SSE decode — agentgateway v1.5.0's
+  # frontend requires all three), baked into the pi image with the adapter
+  # (harnesses/pi/adapter/streamable-mcp-client.mjs). The mock harness
+  # needs no module: its driver's gateway session (mock_harness/
+  # originators.GatewaySession) speaks the protocol directly.
+  pi: /opt/inspection/adapter/streamable-mcp-client.mjs

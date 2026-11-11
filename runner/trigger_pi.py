@@ -49,7 +49,8 @@ def compile_trace() -> Path:
 
 
 def run_replay(compiled_path: Path, replay_dir: Path, container: str, timeout_s: float,
-               design: str = "t0", run_id: str | None = None) -> dict:
+               design: str = "t0", run_id: str | None = None,
+               gateway_client_module: str | None = None) -> dict:
     """Stage the compiled trace into the container's replay dir (runs/pi on the
     host, /workspace/replay in the container), exec one pi RPC process, trigger
     the extension command, and read back the result JSON from the same dir.
@@ -62,7 +63,12 @@ def run_replay(compiled_path: Path, replay_dir: Path, container: str, timeout_s:
 
     run_id (M2a): stamped into the pi process env as INSPECTION_RUN_ID so the
     adapter's dispatch records (dispatch-record/1) carry the run identity;
-    None keeps the adapter's own fallback."""
+    None keeps the adapter's own fallback.
+
+    gateway_client_module: the bound control's gateway client for the pi
+    adapter's GATEWAY_CLIENT_MODULE hook (the binding's recipe declares it;
+    e.g. the streamable-HTTP client agentgateway v1.5.0 requires). None
+    keeps the adapter's built-in gateway client (the v0 path, unchanged)."""
     staged = replay_dir / "compiled.json"
     replay_dir.mkdir(parents=True, exist_ok=True)  # user-owned when driver pre-creates
     # Stale artifacts are root-owned (written by the root container); clean
@@ -90,7 +96,9 @@ def run_replay(compiled_path: Path, replay_dir: Path, container: str, timeout_s:
     no_session_flags = ([] if two_phase else ["--no-session"])
     # M2a: the run identity reaches the adapter as an env stamp (the dispatch
     # records and C5 join on it); absent run_id keeps the adapter fallback.
-    run_env = (["-e", f"INSPECTION_RUN_ID={run_id}"] if run_id else [])
+    run_env = (["-e", f"INSPECTION_RUN_ID={run_id}"] if run_id else []) \
+        + (["-e", f"GATEWAY_CLIENT_MODULE={gateway_client_module}"]
+           if gateway_client_module else [])
     proc = subprocess.Popen(
         ["docker", "exec", "-i", *run_env, container,
          "pi", "--mode", "rpc", *model_flags, *no_session_flags, "-e", EXTENSION_PATH],

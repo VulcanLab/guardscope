@@ -1,0 +1,59 @@
+# plugins/agentgateway/overlay/t1.yaml — the agentgateway control binding for
+# design T1 (DESIGN.md 7): the gateway slot's service definition
+# (compose/slots/t1.yaml: service `gateway`, network t1net, decision-log
+# volume gateway-logs) plus the binding's collector, the auxiliary
+# control-agentgateway-trace service that follows agentgateway's
+# /debug/trace decision stream into the slot's log volume (the control
+# writes no decision log itself; record_source: ingested, the plugin shim
+# plugins/agentgateway/shim/translate.py translates the captured rows).
+#
+# Image pin: CNCF agentgateway v1.5.0, arm64 manifest digest (re-verified
+# against ghcr.io 2026-11-10; index + amd64 digests in
+# plugins/agentgateway/versions.env). platform is pinned to the digest's
+# architecture (arm64) — the same pin discipline as the pre-guardscope probe
+# (no cross-arch emulation).
+#
+# Merged bring-up (the base comes FIRST — the relative paths below resolve
+# against the FIRST compose file's directory, compose/, so ../plugins/...
+# is the repo's plugin bundle):
+#   docker compose -f compose/t1.yaml -f plugins/agentgateway/overlay/t1.yaml up -d
+#   docker compose -f compose/t1.yaml -f plugins/agentgateway/overlay/t1.yaml --profile sensor up -d tracee
+#
+# The deployed policy artifact is plugins/agentgateway/config/t1-allow-all.json
+# (mounted read-only at /config.json): the T1 allow-all authorization rule
+# (require: true) over the fixture's mcp-http target, one allow/deny
+# authorizationResult per tools/call — see the config's digest record in
+# versions.env and README.md.
+
+services:
+  gateway:
+    image: ghcr.io/agentgateway/agentgateway@sha256:f64c27c8bd8aa25f07864dab07072026e375f22c6298c2c2d64f7d6c08a24130
+    platform: linux/arm64
+    container_name: t1-gateway
+    command: ["-f", "/config.json"]
+    networks: [t1net]
+    volumes:
+      - ../plugins/agentgateway/config/t1-allow-all.json:/config.json:ro
+      - gateway-logs:/var/log/gateway
+    depends_on: [mcp-http]
+    restart: unless-stopped
+
+  # the decision-stream collector (overlay rule b: auxiliary control-*,
+  # attached to the slot's network): follows the gateway's admin
+  # /debug/trace SSE and persists the vendor rows to the slot's
+  # decision-log volume — the shim's raw_ref evidence source.
+  control-agentgateway-trace:
+    build:
+      context: ..
+      dockerfile: plugins/agentgateway/collector/Dockerfile
+    image: inspection/agentgateway-trace
+    container_name: t1-agentgateway-trace
+    networks: [t1net]
+    environment:
+      AGENTGATEWAY_ADMIN_URL: http://gateway:15000
+      AGENTGATEWAY_TRACE_OUT: /var/log/gateway/agentgateway-trace.jsonl
+      AGENTGATEWAY_TRACE_FOLLOW_SECONDS: "3600"
+    volumes:
+      - gateway-logs:/var/log/gateway
+    depends_on: [gateway]
+    restart: unless-stopped

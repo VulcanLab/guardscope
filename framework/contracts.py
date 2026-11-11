@@ -146,6 +146,22 @@ class HarnessAdapterContract(Protocol):
 # loaded policy denies).
 READINESS_TOOL = "__readiness_check__"
 
+# The container-topology form of the same convention (the binding side of
+# ready() for controls deployed as compose services): a control binding
+# whose deployed config is allow-all over the measured surface carries a
+# DEDICATED deny rule for the reserved READINESS_TOOL (isolated from the
+# measurement: no workload trace calls it), declared in its binding recipe
+# (plugins/<control>/collect.yaml, `readiness: true`). The runner then
+# issues exactly one readiness tools/call through the topology BEFORE the
+# measurement window opens and requires (a) the gateway to refuse it and
+# (b) its deny decision record to appear in the collected stream — a started
+# container is not ready, and opening the capture window before enforcement
+# works silently produces false "bypassed" results. Bindings that ship no
+# recipe stay on the runner's default collection (the v0 gateway path),
+# which has no readiness probe (unchanged behavior, DESIGN.md 2: no core
+# code behaves differently depending on a plugin's identity — the recipe
+# is data the binding declares, not a special case).
+
 
 def readiness_test_action() -> dict:
     """A runner-issued test action the configured policy must deny
@@ -453,3 +469,102 @@ def _check_outcome_keys(node) -> None:
     rejected the same way as in records (DESIGN.md 1, 4)."""
     from framework.records import _check_outcome_keys as check
     check(node)
+
+
+# --- the binding recipe (plugins/<control>/collect.yaml) ------------------------
+#
+# The runner-facing side of a control binding whose decision stream is
+# INGESTED (DESIGN.md 3: the vendor log is collected and translated by the
+# plugin's shim; the v0 gateway's decisions.jsonl is the no-recipe default).
+# The recipe is BINDING DATA, like the overlay bundle: it tells the runner
+# how to collect this control's enforcement-point record per design and
+# where the deployed enforcement config lives (the fixture fingerprint's
+# enforcement_config component must hash the config the binding actually
+# deploys, not the design's default gateway/policy.yaml).
+#
+# Fields (all plugin-relative paths resolve against plugins/<control>/):
+#   schema            the bare literal 1
+#   designs           the designs the recipe covers (the runner and the
+#                     fingerprint resolve per design; a design outside the
+#                     list is a ContractError, never a silent fallback)
+#   vendor_log        the file the binding's collector writes into the slot's
+#                     log volume (the shim's raw_ref evidence source)
+#   vendor_log_path   the file's mount path inside the collect container
+#   collect_container the container_name suffix of the auxiliary collector
+#                     service ({design prefix}-{this}): the runner cats the
+#                     vendor log from it (the control's own container may be
+#                     distroless — no shell to exec)
+#   shim              the plugin shim translating vendor rows into
+#                     decision-record/1 (CLI: --vendor-log --out --run-id
+#                     --policy-file --source)
+#   policy            the deployed enforcement config (the artifact the
+#                     binding mounts; sha256'd into the fingerprint and
+#                     stamped by the shim as policy_hash)
+#   readiness         true when the deployed config carries the dedicated
+#                     READINESS_TOOL deny rule (see above): the runner probes
+#                     pre-window and requires the deny record
+#   harness_client_modules  per-harness client modules the harness adapter
+#                     loads for this control's transport (the pi adapter's
+#                     GATEWAY_CLIENT_MODULE hook; the mock harness ships its
+#                     session client in the driver)
+#   session_shape     OPTIONAL binding-declared gateway session shape: the
+#                     transport shape the binding fronts the harness with
+#                     (e.g. a stateful streamable-HTTP MCP session whose
+#                     initialize + notifications/initialized sockets are
+#                     separate from the per-call sockets). The runner threads
+#                     it into reconciliation, and the harness profiles'
+#                     http_startup_calibration pins gate on it — a binding
+#                     that declares no shape (or ships no recipe: the v0
+#                     default) never activates those pins (DESIGN.md 2:
+#                     binding data read generically, never a core branch on
+#                     plugin identity)
+
+
+def collect_recipe_path(plugin_id: str) -> Path:
+    return PLUGINS_DIR / plugin_id / "collect.yaml"
+
+
+def load_collect_recipe(plugin_id: str, design: str | None = None) -> dict | None:
+    """Load a control binding's runner recipe (plugins/<control>/
+    collect.yaml); None when the binding ships none (the runner's default
+    v0 collection, unchanged behavior). `design`, when given, must be
+    covered by the recipe — a recipe that does not cover the requested
+    design is a ContractError, never a silent fallback to the default path.
+    """
+    import yaml as _yaml
+
+    path = collect_recipe_path(plugin_id)
+    if not path.is_file():
+        return None
+    try:
+        recipe = _yaml.safe_load(path.read_text(encoding="utf-8"))
+    except _yaml.YAMLError as exc:
+        raise ContractError(f"recipe {plugin_id}: not parseable YAML: {exc}")
+    if not isinstance(recipe, dict) or recipe.get("schema") != 1:
+        raise ContractError(
+            f"recipe {plugin_id}: not a binding recipe (schema must be the "
+            f"bare literal 1)")
+    missing = [f for f in ("designs", "vendor_log", "vendor_log_path",
+                            "collect_container", "shim", "policy")
+               if f not in recipe]
+    if missing:
+        raise ContractError(f"recipe {plugin_id}: missing field(s) {missing}")
+    shape = recipe.get("session_shape")
+    if shape is not None and (not isinstance(shape, str) or not shape.strip()):
+        raise ContractError(f"recipe {plugin_id}: session_shape must be a "
+                            f"non-empty string (the declared gateway session "
+                            f"shape) or absent")
+    if design is not None and design not in (recipe.get("designs") or []):
+        raise ContractError(
+            f"recipe {plugin_id}: does not cover design {design!r} "
+            f"(covered: {recipe.get('designs')})")
+    return recipe
+
+
+def recipe_artifact_path(plugin_id: str, rel: str) -> Path:
+    """Resolve one recipe's plugin-relative path against the plugin
+    directory (the same root the manifest and overlay resolve against)."""
+    path = PLUGINS_DIR / plugin_id / rel
+    if not path.is_file():
+        raise ContractError(f"recipe {plugin_id}: no artifact at {path}")
+    return path

@@ -33,6 +33,39 @@ WIN_END = WIN_START + 5_000_000_000
 # runrecord tests' fixture stream (correct-run) for the t1 integration test
 sys.path.insert(0, str(INSPECTION_ROOT / "tests"))
 from test_runrecord import VERSIONS_ENV, write_artifacts  # noqa: E402
+from test_reconcile import CONTAINER, WIN_START as REC_WIN_START  # noqa: E402
+
+
+def _t1_shaped_pi_stream():
+    """The correct-run fixture reshaped to the CURRENT t1 pi topology:
+    every http tool call crosses the gateway as a :8090 MCP connect from
+    the pi RPC process (the http_startup_calibration pin attributes each
+    connect by the process's pinned exec argv; the pooled workload range is
+    [1, n]). The pi process's own execve sits far before the window (out of
+    R3/R4 scope, but present in the capture as the attribution source for
+    pre_window_source)."""
+    from test_reconcile import correct_openclaw_stream
+    stream = [r for r in correct_openclaw_stream()
+              if not (r["class"] == "http_tool_call")]
+    pi_exec = {"class": "process_spawn", "event": "execve",
+               "ts": REC_WIN_START - 10_000_000_000,
+               "container": CONTAINER, "pid": 150,
+               "process": "runc:[2:INIT]",
+               "detail": {"target": "/usr/bin/node",
+                          "cmd": ["node", "/usr/local/bin/pi",
+                                  "--mode", "rpc",
+                                  "--provider", "inspection-replay",
+                                  "--model", "replay", "--no-session",
+                                  "-e", "/opt/inspection/adapter/replay.ts"]},
+               "provenance": {"raw_index": 900, "retval": 0}}
+    http_connects = [
+        {"class": "http_tool_call", "event": "connect",
+         "ts": REC_WIN_START + 10_000_000 + i * 1_000_000,
+         "container": CONTAINER, "pid": 150, "process": "pi",
+         "detail": {"target_port": 8090, "transport": "tcp"},
+         "provenance": {"raw_index": 910 + i, "retval": 0}}
+        for i in range(4)]
+    return [pi_exec] + stream + http_connects
 
 
 def _load_module():
@@ -262,6 +295,7 @@ def _runrecord_cmd(tmp_path, runs, raw, logs, versions_env, decisions, policy):
     out_dir = tmp_path / "out-t1"
     return subprocess.run(
         [sys.executable, str(RUNRECORD_PATH), "--harness", "pi",
+         "--container-id", CONTAINER,
          "--run-id", "pi-t1-test", "--spec", str(SPEC_PATH),
          "--mapped", str(runs / "mapped-actions.jsonl"),
          "--replay", str(runs / "replay-result.json"),
@@ -269,12 +303,19 @@ def _runrecord_cmd(tmp_path, runs, raw, logs, versions_env, decisions, policy):
          "--versions", str(versions_env),
          "--design", "t1", "--gateway-log", str(decisions),
          "--gateway-policy", str(policy),
+         "--session-shape", "streamable-mcp-session",
          "--out-dir", str(out_dir)], capture_output=True, text=True), out_dir
 
 
 def test_runrecord_t1_embeds_coverage_and_hashes(tmp_path):
     import hashlib
     runs, mapped, replay, raw, logs, versions = write_artifacts(tmp_path)
+    # reshape the fixture stream to the current t1 pi topology (the
+    # http_startup_calibration pin attributes every :8090 connect by the
+    # pi RPC process's exec argv)
+    (runs / "mapped-actions.jsonl").write_text(
+        "".join(json.dumps(r, separators=(",", ":")) + "\n"
+                for r in _t1_shaped_pi_stream()))
     versions.write_text(GATEWAY_VERSIONS_ENV)
     gw = tmp_path / "gateway"
     gw.mkdir()
@@ -300,6 +341,10 @@ def test_runrecord_t1_embeds_coverage_and_hashes(tmp_path):
     manifest = json.loads((out_dir / "manifest.json").read_text())
 
     assert record["design"] == "t1"
+    # the binding-declared session shape is recorded as a run fact, so a
+    # re-reconciliation of this run reproduces the same calibration
+    # scoping (the http_startup_calibration pin gates on it)
+    assert record["session_shape"] == "streamable-mcp-session"
     assert record["coverage"]["status"] == "pass"
     assert record["coverage"]["coverage"]["http_tool_call"]["coverage"] == 1.0
     assert record["pinned"]["gateway_package_version"] == "3.7.0"

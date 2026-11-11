@@ -1,0 +1,32 @@
+{
+  "config": {
+    "adminAddr": "0.0.0.0:15000",
+    "logging": {
+      "format": "json",
+      "level": "info"
+    }
+  },
+  "mcp": {
+    "port": 8090,
+    "policies": {
+      "authorization": {
+        "rules": [
+          {
+            "require": "true"
+          },
+          {
+            "require": "json(request.body).method != \"tools/call\" || json(request.body).params.name != \"__readiness_check__\""
+          }
+        ]
+      }
+    },
+    "targets": [
+      {
+        "name": "upstream",
+        "mcp": {
+          "host": "http://mcp-http:8091/mcp"
+        }
+      }
+    ]
+  }
+}

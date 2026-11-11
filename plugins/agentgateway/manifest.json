@@ -1,0 +1,34 @@
+{
+  "schema": 1,
+  "id": "agentgateway",
+  "version": "0.1.0",
+  "kind": "control",
+  "slot_kinds": [
+    "container"
+  ],
+  "positions": [
+    {
+      "id": "gateway",
+      "designs": [
+        "t1"
+      ],
+      "note": "HTTP gateway in front of the harness: the fixture's MCP streamable-HTTP tool endpoint (targets/mcp-http:8091) is fronted on :8090 and every http_tool_call crosses the gateway as an MCP tools/call over streamable HTTP"
+    }
+  ],
+  "record_source": "ingested",
+  "observable_action_classes": [
+    "http_tool_call"
+  ],
+  "can_enforce": "enforce",
+  "emitted_schema_versions": [
+    "decision-record/1"
+  ],
+  "correlation": {
+    "echoes_meta": false,
+    "echoes_header": false
+  },
+  "supported_designs": [
+    "t1"
+  ],
+  "notes": "CNCF agentgateway (agentgateway.dev), pinned v1.5.0 by manifest digest (plugins/agentgateway/versions.env; re-verified against ghcr.io 2026-11-10). Record path: the control's only decision output is its admin /debug/trace dtrace SSE stream (per-request authorizationResult events with the ingress request state); it writes no decision log itself, so the binding's collector service (control-agentgateway-trace, plugins/agentgateway/collector/) follows the trace and persists the vendor rows to the slot's decision-log volume, and the plugin shim (plugins/agentgateway/shim/translate.py) translates them into decision-record/1 with raw_ref provenance (record_source: ingested, DESIGN.md 3 shims). can_enforce: the v1.5.0 mcp.policies.authorization rule set (allow/deny/require CEL rules) rejects requests at the authorization point (RuleSets::validate -> ProxyError::AuthorizationFailed, verified from the v1.5.0 source); the T1 binding's deployed config carries a single trivially-true require rule, i.e. the T1 allow-all semantics of the design's reference policy (gateway/policy.yaml: denied_tools: []), and every tools/call yields exactly one allow/deny decision event. Observable class at T1 is http_tool_call only: the stdio pair, raw network, spawns, file writes and credential reads stay inside the harness container and bypass the gateway (the escapes T1 exposes). echoes_meta/echoes_header stay false until a live fidelity check verifies them (claims are never trusted): the shim echoes io.inspection/action_id / attempt from the tools/call params._meta present in the captured request body when present, else emits null with correlation_transport none."
+}

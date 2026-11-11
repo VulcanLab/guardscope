@@ -1127,11 +1127,12 @@ async function execAction(action: any): Promise<unknown> {
   switch (action.kind) {
     case "mcp": {
       // carriers (DESIGN.md 5): _meta on every tools/call this adapter builds
-      // (stdio session or gateway-routed); the check client's call interface
-      // cannot carry _meta, so its dispatches record carrier "none" and go
-      // out unchanged. One dispatch record per attempt either way.
+      // (stdio session or gateway-routed); a gateway client module that does
+      // not carry _meta (carriesMeta falsy) has its dispatches recorded
+      // carrier "none". One dispatch record per attempt either way.
       const viaGatewayFs = GATEWAY_FS && !checkGatewayClient?.disabled;
-      const carrierUsed = viaGatewayFs && checkGatewayClient ? "none" : "mcp_meta";
+      const carrierUsed = viaGatewayFs && checkGatewayClient
+        && !checkGatewayClient.carriesMeta ? "none" : "mcp_meta";
       try {
         const detail = viaGatewayFs
           ? await gatewayFsToolCall(action)
@@ -1146,10 +1147,11 @@ async function execAction(action: any): Promise<unknown> {
     }
     case "http": {
       // carriers (DESIGN.md 5): gateway-routed http actions are MCP
-      // tools/call -> _meta; raw fetch (T0) -> HTTP headers (carrier 2)
+      // tools/call -> _meta; raw fetch (T0) -> HTTP headers (carrier 2);
+      // a gateway client module that does not carry _meta records "none"
       const viaGateway = !!GATEWAY_URL && !checkGatewayClient?.disabled;
       const carrierUsed = viaGateway
-        ? (checkGatewayClient ? "none" : "mcp_meta")
+        ? (checkGatewayClient && !checkGatewayClient.carriesMeta ? "none" : "mcp_meta")
         : "http_header";
       try {
         const detail = viaGateway

@@ -190,7 +190,9 @@ def load_decisions(path: Path) -> tuple[list[dict], list[str]]:
             continue
         # decision-record/1 (the kernel control's shim stream): normalized
         # in place; the t7 attribution joins on class+target (below), not
-        # tool routes
+        # tool routes. `parameters` is carried through so the exact-argument
+        # match can disambiguate same-tool instances (a011/a014 share
+        # post_hook) on the ingested-binding streams too.
         if (isinstance(entry, dict) and entry.get("schema") == 1
                 and entry.get("action_class")):
             entry = {
@@ -204,6 +206,7 @@ def load_decisions(path: Path) -> tuple[list[dict], list[str]]:
                 "protocol": entry.get("protocol"),
                 "decision": entry.get("decision"),
                 "seq": entry.get("seq"),
+                "parameters": entry.get("parameters") or {},
                 "allowed": entry.get("decision")
                             in ("allow", "observe"),
             }

@@ -99,30 +99,145 @@ class SpawnError(Exception):
     """A spawn variant failed (exec error, nonzero exit)."""
 
 
+class GatewaySession:
+    """One streamable-HTTP MCP session against the gateway — the mock
+    driver's gateway-route transport (the shared client of BOTH pairs'
+    gateway routes). Speaks the MCP streamable-HTTP wire protocol:
+
+    - `Accept: application/json, text/event-stream` on every POST (the
+      MCP spec's required negotiation; agentgateway v1.5.0 enforces it,
+      the v0 AGT gateway ignores it);
+    - stateful: initialize once, then carry the `Mcp-Session-Id` the
+      initialize response returned on every request (agentgateway
+      requires it; the v0 gateway ignores it);
+    - the response may arrive SSE-framed (`text/event-stream` with
+      `data:` frames) or as plain JSON — decoded by Content-Type.
+
+    One session per run (the same multiplicity as the stdio pair's
+    StdioSession), started lazily on the first gateway-routed action. A
+    gateway denial surfaces as data: a non-2xx status or a JSON-RPC error
+    object is returned to the caller (the originator raises SpawnError
+    with it — a denial is a decision the run records, never a transport
+    error)."""
+
+    def __init__(self, url: str):
+        self.url = url.rstrip("/") + "/mcp"
+        self.session_id: str | None = None
+        self._rpc_id = 0
+
+    def start(self) -> None:
+        _status, init = self._request("initialize", {
+            "protocolVersion": MCP_PROTOCOL_VERSION,
+            "capabilities": {},
+            "clientInfo": MCP_CLIENT_INFO,
+        })
+        if not init.get("result"):
+            raise SpawnError(f"MCP initialize failed: {json.dumps(init)}")
+        self._notify("notifications/initialized")
+
+    def _request(self, method: str, params: object) -> tuple[int, dict]:
+        self._rpc_id += 1
+        return self._post({"jsonrpc": "2.0", "id": self._rpc_id,
+                           "method": method, "params": params})
+
+    def _notify(self, method: str) -> None:
+        status, _row = self._post({"jsonrpc": "2.0", "method": method})
+        if status >= 400:
+            raise SpawnError(f"MCP {method} rejected: HTTP {status}")
+
+    def _post(self, msg: dict) -> tuple[int, dict]:
+        headers = {"Content-Type": "application/json",
+                  # the MCP streamable-HTTP negotiation: the server may
+                  # answer either shape, so both must be acceptable
+                  "Accept": "application/json, text/event-stream"}
+        if self.session_id is not None:
+            headers["Mcp-Session-Id"] = self.session_id
+        status, resp_headers, body = syscalls.http_request_full(
+            "POST", self.url, json.dumps(msg, separators=(",", ":")),
+            headers)
+        session = resp_headers.get("mcp-session-id")
+        if session:
+            self.session_id = session
+        if msg.get("id") is None:
+            # a notification: the server answers 202 with no JSON-RPC body
+            if status >= 400:
+                raise SpawnError(f"MCP {msg.get('method')} rejected: "
+                                 f"HTTP {status}")
+            return status, {}
+        if status >= 400:
+            # a denial (or a rejected request) is data, never a transport
+            # error: surfaced as an error row the caller records
+            return status, {"error": {"code": status,
+                                       "message": body.decode(
+                                           "utf-8", "replace")}}
+        row = _decode_sse_or_json(body, resp_headers.get("content-type", ""),
+                                  msg["id"])
+        return status, row
+
+    def tools_call(self, tool: str, arguments: dict,
+                   meta: dict | None = None) -> tuple[int, dict]:
+        """One tools/call request; `meta` is the params._meta correlation
+        carrier block (DESIGN.md 5) when given."""
+        params = {"name": tool, "arguments": arguments}
+        if meta is not None:
+            params["_meta"] = dict(meta)
+        return self._request("tools/call", params)
+
+    def close(self) -> None:
+        # stateless client side: the server-side session ends at its idle
+        # TTL; nothing to tear down (the same asymmetry as the raw http
+        # originator, which closes nothing but the socket per request)
+        pass
+
+
+def _decode_sse_or_json(body: bytes, content_type: str,
+                        expected_id=None) -> dict:
+    """Decode one MCP JSON-RPC response from a streamable-HTTP body: plain
+    JSON (`application/json`) or SSE-framed (`text/event-stream`, the
+    `data:` frames of the response messages). `expected_id` (the request's
+    JSON-RPC id) selects the correlated response frame out of the stream
+    (SSE bodies may carry unrelated frames; the pre-guardscope probe's
+    decodeRpc rule); None accepts the first frame carrying an id."""
+    text = body.decode("utf-8", "replace")
+    if "text/event-stream" not in content_type:
+        row = json.loads(text)
+        if expected_id is not None and row.get("id") != expected_id:
+            raise SpawnError("gateway MCP response id mismatch "
+                             f"({row.get('id')!r} != {expected_id!r})")
+        return row
+    for frame in text.replace("\r\n", "\n").split("\n\n"):
+        data = "\n".join(line[5:].lstrip()
+                         for line in frame.split("\n")
+                         if line.startswith("data:"))
+        if not data:
+            continue
+        row = json.loads(data)
+        if not isinstance(row, dict) or "id" not in row:
+            continue
+        if expected_id is None or row.get("id") == expected_id:
+            return row
+    raise SpawnError("no correlated MCP JSON-RPC response "
+                     f"(id {expected_id!r}) in the SSE stream")
+
+
 def gateway_tools_call(ctx: "RunContext", tool: str,
                        arguments: dict) -> tuple[int, dict]:
-    """One MCP tools/call JSON-RPC POST to the gateway /mcp endpoint, with
-    the io.inspection carriers in params._meta (carrier 1, DESIGN.md 5) —
-    the shared request builder for BOTH pairs' gateway routes: the http
-    pair's T1+ route and the stdio pair's T3 route (the fs tools proxied
-    behind the gateway, UPSTREAM_FS_URL). A route without a gateway_url is
-    an error raised to the driver (recorded as data, never a run failure)."""
+    """One MCP tools/call through the run's gateway session (the shared
+    request path for BOTH pairs' gateway routes: the http pair's T1+
+    route and the stdio pair's T3 route; UPSTREAM_FS_URL) with the
+    io.inspection carriers in params._meta (carrier 1, DESIGN.md 5).
+    A route without a gateway_url is an error raised to the driver
+    (recorded as data, never a run failure)."""
     if not ctx.gateway_url:
         raise SpawnError("gateway route selected but no gateway_url (plan "
                          "routes.gateway_url or env GATEWAY_URL)")
-    msg = {"jsonrpc": "2.0", "id": ctx.next_rpc_id(),
-           "method": "tools/call",
-           "params": {"name": tool, "arguments": arguments,
-                      "_meta": {META_ACTION_ID: ctx.action_id,
-                                META_ATTEMPT: 0}}}
-    status, body = syscalls.http_request(
-        "POST", ctx.gateway_url.rstrip("/") + "/mcp",
-        json.dumps(msg, separators=(",", ":")))
-    data = json.loads(body.decode("utf-8"))
-    if data.get("error"):
+    status, row = ctx.gateway().tools_call(
+        tool, arguments, meta={META_ACTION_ID: ctx.action_id,
+                               META_ATTEMPT: 0})
+    if row.get("error"):
         raise SpawnError(f"gateway returned a json-rpc error response "
-                         f"for {tool}: {json.dumps(data['error'])}")
-    return status, data
+                         f"for {tool}: {json.dumps(row['error'])}")
+    return status, row
 
 
 # --- child-side helpers ------------------------------------------------------
@@ -568,8 +683,11 @@ def origin_channel_detail(fn, variant: str, ctx: "RunContext") -> str:
 class RunContext:
     """Per-run state shared by the originators: the plan, the single MCP
     stdio session (one per run, matching the harness replay's session
-    multiplicity), the JSON-RPC id counter, and the deferred-children
-    registry the driver joins before exiting."""
+    multiplicity), the single gateway HTTP session (one per run: the
+    streamable-HTTP MCP session both gateway-routed pairs share, opened
+    lazily so the session handshake happens inside the run, exactly like
+    the stdio pair's first call), the JSON-RPC id counters, and the
+    deferred-children registry the driver joins before exiting."""
 
     def __init__(self, run_id: str, plan: dict):
         self.run_id = run_id
@@ -584,6 +702,7 @@ class RunContext:
         self.stdio_server_cmd = (json.loads(cmd) if isinstance(cmd, str)
                                  else cmd) or DEFAULT_STDIO_SERVER_CMD
         self._stdio: StdioSession | None = None
+        self._gateway: GatewaySession | None = None
         self._rpc_id = 0
 
     def next_rpc_id(self) -> int:
@@ -596,6 +715,12 @@ class RunContext:
             self._stdio.start()
         return self._stdio
 
+    def gateway(self) -> GatewaySession:
+        if self._gateway is None:
+            self._gateway = GatewaySession(self.gateway_url)
+            self._gateway.start()
+        return self._gateway
+
     def defer(self, pid: int, kind: str) -> None:
         self.deferred.append({"id": self.action_id, "pid": pid, "kind": kind})
 
@@ -603,6 +728,9 @@ class RunContext:
         if self._stdio is not None:
             self._stdio.close()
             self._stdio = None
+        if self._gateway is not None:
+            self._gateway.close()
+            self._gateway = None
 
 
 def originator_version() -> str:

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import os
 import socket
+import urllib.error
 import urllib.request
 
 HTTP_TIMEOUT_S = 10.0
@@ -61,6 +62,32 @@ def close_socket(sock) -> None:
 
 
 # --- http (http_tool_call pairs: raw fetch / gateway JSON-RPC POST) ----------
+
+def http_request_full(method: str, url: str, body: str | None = None,
+                      headers: dict[str, str] | None = None) \
+                      -> tuple[int, dict, bytes]:
+    """One HTTP request returning (status, response headers, response body):
+    the gateway-session transport's syscall wrapper (the streamable-HTTP
+    MCP client needs the Mcp-Session-Id RESPONSE header, which plain
+    http_request does not expose). Unlike http_request a non-2xx status is
+    returned, never raised — a gateway denial arrives as HTTP 403 and is
+    data the caller records (a denial is a decision, not a transport
+    error). Header names are lowercased (HTTP headers are
+    case-insensitive).
+    """
+    req = urllib.request.Request(
+        url, data=body.encode("utf-8") if body is not None else None,
+        method=method, headers=dict(headers) if headers else {})
+    try:
+        with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT_S) as resp:
+            return (resp.status,
+                    {k.lower(): v for k, v in resp.headers.items()},
+                    resp.read())
+    except urllib.error.HTTPError as err:
+        return (err.code,
+                {k.lower(): v for k, v in err.headers.items()},
+                err.read())
+
 
 def http_request(method: str, url: str, body: str | None = None,
                  headers: dict[str, str] | None = None) -> tuple[int, bytes]:

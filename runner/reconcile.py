@@ -205,8 +205,34 @@ def load_profile(path: Path, _seen: tuple = ()) -> dict:
             or type(http_pin.get("max_startups_in_window")) is not int or http_pin["max_startups_in_window"] != 2
             or not isinstance(http_pin.get("rationale"), str) or not http_pin["rationale"].strip()
             or not valid_argv(http_pin.get("replay_argv"))
-            or not valid_argv(http_pin.get("readiness_argv"))):
-        raise ValueError(f"profile {path}: invalid HTTP startup calibration pin")
+            or not valid_argv(http_pin.get("readiness_argv"))
+            or not isinstance(http_pin.get("designs"), list)
+            or not http_pin["designs"]
+            or any(not isinstance(d, str) or not d for d in http_pin["designs"])
+            or not isinstance(http_pin.get("session_shapes"), list)
+            or not http_pin["session_shapes"]
+            or any(not isinstance(s, str) or not s
+                   for s in http_pin["session_shapes"])):
+        raise ValueError(f"profile {path}: invalid HTTP startup calibration pin "
+                         f"(the pin is scoped by the BINDING's declared "
+                         f"session shape (session_shapes, from the control "
+                         f"binding recipe) AND by design: the session shape "
+                         f"exists only where a streamable gateway fronts the "
+                         f"harness; design scoping alone would re-route every "
+                         f"run of the listed designs through the pin)")
+    if http_pin is not None:
+        # the streamable session's socket budget ([min, max] non-negative
+        # ints): initialize + notifications/initialized — a no-pooling
+        # client opens one socket per request (exactly 2), a pooled client
+        # may share as few as 1; the replay envelope is
+        # [max(http_connects_min, min), n + max]
+        sca = http_pin.get("session_connect_allowance")
+        if (not isinstance(sca, list) or len(sca) != 2
+                or any(type(x) is not int or x < 0 for x in sca)
+                or sca[0] > sca[1]):
+            raise ValueError(f"profile {path}: invalid HTTP session "
+                             f"connect allowance (expected [min, max] "
+                             f"non-negative ints)")
     for rule in profile.get("pre_window_unrelated", []):
         if (not valid_argv(rule.get("argv")) or not rule.get("reason") or not rule.get("records")
                 or any(not r.get("where") or ("max_records" in r and
@@ -372,6 +398,7 @@ class Reconciler:
     def __init__(self, spec: dict, profile: dict, replay: dict,
                  mapped: list[dict], target_logs: list[dict] | None = None,
                  container_id: str | None = None, design: str = "t0",
+                 session_shape: str | None = None,
                  calibration_logs: list[dict] | None = None,
                  gateway_stdio_wire: list[dict] | None = None,
                  gateway_lifecycle: list[dict] | None = None,
@@ -388,6 +415,15 @@ class Reconciler:
         self.gateway_lifecycle = gateway_lifecycle or []
         self.container_id = container_id
         self.design = design
+        # The run's BINDING-DECLARED gateway session shape (the control
+        # binding recipe's `session_shape`, threaded by the runner — DESIGN.md
+        # 2: binding data, never a core branch on plugin identity). None =
+        # the run's tool route did not cross a session-shaped streamable
+        # gateway (the base designs, the v0 binding's direct shape): the
+        # harness profiles' http_startup_calibration pins gate on this
+        # value, so a pin never applies to a run whose binding did not
+        # declare the shape.
+        self.session_shape = session_shape
         self.prevented = prevented_for(design, profile)
         # F9 (work that outlives its parent): the effective window END the
         # kernel scoping uses. The replay's window closes at mark-end, but
@@ -649,6 +685,19 @@ class Reconciler:
     @staticmethod
     def exec_argv(rec: dict | None):
         return ((rec or {}).get("detail") or {}).get("cmd")
+
+    @staticmethod
+    def _argv_is(argv, pinned: list[str]) -> bool:
+        """Exact match or PREFIX match against the pinned argv: the pins
+        identify a process by its distinctive leading argv (a docker-exec'd
+        entrypoint); run-specific trailing flags (--out, --run-id, model
+        flags) follow and must not affect attribution."""
+        if not isinstance(pinned, list) or not pinned:
+            return False
+        if argv == pinned:
+            return True
+        return (isinstance(argv, list) and len(argv) >= len(pinned)
+                and argv[:len(pinned)] == pinned)
 
     def split_unrelated(self, scoped: list[dict]) -> tuple[list[dict], list[dict]]:
         """Apply ordinary allowlists and command-bound pre-window readiness.
@@ -970,16 +1019,44 @@ class Reconciler:
                              "sessions": len(sessions)}, "sessions": sessions, "problems": problems}
 
     def calibrated_http(self, recs: list[dict], n: int | None = None) -> dict:
-        """Separate GatewayClient's discovery pre-window events from canonical
-        connects.
+        """Attribute every in-scope gateway :8090 connect by the owning
+        process's pinned exec argv, and separate the two session roles
+        (live-calibrated 2026-11-10, the agentgateway T1 EC2 campaign):
 
-        The tolerance window may include current Pi discovery plus the
-        preceding Node readiness client. Neither is a tool decision. Bind both to exact exec argv and
-        retain the ledger; do not borrow evidence from another container (T3).
+        - replay role (the harness's gateway session, the client code
+          injected per binding): ALL of its connects — pre-window session
+          setup AND in-window per-call sockets — form ONE pooled workload
+          envelope [max(http_connects_min, session_lo), max(n, min) +
+          session_hi]. A no-pooling client (the mock harness's urllib
+          GatewaySession: initialize + notifications + one socket per
+          tools/call, session started lazily IN-window) lands at n + 2; a
+          pooled client (pi's undici-backed client: the pre-window
+          discovery sockets are REUSED by the in-window tools/calls, so
+          the in-window count can be ZERO) lands at the session floor.
+          Per-action backing is R2 + native decisions/C1-C4, never
+          inferred from connection counts.
+          The argv prefix match identifies the replay argv SHAPE, not the
+          process: the run has exactly ONE replay client process (one
+          docker-exec'd driver / pi RPC process per run), so the replay
+          role is further pinned to a single pid — a second process whose
+          argv carries the pinned prefix never joins the envelope (the
+          pid set is recorded in the calibration ledger).
+        - readiness role (the runner's pre-window one-shot probe session):
+          its connects must ALL precede the window — an in-window
+          readiness connect is unattributed by definition (the probe is
+          runner plumbing; DESIGN.md 3: its pre-window connect must stay
+          outside the kernel window) — and are budgeted per session
+          (initialize + notifications + the denied tools/call = up to
+          connects_per_startup sockets), at most one readiness session.
         """
         pin = self.mult["http_startup_calibration"]
+        # the streamable session's own socket budget: initialize +
+        # notifications/initialized (a no-pooling client opens exactly one
+        # socket per request = 2; a pooled client may share as few as 1)
+        s_lo, s_hi = pin.get("session_connect_allowance", [0, 0])
         start = self.replay["window_epoch_ns"]["start"]
         startups, workload, problems, ledger = {}, [], [], []
+        replay_pids: set[int] = set()
         for rec in recs:
             source = self.pre_window_source(rec)
             argv = self.exec_argv(source)
@@ -987,37 +1064,53 @@ class Reconciler:
             valid = (rec.get("event") == "connect" and flatten(rec)["port"] == pin["port"]
                      and flatten(rec)["transport"] == "tcp"
                      and bool(self.container_id) and rec.get("container") == self.container_id
-                     and argv in (pin["replay_argv"], pin["readiness_argv"]))
-            role = "replay" if argv == pin["replay_argv"] else "readiness"
+                     and (self._argv_is(argv, pin["replay_argv"])
+                          or self._argv_is(argv, pin["readiness_argv"])))
+            role = "replay" if self._argv_is(argv, pin["replay_argv"]) else "readiness"
             if not valid or (not before and role != "replay"):
                 problems.append(f"unattributed HTTP connect raw_index={self._ref(rec)['raw_index']}")
-            elif before:
-                startups.setdefault((role, rec["pid"], source["ts"]), []).append(rec)
-            else:
+            elif role == "replay":
+                # the harness session's sockets are ONE pooled envelope,
+                # owned by ONE replay client process (the pid pin)
+                replay_pids.add(rec["pid"])
                 workload.append(rec)
+            else:
+                startups.setdefault((role, rec["pid"], source["ts"]), []).append(rec)
             ledger.append({**self._ref(rec), "container": rec.get("container"),
-                           "port": flatten(rec)["port"], "phase": "startup" if before else "workload",
-                           "status": "pass" if valid and (before or role == "replay") else "fail",
+                           "port": flatten(rec)["port"],
+                           "phase": "pre-window" if before else "in-window",
+                           "role": role,
+                           "status": "pass" if valid and (role == "replay" or before) else "fail",
                            "source_exec": {**self._ref(source), "argv": argv} if source else None})
         if len(startups) > pin["max_startups_in_window"]:
             problems.append(f"{len(startups)} HTTP startups exceed pinned {pin['max_startups_in_window']}")
         for (role, pid, _), group in startups.items():
             if len(group) > pin["connects_per_startup"]:
                 problems.append(f"startup {role} pid={pid}: {len(group)} connects exceed {pin['connects_per_startup']}")
-        for role in ("replay", "readiness"):
-            if sum(k[0] == role for k in startups) > 1:
-                problems.append(f"multiple {role} startup clients")
+        if sum(k[0] == "readiness" for k in startups) > 1:
+            problems.append("multiple readiness gateway sessions")
+        if len(replay_pids) > 1:
+            problems.append(f"{len(replay_pids)} replay gateway client pids "
+                            f"{sorted(replay_pids)}: the run's session "
+                            f"belongs to ONE replay process (the pinned "
+                            f"exec argv identifies the argv shape, never "
+                            f"a second process)")
         n = len(self.by_class["http_tool_call"]) if n is None else n
         lo = int(self.mult.get("http_connects_min", 1))
-        # Preserve the standard pooled 1..N contract; per-action backing is
-        # R2 + native decisions/C1-C4, never inferred from connection counts.
-        if not lo <= len(workload) <= max(n, lo):
-            problems.append(f"{len(workload)} workload connects outside [{lo}, {max(n, lo)}]")
+        # the pooled envelope: session sockets (floor s_lo) + n per-call
+        # sockets (a no-pooling client), never more than n + s_hi total
+        wlo, whi = max(lo, s_lo), max(n, lo) + s_hi
+        if not wlo <= len(workload) <= whi:
+            problems.append(f"{len(workload)} replay-session connects outside "
+                            f"[{wlo}, {whi}] (n={n} tool calls + the "
+                            f"session socket allowance [{s_lo}, {s_hi}])")
         calibration = {"status": "fail" if problems else "pass", "pin": pin,
-                       "expected": {"workload_connects": [lo, max(n, lo)],
+                       "expected": {"replay_session_connects": [wlo, whi],
+                                    "session_connect_allowance": [s_lo, s_hi],
                                     "max_startups": pin["max_startups_in_window"],
                                     "max_connects_per_startup": pin["connects_per_startup"]},
-                       "observed": {"workload_connects": len(workload), "startups": len(startups),
+                       "observed": {"replay_session_connects": len(workload), "startups": len(startups),
+                                    "replay_pids": sorted(replay_pids),
                                     "startup_connects": sum(map(len, startups.values()))},
                        "records": ledger, "problems": problems}
         return {"spec": n, "kernel_raw": len(recs), "evidence": "kernel-group+calibrated-http-pre-window",
@@ -1078,6 +1171,9 @@ class Reconciler:
     def kernel_group(self, cls: str, recs: list[dict]) -> dict:
         """Group kernel support under the documented expected count range."""
         if (cls == "http_tool_call" and "http_startup_calibration" in self.mult
+                and self.design in self.mult["http_startup_calibration"].get("designs", ())
+                and self.session_shape
+                in self.mult["http_startup_calibration"].get("session_shapes", ())
                 and not self.mult["http_startup_calibration"].get("all_tool_classes")):
             return self.calibrated_http(recs)
         if (cls == "stdio_tool_call" and "stdio_startup_calibration" in self.mult

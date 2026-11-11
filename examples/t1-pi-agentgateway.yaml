@@ -1,0 +1,11 @@
+# Example experiment (DESIGN.md 6): one gateway column, the CNCF
+# agentgateway binding. control: agentgateway occupies the gateway slot;
+# t1 places it for HTTP tools with the transport and process escapes
+# exposed (DESIGN.md 7). Executed on the pi harness with the default
+# workload pack (baseline-15). Binding: plugins/agentgateway/overlay/t1.yaml
+# (image + config pins recorded in plugins/agentgateway/versions.env).
+schema: 1
+control: agentgateway
+designs: [t1]
+harness: pi
+workload: baseline-15

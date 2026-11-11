@@ -217,6 +217,55 @@ multiplicity:
   # python's one-connect-per-request shape should give exactly n_tool_calls,
   # confirmed in the live pass
   http_connects_min: 1
+  # The streamable-HTTP MCP session shape under the agentgateway binding
+  # (2026-11-10, calibrated live on the t1-mock EC2 campaign): the mock
+  # driver's GatewaySession starts lazily on the FIRST gateway-routed
+  # action, i.e. INSIDE the window — its initialize +
+  # notifications/initialized are 2 in-window session sockets (the
+  # session_connect_allowance) before the n per-action tools/call sockets
+  # (python urllib opens one connection per request, no pooling), all one
+  # pooled replay envelope. The runner's pre-window readiness probe runs its
+  # own one-shot session in the same container (python3 -m
+  # mock_harness.gateway_probe): initialize + notifications/initialized +
+  # the denied tools/call, ALL before the window opens; within the window
+  # tolerance they land in-scope and are separated by the calibration as
+  # startup, never counted as workload evidence (the probe is runner
+  # plumbing, DESIGN.md 3 — its pre-window connect must stay outside the
+  # kernel window).
+  http_startup_calibration:
+    port: 8090
+    connects_per_startup: 3
+    max_startups_in_window: 2
+    # the pin's scope is BINDING-declared, not design-implied (the checker
+    # finding, 2026-11-11): it applies only when the run's control binding
+    # declares the streamable session shape in its recipe
+    # (plugins/<control>/collect.yaml `session_shape`, threaded by the
+    # runner into the reconciler) AND the design is t1. The v0 AGT binding
+    # at t1 speaks the DIRECT shape — verified from the retained October
+    # evidence (mocklive-20261029 / x86-20261031: the mock t1 runs show 4
+    # one-shot per-call POST connects, no initialize/notifications sockets;
+    # those campaigns ran the pre-session-client stateless
+    # gateway_tools_call) — and ships no recipe, so it never declares the
+    # shape and its runs keep the plain pooled range [1, n]. t2/t3 mock
+    # runs with the session client need their own scoping when they next
+    # run sensor-backed (follow-up).
+    designs: [t1]
+    session_shapes: [streamable-mcp-session]
+    # the streamable session's socket budget: the mock client is urllib,
+    # NO pooling — initialize + notifications/initialized open exactly 2
+    # distinct sockets; the session starts lazily IN-window (on the first
+    # gateway-routed action), so the replay envelope is [2, n + 2]
+    # (observed live 2026-11-10: 6 = 2 session + 4 per-call sockets)
+    session_connect_allowance: [2, 2]
+    replay_argv: [python3, -m, mock_harness.driver]
+    readiness_argv: [python3, -m, mock_harness.gateway_probe]
+    rationale: >
+      The streamable-HTTP MCP gateway session shape, pinned by the harness
+      client code (mock_harness/originators.py GatewaySession.start:
+      initialize + notifications/initialized, one urllib connection per
+      request; mock_harness/gateway_probe.py: the same session plus the
+      one denied tools/call). Prefix argv matching: the driver's argv
+      carries run-specific trailing flags (--out, --run-id).
   # raw TCP: one connect per tcp_connect action (no pooling)
   tcp_connects_per_action: 1
   # UDP: each datagram may appear twice (egress/loopback capture) — borrowed

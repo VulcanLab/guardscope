@@ -20,6 +20,7 @@ Run from experiments/mediation/:  python3 -m pytest tests/test_reconcile.py -v
 
 import importlib.util
 import json
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -28,6 +29,8 @@ import yaml
 INSPECTION_ROOT = Path(__file__).resolve().parent.parent
 SPEC_PATH = INSPECTION_ROOT / "trace" / "traces" / "baseline.yaml"
 PROFILE_DIR = INSPECTION_ROOT / "runner" / "profiles"
+sys.path.insert(0, str(INSPECTION_ROOT))
+from framework.contracts import load_collect_recipe  # noqa: E402
 
 RECONCILE_PATH = INSPECTION_ROOT / "runner" / "reconcile.py"
 
@@ -231,11 +234,12 @@ def target_logs():
 
 
 def reconcile(stream, harness="openclaw", replay=None, target_logs=None,
-              container_id=None, design="t0"):
+              container_id=None, design="t0", session_shape=None):
     profile = rc.load_profile(PROFILE_DIR / f"{harness}.yaml")
     replay = replay or replay_result()
     return rc.Reconciler(SPEC, profile, replay, stream, target_logs,
-                         container_id, design=design).run()
+                         container_id, design=design,
+                         session_shape=session_shape).run()
 
 
 GROUND_TRUTH = {"stdio_tool_call": 3, "http_tool_call": 4, "direct_network": 2,
@@ -804,3 +808,278 @@ def test_t7_prevented_classes_empty():
     # silent outside-the-policy mechanisms (t2/t3 egress jail)
     assert rc.PREVENTED_CLASSES["t7"] == set()
     assert rc.T7_KERNEL_DENIED_INSTANCES == frozenset({"a032"})
+
+
+# --- T1 agentgateway: the calibrated streamable-session http shape -------------
+
+def _t1_session_stream(harness, *, extra_workload=0, unattributed=False,
+                       stray_ready=False, stray_replay=False):
+    """The t1 kernel shape under the agentgateway binding (the
+    http_startup_calibration pin, 2026-11-10):
+
+    - the replay session: initialize + notifications/initialized (2 connects)
+      then one connect per tools/call (n=4). The mock harness starts the
+      session INSIDE the window (lazy, on the first gateway-routed action);
+      the pi harness starts it pre-window (adapter discovery) — the pin's
+      session_connect_allowance + connects_per_startup /
+      max_startups_in_window keys budget the two shapes' sockets, and the
+      pooled replay envelope [max(http_connects_min, allowance_lo),
+      n + allowance_hi] covers both.
+    - the runner's pre-window readiness probe: its own one-shot session
+      (initialize + notifications + the denied tools/call = 3 connects),
+      before the window, within the window tolerance (in-scope but startup,
+      never workload evidence).
+    """
+    s = [r for r in correct_openclaw_stream()
+         if r["class"] != "http_tool_call"]
+    if harness == "mock-harness":
+        # the openclaw fixture's MCP server script open carries the
+        # openclaw-path (/opt/inspection/...); the mock harness runs its
+        # server child from the mounted repo (/repo/targets/..., covered by
+        # the mock profile's /repo allowlist prefix)
+        for r in s:
+            if r.get("detail", {}).get("path") == "/opt/inspection/mcp-fs/server.py":
+                r["detail"]["path"] = "/repo/targets/mcp-stdio/server.py"
+
+    def execve(offset, pid, cmd, target):
+        return rec("process_spawn", "execve", offset, pid,
+                   detail={"target": target, "cmd": cmd}, process="runc:[2:INIT]")
+
+    def gw_connect(offset, pid, process="python3"):
+        return rec("http_tool_call", "connect", offset, pid,
+                   detail={"target_port": 8090, "transport": "tcp"},
+                   process=process)
+
+    if harness == "mock-harness":
+        replay_argv = ["python3", "-m", "mock_harness.driver"]
+        replay_exec, workload_at = -2_000_000_000, 10_000_000
+        # in-window: the session handshake (2) + the 4 per-action connects
+        s += [execve(replay_exec, 150, replay_argv, "/usr/bin/python3")]
+        s += [gw_connect(workload_at, 150),
+              gw_connect(workload_at + 100_000, 150)]
+        for i in range(4):
+            s.append(gw_connect(workload_at + 1_000_000 + i * 500_000, 150))
+        for _ in range(extra_workload):
+            s.append(gw_connect(workload_at + 5_000_000, 150))
+    else:  # pi: node-backed CLI (the pi RPC process's latest exec argv as
+    # Tracee reports it: the "pi" shim execs node /usr/local/bin/pi)
+        replay_argv = ["node", "/usr/local/bin/pi", "--mode", "rpc"]
+        replay_exec = -2_000_000_000
+        # pre-window discovery session (2 sockets, within the tolerance)
+        s += [execve(replay_exec, 170, replay_argv, "/usr/bin/node")]
+        s += [gw_connect(-500_000_000, 170, process="pi"),
+              gw_connect(-450_000_000, 170, process="pi")]
+        for i in range(4):  # in-window workload connects (a no-pooling run;
+            # pi's undici pools them onto the discovery sockets instead)
+            s.append(gw_connect(10_000_000 + i * 500_000, 170, process="pi"))
+        for _ in range(extra_workload):
+            s.append(gw_connect(10_000_000 + 5_000_000, 170, process="pi"))
+
+    readiness_argv = (["python3", "-m", "mock_harness.gateway_probe"]
+                      if harness == "mock-harness"
+                      else ["node", "/opt/inspection/adapter/readiness-probe.mjs"])
+    s.append(execve(-1_500_000_000, 160, readiness_argv,
+                    readiness_argv[0]))
+    for i in range(3):  # initialize + notifications + the denied tools/call
+        s.append(gw_connect(-600_000_000 + i * 50_000_000, 160))
+
+    if unattributed:
+        s.append(gw_connect(2_000_000, 999, process="curl"))
+    if stray_ready:
+        # a SECOND readiness startup: over the pin's at-most-one budget
+        s.append(execve(-1_400_000_000, 161, readiness_argv,
+                        readiness_argv[0]))
+        s.append(gw_connect(-300_000_000, 161))
+        s.append(gw_connect(-250_000_000, 161))
+        s.append(gw_connect(-200_000_000, 161))
+    if stray_replay:
+        # a SECOND process whose argv carries the pinned replay prefix: the
+        # prefix match identifies the argv SHAPE, and the pid pin must keep
+        # its connects out of the run's single replay envelope (the count
+        # stays inside the envelope so ONLY the pid pin catches it)
+        s.append(execve(-1_800_000_000, 171, replay_argv, replay_argv[0]))
+        s.append(gw_connect(10_000_000, 171, process="pi"))
+    return s
+
+
+def _t1_reconcile(stream, harness):
+    # the agentgateway binding's declared session shape (plugins/
+    # agentgateway/collect.yaml `session_shape`, threaded by the runner):
+    # what the pin gates on — without it the pin never applies
+    shape = load_collect_recipe("agentgateway", "t1")["session_shape"]
+    return reconcile(stream, harness=harness, target_logs=target_logs(),
+                     container_id=CONTAINER, design="t1",
+                     session_shape=shape)
+
+
+def test_t1_mock_calibrated_session_shape_passes():
+    report = _t1_reconcile(_t1_session_stream("mock-harness"),
+                           harness="mock-harness")
+    assert report["status"] == "pass", report["checks"]
+    http = [c for c in report["checks"]
+            if c["id"] == "R3-kernel-http_tool_call"][0]
+    assert http["status"] == "pass"
+
+
+def test_t1_pi_calibrated_session_shape_passes():
+    report = _t1_reconcile(_t1_session_stream("pi"), harness="pi")
+    assert report["status"] == "pass", report["checks"]
+    http = [c for c in report["checks"]
+            if c["id"] == "R3-kernel-http_tool_call"][0]
+    assert http["status"] == "pass"
+
+
+def test_t1_calibrated_unattributed_connect_fails():
+    for harness in ("mock-harness", "pi"):
+        report = _t1_reconcile(
+            _t1_session_stream(harness, unattributed=True), harness=harness)
+        http = [c for c in report["checks"]
+                if c["id"] == "R3-kernel-http_tool_call"][0]
+        assert http["status"] == "fail", (harness, http)
+        assert "unattributed HTTP connect" in http["detail"]
+
+
+def test_t1_mock_calibrated_workload_range_enforced():
+    # 3 extra in-window replay connects: 9 sockets > [2, 6] (the session
+    # socket floor [2, 2] + 4 tool calls + the allowance ceiling)
+    report = _t1_reconcile(
+        _t1_session_stream("mock-harness", extra_workload=3),
+        harness="mock-harness")
+    http = [c for c in report["checks"]
+            if c["id"] == "R3-kernel-http_tool_call"][0]
+    assert http["status"] == "fail"
+    assert "replay-session connects outside [2, 6]" in http["detail"]
+
+
+def test_t1_pi_pooled_session_shape_passes():
+    # pi's client POOLS: the pre-window discovery sockets are REUSED by the
+    # in-window tools/calls — the in-window connect count can be ZERO; the
+    # envelope is over ALL of the session's sockets (observed live
+    # 2026-11-10: 2 sockets for the whole session)
+    s = _t1_session_stream("pi")
+    s = [r for r in s
+         if not (r["class"] == "http_tool_call"
+                 and r["pid"] == 170
+                 and r["detail"].get("target_port") == 8090
+                 and r["ts"] >= WIN_START)]   # drop the in-window connects
+    # keep exactly the 2 pooled pre-window discovery sockets
+    pooled = [r for r in s
+             if r["class"] == "http_tool_call" and r["pid"] == 170]
+    assert len(pooled) == 2
+    report = _t1_reconcile(s, harness="pi")
+    assert report["status"] == "pass", report["checks"]
+
+
+def test_t1_calibrated_second_readiness_startup_fails():
+    for harness in ("mock-harness", "pi"):
+        report = _t1_reconcile(
+            _t1_session_stream(harness, stray_ready=True), harness=harness)
+        http = [c for c in report["checks"]
+                if c["id"] == "R3-kernel-http_tool_call"][0]
+        assert http["status"] == "fail", (harness, http)
+        assert "readiness" in http["detail"]
+
+
+def test_t1_calibration_not_applied_off_design():
+    # the pin is design-scoped even when the binding declares the shape:
+    # under t0 (no streamable gateway) connects are judged by the plain
+    # pooled count alone — no exec attribution, so a provenance-less
+    # connect stream passes there (the same stream under t1 with the
+    # declared shape fails the calibration's attribution requirement)
+    s = [r for r in correct_openclaw_stream()
+         if r["class"] != "http_tool_call"]
+    s += [rec("http_tool_call", "connect", 10_000_000 + i * 500_000, 100,
+              detail={"target_port": 8090, "transport": "tcp"})
+          for i in range(4)]
+    shape = load_collect_recipe("agentgateway", "t1")["session_shape"]
+    report = reconcile(s, harness="pi", target_logs=target_logs(),
+                       container_id=CONTAINER, design="t0",
+                       session_shape=shape)
+    assert report["status"] == "pass", report["checks"]
+    report1 = reconcile(s, harness="pi", target_logs=target_logs(),
+                        container_id=CONTAINER, design="t1",
+                        session_shape=shape)
+    http = [c for c in report1["checks"]
+            if c["id"] == "R3-kernel-http_tool_call"][0]
+    assert http["status"] == "fail"
+    assert "unattributed HTTP connect" in http["detail"]
+
+
+def test_t1_base_profile_direct_http_shape_passes():
+    """The checker's repro, pinned permanently: a t1 run whose http
+    evidence is the DIRECT shape — the raw pooled connect to the
+    endpoint :8080 (the pre-session baseline: the v0 AGT t1 campaigns'
+    shape, mocklive-20261029 / x86-20261031) — reconciles on the BASE
+    pi and mock-harness profiles exactly as at HEAD. The
+    http_startup_calibration pins are gated on the BINDING's declared
+    session shape; a t1 run with no shape declaration (no binding, or a
+    binding like the v0 gateway whose client speaks one stateless POST
+    per call) never routes through them."""
+    mock_stream = [dict(r) for r in correct_openclaw_stream()]
+    # the mock fixture runs its stdio server child from the mounted repo
+    # (the /repo allowlist prefix), not the openclaw harness's baked path
+    for r in mock_stream:
+        if r.get("detail", {}).get("path") == "/opt/inspection/mcp-fs/server.py":
+            r["detail"]["path"] = "/repo/targets/mcp-stdio/server.py"
+    for harness, stream in (("pi", correct_pi_stream()),
+                            ("mock-harness", mock_stream)):
+        report = reconcile(stream, harness=harness, target_logs=target_logs(),
+                           container_id=CONTAINER, design="t1")
+        assert report["status"] == "pass", (harness, report["checks"])
+        http = [c for c in report["checks"]
+                if c["id"] == "R3-kernel-http_tool_call"][0]
+        assert http["status"] == "pass", (harness, http)
+
+
+def test_t1_calibration_never_applies_without_the_binding_declaration():
+    # the design gate alone is not the scope: the SAME t1 session-shaped
+    # stream (provenance-less variant) falls back to the plain pooled
+    # range when no session shape is declared — a binding-less t1 run
+    # keeps its pre-calibration semantics, and the session-shaped stream
+    # fails the PLAIN envelope loudly instead of being silently absorbed
+    s = [r for r in correct_openclaw_stream()
+         if r["class"] != "http_tool_call"]
+    s += [rec("http_tool_call", "connect", 10_000_000 + i * 500_000, 100,
+              detail={"target_port": 8090, "transport": "tcp"})
+          for i in range(6)]
+    report = reconcile(s, harness="pi", target_logs=target_logs(),
+                       container_id=CONTAINER, design="t1")
+    http = [c for c in report["checks"]
+            if c["id"] == "R3-kernel-http_tool_call"][0]
+    assert http["status"] == "fail"
+    assert "pooled connects outside" in http["detail"]
+    assert "unattributed" not in http["detail"]
+
+
+def test_t1_calibrated_second_replay_pid_fails():
+    # prefix argv matching identifies the argv SHAPE, not the process: a
+    # SECOND process whose argv carries the pinned replay prefix must not
+    # be absorbed into the run's single replay envelope. The pooled pi
+    # shape keeps the stray process's connect INSIDE the envelope, so only
+    # the pid pin catches it
+    s = _t1_session_stream("pi", stray_replay=True)
+    s = [r for r in s
+         if not (r["class"] == "http_tool_call" and r["pid"] == 170
+                 and r["ts"] >= WIN_START)]   # the pooled shape: 0 in-window
+    report = _t1_reconcile(s, harness="pi")
+    http = [c for c in report["checks"]
+            if c["id"] == "R3-kernel-http_tool_call"][0]
+    assert http["status"] == "fail", http
+    assert "replay gateway client pids" in http["detail"]
+
+
+def test_t1_calibrated_ledger_records_the_replay_pids():
+    # the calibration ledger records the replay pid set it attributed
+    # (finding 2: the pid set is the evidence the prefix match is pinned
+    # to ONE process, not an argv-shaped envelope)
+    report = _t1_reconcile(_t1_session_stream("mock-harness"),
+                           harness="mock-harness")
+    assert report["status"] == "pass", report["checks"]
+    calib = (report["kernel"]["per_class"]["http_tool_call"]
+             ["calibration"])
+    # 150 = the mock driver's single replay process
+    assert calib["observed"]["replay_pids"] == [150]
+    ledger_rows = calib["records"]
+    assert all("pid" in row for row in ledger_rows)
+    assert {row["pid"] for row in ledger_rows
+            if row["role"] == "replay"} == {150}

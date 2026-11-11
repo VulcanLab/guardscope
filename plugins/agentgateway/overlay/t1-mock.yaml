@@ -1,0 +1,44 @@
+# plugins/agentgateway/overlay/t1-mock.yaml — the agentgateway control binding
+# for design T1 on the mock-harness fixture (DESIGN.md 7, 8): the same slot
+# binding as overlay/t1.yaml realized on the mock fixture's compose project
+# (compose/t1-mock.yaml; container names re-prefixed t1-mock-*). The slot
+# declaration is compose/slots/t1.yaml (per design; the mock fixture realizes
+# the same slot on its own project).
+#
+# Merged bring-up (the base comes FIRST — ../plugins/... resolves against the
+# FIRST compose file's directory, compose/):
+#   docker compose -f compose/t1-mock.yaml -f plugins/agentgateway/overlay/t1-mock.yaml up -d
+#   docker compose -f compose/t1-mock.yaml -f plugins/agentgateway/overlay/t1-mock.yaml --profile sensor up -d tracee
+
+services:
+  gateway:
+    image: ghcr.io/agentgateway/agentgateway@sha256:f64c27c8bd8aa25f07864dab07072026e375f22c6298c2c2d64f7d6c08a24130
+    platform: linux/arm64
+    container_name: t1-mock-gateway
+    command: ["-f", "/config.json"]
+    networks: [t1net]
+    volumes:
+      - ../plugins/agentgateway/config/t1-allow-all.json:/config.json:ro
+      - gateway-logs:/var/log/gateway
+    depends_on: [mcp-http]
+    restart: unless-stopped
+
+  # the decision-stream collector (overlay rule b: auxiliary control-*,
+  # attached to the slot's network): follows the gateway's admin
+  # /debug/trace SSE and persists the vendor rows to the slot's
+  # decision-log volume — the shim's raw_ref evidence source.
+  control-agentgateway-trace:
+    build:
+      context: ..
+      dockerfile: plugins/agentgateway/collector/Dockerfile
+    image: inspection/agentgateway-trace
+    container_name: t1-mock-agentgateway-trace
+    networks: [t1net]
+    environment:
+      AGENTGATEWAY_ADMIN_URL: http://gateway:15000
+      AGENTGATEWAY_TRACE_OUT: /var/log/gateway/agentgateway-trace.jsonl
+      AGENTGATEWAY_TRACE_FOLLOW_SECONDS: "3600"
+    volumes:
+      - gateway-logs:/var/log/gateway
+    depends_on: [gateway]
+    restart: unless-stopped

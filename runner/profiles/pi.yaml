@@ -203,6 +203,59 @@ multiplicity:
   # node fetch pools connections: n http actions may share 1..n connects;
   # observed connect count must be within [min, n_actions]
   http_connects_min: 1
+  # The streamable-HTTP MCP session shape under the agentgateway binding
+  # (2026-11-10, calibrated on the t1-pi EC2 campaign): the replay
+  # adapter's GatewayClient starts at adapter startup, OUTSIDE the window
+  # (harnesses/pi/adapter/replay.ts initCheckGateway: "initialize/session/
+  # tool discovery outside measurement window") — its initialize +
+  # notifications/initialized are 2 pre-window discovery connects; each
+  # in-window tools/call then opens its own connection (the client closes
+  # each connection; multiplicity stays [1, N] over the workload). The
+  # runner's pre-window readiness probe runs its own one-shot session in
+  # the same container (node /opt/inspection/adapter/readiness-probe.mjs):
+  # initialize + notifications/initialized + the denied tools/call = 3
+  # connects, all pre-window; within the window tolerance they land
+  # in-scope and are separated by the calibration as startup, never
+  # counted as workload evidence (the probe is runner plumbing, DESIGN.md
+  # 3 — its pre-window connect must stay outside the kernel window).
+  http_startup_calibration:
+    port: 8090
+    connects_per_startup: 3
+    max_startups_in_window: 2
+    # the pin's scope is BINDING-declared, not design-implied (the checker
+    # finding, 2026-11-11): it applies only when the run's control binding
+    # declares the streamable session shape in its recipe
+    # (plugins/<control>/collect.yaml `session_shape`, threaded by the
+    # runner into the reconciler) AND the design is t1. Design t1 alone
+    # would re-route EVERY t1 run through the session calibration —
+    # including the v0 AGT binding's direct shape (one stateless POST per
+    # call; the retained 2026-10-31 x86 t1 evidence: 1 pooled connect, no
+    # session handshake) and any direct-endpoint run — and fail them;
+    # those stay on the plain pooled range [http_connects_min, n].
+    designs: [t1]
+    session_shapes: [streamable-mcp-session]
+    # pi's client is undici-backed (node fetch): connections POOL — the
+    # pre-window discovery sockets (initialize + notifications, adapter
+    # startup, outside the measurement window) are REUSED by the in-window
+    # tools/calls, so the in-window connect count can be ZERO and the
+    # replay envelope is over ALL of the session's sockets (observed live
+    # 2026-11-10: 2 sockets total for the whole session; a no-pooling run
+    # would give 2 + n). CAVEAT (do not read the envelope as kernel proof
+    # of per-call crossing): for the pooled client the in-window per-call
+    # kernel evidence is limited — the envelope is satisfied by the
+    # pre-window pooled sockets alone (observed live: zero in-window
+    # connects), so per-call crossing rests on R2 (served per-action) +
+    # the gateway's native decisions (C1-C4), never on connect counts.
+    session_connect_allowance: [1, 2]
+    replay_argv: [node, /usr/local/bin/pi]
+    readiness_argv: [node, /opt/inspection/adapter/readiness-probe.mjs]
+    rationale: >
+      The streamable-HTTP MCP gateway session shape, pinned by the harness
+      client code (harnesses/pi/adapter/streamable-mcp-client.mjs
+      GatewayClient.start: initialize + notifications/initialized, one
+      connection per request; readiness-probe.mjs: the same session plus
+      the one denied tools/call). Prefix argv matching: the pi RPC
+      process's argv carries model flags after --mode rpc.
   # raw TCP: one connect per tcp_connect action (no pooling on net.connect)
   tcp_connects_per_action: 1
   # UDP: each datagram may appear twice (egress/loopback capture)

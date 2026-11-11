@@ -102,6 +102,34 @@ class FakeSyscalls:
             return 200, json.dumps(result).encode()
         return 200, b'{"accepted": true}'
 
+    def http_request_full(self, method, url, body=None, headers=None):
+        """The gateway session's transport (syscalls.http_request_full):
+        a streamable-HTTP MCP server's answers — initialize result +
+        Mcp-Session-Id response header, plain-JSON bodies (the SSE shape
+        is covered by the dedicated client tests). Recorded under the same
+        "http_request" label so the existing call assertions hold."""
+        self.calls.append(("http_request", method, url, body,
+                           dict(headers) if headers else None))
+        resp_headers = {"content-type": "application/json",
+                        "mcp-session-id": "sess-1"}
+        if not body:
+            return 200, resp_headers, b"{}"
+        frame = json.loads(body)
+        method_name = frame.get("method")
+        if method_name == "initialize":
+            return 200, resp_headers, json.dumps({
+                "jsonrpc": "2.0", "id": frame["id"],
+                "result": {"protocolVersion": "2025-06-18",
+                            "capabilities": {},
+                            "serverInfo": {"name": "fake",
+                                             "version": "0"}}}).encode()
+        if method_name == "tools/call":
+            return 200, resp_headers, json.dumps({
+                "jsonrpc": "2.0", "id": frame["id"],
+                "result": {"content": [{"type": "text", "text": "ok"}]}
+            }).encode()
+        return 200, resp_headers, b"{}"   # notifications: 200, no body
+
     def pipe(self):
         r, w = self.next_fd, self.next_fd + 1
         self.next_fd += 2
@@ -209,6 +237,19 @@ def install_fake(monkeypatch, fake):
 
 def names(fake):
     return [c[0] for c in fake.calls]
+
+
+def gateway_calls(fake):
+    """The gateway-session POSTs the fake recorded (label http_request): as
+    (method, url, body, headers) tuples, session handshake first."""
+    return [c[1:] for c in fake.calls if c[0] == "http_request"]
+
+
+def tools_call_request(fake):
+    """The single tools/call request of a gateway-routed pair (the session
+    handshake's initialize/notification requests precede it)."""
+    return next(c for c in gateway_calls(fake)
+                if '"tools/call"' in c[2])
 
 
 # ------------------------------------------------------------------- fixtures
@@ -704,9 +745,16 @@ def test_stdio_twin_gateway_route(monkeypatch, spec):
     detail = org.stdio_tool_call(compiled("a001", spec), ctx)
     # no local stdio session on this route
     assert "fork" not in names(fake) and "execv" not in names(fake)
-    method, url, body, headers = next(c[1:] for c in fake.calls
-                                      if c[0] == "http_request")
+    calls = gateway_calls(fake)
+    # the streamable-HTTP session handshake precedes the call: initialize
+    # once, then the tools/call carries the session id the initialize returned
+    assert [json.loads(c[2]).get("method") for c in calls] \
+        == ["initialize", "notifications/initialized", "tools/call"]
+    method, url, body, headers = tools_call_request(fake)
     assert method == "POST" and url == "http://gateway:8090/mcp"
+    # the MCP streamable-HTTP negotiation: both content types acceptable
+    assert headers["Accept"] == "application/json, text/event-stream"
+    assert headers["Mcp-Session-Id"] == "sess-1"
     frame = json.loads(body)
     assert frame["method"] == "tools/call"
     assert frame["jsonrpc"] == "2.0"
@@ -758,7 +806,7 @@ def test_stdio_twin_namespaced_tool_maps_to_bare_name(monkeypatch, spec):
     rec = compiled("a003", spec)
     rec["tool"] = "mcp__toy-mcp-fs__list_directory"   # the namespaced form
     org.stdio_tool_call(rec, ctx)
-    frame = json.loads(next(c[3] for c in fake.calls if c[0] == "http_request"))
+    frame = json.loads(tools_call_request(fake)[2])
     assert frame["params"]["name"] == "list_directory"   # bare name on the wire
 
 
@@ -768,15 +816,23 @@ def test_stdio_twin_gateway_denial_is_an_error(monkeypatch, spec):
     outcome."""
 
     class DenyingGateway(FakeSyscalls):
-        def http_request(self, method, url, body=None, headers=None):
+        def http_request_full(self, method, url, body=None, headers=None):
             self.calls.append(("http_request", method, url, body,
                                dict(headers) if headers else None))
+            resp_headers = {"content-type": "application/json",
+                            "mcp-session-id": "sess-1"}
+            if not body:
+                return 200, resp_headers, b"{}"
             frame = json.loads(body)
-            return 200, json.dumps({
-                "jsonrpc": "2.0", "id": frame["id"],
+            if frame.get("method") == "initialize":
+                return 200, resp_headers, json.dumps({
+                    "jsonrpc": "2.0", "id": frame["id"],
+                    "result": {"protocolVersion": "2025-06-18"}}).encode()
+            return 200, resp_headers, json.dumps({
+                "jsonrpc": "2.0", "id": frame.get("id"),
                 "error": {"code": -32001,
-                           "message": "gateway denied 'write_file': not allowed"}}
-            ).encode()
+                            "message": "gateway denied 'write_file': not allowed"}
+            }).encode()
 
     install_fake(monkeypatch, DenyingGateway())
     plan = {"schema": "mock-harness-plan/1",
@@ -810,9 +866,11 @@ def test_http_twin_gateway_route(monkeypatch, spec):
             "routes": {"http": "gateway", "gateway_url": "http://gateway:8090"}}
     ctx = ctx_for(plan)
     detail = org.http_tool_call(compiled("a011", spec), ctx)
-    method, url, body, headers = next(c[1:] for c in fake.calls
-                                      if c[0] == "http_request")
+    method, url, body, headers = tools_call_request(fake)
     assert method == "POST" and url == "http://gateway:8090/mcp"
+    # the streamable-HTTP session: Accept + the initialize's session id
+    assert headers["Accept"] == "application/json, text/event-stream"
+    assert headers["Mcp-Session-Id"] == "sess-1"
     frame = json.loads(body)
     assert frame["method"] == "tools/call"
     assert frame["params"]["name"] == "post_hook"
@@ -828,10 +886,107 @@ def test_http_twin_a014_shares_the_a011_route(monkeypatch, spec):
             "routes": {"http": "gateway", "gateway_url": "http://gateway:8090"}}
     ctx = ctx_for(plan)
     detail = org.http_tool_call(compiled("a014", spec), ctx)
-    frame = json.loads(next(c[3] for c in fake.calls if c[0] == "http_request"))
+    frame = json.loads(tools_call_request(fake)[2])
     assert frame["params"]["name"] == "post_hook"
     assert frame["params"]["arguments"] == {"body": "policy-deny case"}
     assert detail["tool"] == "post_hook"
+
+
+# ------------------------------------------ the streamable-HTTP session
+
+
+def _sse(payload: dict) -> bytes:
+    return ("event: message\ndata: " + json.dumps(payload) + "\n\n").encode()
+
+
+def test_gateway_session_decodes_sse_framed_responses(monkeypatch):
+    """agentgateway v1.5.0 answers SSE-framed (text/event-stream): the
+    session decodes the data: frame carrying the correlated JSON-RPC id
+    (the pre-guardscope probe's transport.mjs decodeRpc, ported) and
+    captures the session id from the initialize response headers."""
+
+    class SSEGateway(FakeSyscalls):
+        def http_request_full(self, method, url, body=None, headers=None):
+            self.calls.append(("http_request", method, url, body,
+                               dict(headers) if headers else None))
+            ctype = "text/event-stream"
+            if not body:
+                return 200, {"content-type": ctype}, b""
+            frame = json.loads(body)
+            if frame.get("method") == "initialize":
+                payload = {"jsonrpc": "2.0", "id": frame["id"],
+                           "result": {"protocolVersion": "2025-06-18"}}
+            elif frame.get("method") == "tools/call":
+                payload = {"jsonrpc": "2.0", "id": frame["id"],
+                           "result": {"content": [{"type": "text",
+                                                    "text": "ok"}]}}
+            else:
+                return 200, {"content-type": ctype}, b""
+            # a leading keep-alive/foreign frame the decoder must skip
+            body_out = _sse({"jsonrpc": "2.0", "id": 999,
+                             "result": {}}) + _sse(payload)
+            return 200, {"content-type": ctype,
+                         "mcp-session-id": "sess-sse"}, body_out
+
+    fake = install_fake(monkeypatch, SSEGateway())
+    session = org.GatewaySession("http://gateway:8090")
+    session.start()
+    assert session.session_id == "sess-sse"
+    status, row = session.tools_call("post_hook", {"body": "x"})
+    assert status == 200
+    assert row["result"]["content"][0]["text"] == "ok"
+    # every POST negotiated both content types (agentgateway's 406
+    # requirement) and the non-initialize POSTs carried the session id
+    calls = gateway_calls(fake)
+    assert all(c[3]["Accept"] == "application/json, text/event-stream"
+               for c in calls)
+    assert calls[-1][3]["Mcp-Session-Id"] == "sess-sse"
+
+
+def test_gateway_session_denial_is_data_never_raised(monkeypatch):
+    """A gateway that rejects the call at HTTP level (agentgateway's 403 on
+    a deny) surfaces as (status, error row) — a denial is a decision the
+    caller records, never a transport error."""
+
+    class RejectingGateway(FakeSyscalls):
+        def http_request_full(self, method, url, body=None, headers=None):
+            self.calls.append(("http_request", method, url, body,
+                               dict(headers) if headers else None))
+            if not body:
+                return 200, {"content-type": "application/json"}, b""
+            frame = json.loads(body)
+            if frame.get("method") == "initialize":
+                return 200, {"content-type": "application/json",
+                             "mcp-session-id": "sess-403"}, json.dumps(
+                    {"jsonrpc": "2.0", "id": frame["id"],
+                     "result": {"protocolVersion": "2025-06-18"}}).encode()
+            if frame.get("method") != "tools/call":
+                return 200, {"content-type": "application/json"}, b""
+            return 403, {"content-type": "application/json",
+                         "mcp-session-id": "sess-403"}, b"denied by policy"
+
+    install_fake(monkeypatch, RejectingGateway())
+    session = org.GatewaySession("http://gateway:8090")
+    session.start()
+    status, row = session.tools_call("__readiness_check__", {})
+    assert status == 403
+    assert row == {"error": {"code": 403, "message": "denied by policy"}}
+
+
+def test_decode_sse_or_json_shapes():
+    # plain JSON bodies decode directly; SSE bodies pick the frame with a
+    # JSON-RPC id; an SSE body with no correlated frame is an error, never
+    # a guess
+    row = org._decode_sse_or_json(b'{"jsonrpc": "2.0", "id": 7, "ok": 1}',
+                                  "application/json")
+    assert row["id"] == 7
+    row = org._decode_sse_or_json(
+        _sse({"jsonrpc": "2.0", "id": 3, "result": {}}),
+        "text/event-stream; charset=utf-8")
+    assert row["id"] == 3
+    with pytest.raises(org.SpawnError, match="no correlated MCP JSON-RPC response"):
+        org._decode_sse_or_json(b"event: message\ndata: {}\n\n",
+                               "text/event-stream")
 
 
 def test_daemon_and_outliving_join_results(monkeypatch, tmp_path, spec):

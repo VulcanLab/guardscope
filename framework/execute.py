@@ -53,8 +53,8 @@ from framework.experiment import (  # noqa: E402
     ResolvedExperiment, RunDescriptor, load_experiment, resolve,
 )
 from framework.records import (  # noqa: E402
-    V0_DEFAULT_PLUGIN, V0_DEFAULT_PRODUCT, map_audit_entries,
-    now_rfc3339_ms,
+    RecordValidationError, V0_DEFAULT_PLUGIN, V0_DEFAULT_PRODUCT,
+    map_audit_entries, now_rfc3339_ms,
 )
 from framework import delegation as delegation_lib  # noqa: E402
 from framework.overlay import MOCK_HARNESS_ID, overlay_abs_path  # noqa: E402
@@ -107,9 +107,21 @@ ENFORCEMENT_CONFIG_FILES = {
 
 # Harness-intrinsic (t6): the in-process policy mounted into the harness
 # adapter's container; pi and openclaw ship separate copies.
-def _enforcement_config_file(design: str, harness: str):
+def _enforcement_config_file(design: str, harness: str,
+                              control: str | None = None):
+    """The deployed enforcement config of THIS run's fixture: the control
+    binding's own artifact when it declares one (the binding's recipe,
+    plugins/<control>/collect.yaml `policy` — the config the overlay mounts,
+    the file whose sha256 the shim stamps as policy_hash), else the design's
+    default table (the v0 AGT binding, which ships no recipe, keeps its
+    gateway/policy.yaml unchanged)."""
     if design == "t6":
         return f"harnesses/{harness}/config/t6-policy.json"
+    if control is not None:
+        from framework.contracts import load_collect_recipe
+        recipe = load_collect_recipe(control, design)
+        if recipe is not None and recipe.get("policy"):
+            return f"plugins/{control}/{recipe['policy']}"
     return ENFORCEMENT_CONFIG_FILES.get(design)
 
 # Harness record streams (t4/t5/t6): the decision log is written by the
@@ -312,7 +324,9 @@ def fixture_fingerprint(descriptor: RunDescriptor) -> dict:
             "path": descriptor.overlay,
             "sha256": sha256_file(overlay),
         } if overlay.is_file() else None
-    config_rel = _enforcement_config_file(descriptor.design, descriptor.harness)
+    config_rel = _enforcement_config_file(descriptor.design,
+                                           descriptor.harness,
+                                           descriptor.control)
     config_path = REPO_ROOT / config_rel if config_rel else None
     if config_path is not None and config_path.is_file():
         fingerprint["enforcement_config"] = {
@@ -383,7 +397,8 @@ def default_run_executor(descriptor: RunDescriptor, run_id: str,
     summary = run_mod.run_design(descriptor.harness, descriptor.design,
                                  run_id, runs_dir=Path(out_root),
                                  sensor=sensor, workdir=workdir,
-                                 workload=descriptor.workload)
+                                 workload=descriptor.workload,
+                                 control=descriptor.control)
     out_dir = Path(summary["out_dir"])
     run_record_path = out_dir / "run-record.json"
     run_record = (json.loads(run_record_path.read_text(encoding="utf-8"))
@@ -512,15 +527,56 @@ def _projection_diff(reported: dict, recomputed: dict) -> list[str]:
     return diffs
 
 
+def _is_decision_record_line(line: str) -> bool:
+    """Whether one decisions.jsonl line is decision-record/1 (not a v0
+    AuditEntry): the schema-1 record stamp plus the record identity fields.
+    The same discriminator framework/reconcile.py load_decisions uses for
+    its schema-1 branch."""
+    try:
+        entry = json.loads(line)
+    except (json.JSONDecodeError, TypeError):
+        return False
+    return (isinstance(entry, dict) and entry.get("schema") == 1
+            and isinstance(entry.get("record_id"), str)
+            and "action_class" in entry
+            and "enforcement_point" in entry)
+
+
 def _map_decision_records(outcome: dict, run_id: str,
                           out_dir: Path) -> tuple[list[dict], list[str]]:
-    """Map the run's raw v0 AuditEntry decision log to decision-record/1
-    (DESIGN.md 4: the v0 format stays a valid input via the declared
-    reader-side mapping). Malformed lines are kept as parse problems so the
-    recomputed C1 sees exactly what the run's own C1 saw."""
+    """Map the run's raw decision log to decision-record/1 (DESIGN.md 4).
+    Two shapes arrive here, distinguished BY SHAPE, never by plugin
+    identity (DESIGN.md 2):
+
+    - v0 AuditEntry lines (the default gateway collection): mapped through
+      the declared reader-side mapping (map_audit_entries); malformed lines
+      are kept as parse problems so the recomputed C1 sees exactly what the
+      run's own C1 saw.
+    - decision-record/1 lines (the ingested-binding collection and the t7
+      kernel control's stream): kept VERBATIM — the records are already the
+      canonical form, and re-mapping them through the v0 reader would
+      relabel their producer identity (the shim's producer/product fields
+      are the binding's own claims) and drop their action_id/policy/
+      evidence. A line that does not validate is a parse problem, never a
+      silent drop."""
     log = outcome.get("decision_log")
     if not log:
         return [], []
+    lines = [line.strip() for line in
+             Path(log).read_text(encoding="utf-8").splitlines()
+             if line.strip()]
+    if lines and all(_is_decision_record_line(line) for line in lines):
+        from framework.records import validate_decision_record
+        records, problems = [], []
+        for i, line in enumerate(lines, 1):
+            record = json.loads(line)
+            try:
+                validate_decision_record(record)
+            except RecordValidationError as exc:
+                problems.append(f"{Path(log).name} line {i}: {exc}")
+                continue
+            records.append(record)
+        return records, problems
     entries, problems = reconcile_lib.load_decisions(Path(log))
     stream = dict(outcome.get("decision_stream") or {})
     slot_id = stream.get("slot_id", "gateway")

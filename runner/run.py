@@ -66,6 +66,9 @@ import reconcile as rec_mod  # noqa: E402
 import runrecord as rr_mod  # noqa: E402
 import coverage as cov_mod  # noqa: E402
 import outcomes as out_mod  # noqa: E402
+from framework.contracts import (  # noqa: E402
+    READINESS_TOOL, load_collect_recipe, recipe_artifact_path,
+)
 from framework.workdir import (  # noqa: E402
     resolve_workdir, staging_dir, compile_cache,
 )
@@ -482,7 +485,8 @@ def trigger_replay(harness: str, run_id: str, timeout_s: float,
     if cfg["trigger"] == "pi":
         import trigger_pi
         result = trigger_pi.run_replay(compiled, replay_dir, cfg["container"], timeout_s,
-                                       design=cfg.get("design", "t0"), run_id=run_id)
+                                       design=cfg.get("design", "t0"), run_id=run_id,
+                                       gateway_client_module=cfg.get("gateway_client_module"))
         return result, replay_dir / "replay-log.jsonl"
 
     import trigger_openclaw as to
@@ -729,6 +733,177 @@ def pull_gateway_log(out_dir: Path, prefix: str, subdir: str = "gateway") -> Pat
     return d
 
 
+# --- ingested-binding collection (plugins/<control>/collect.yaml) --------------
+#
+# The per-control enforcement-point collection (the checker finding: the v0
+# path docker-execs the gateway container, which is distroless for
+# agentgateway — cat silently yields an empty artifact). A binding declares
+# its recipe (framework/contracts.py load_collect_recipe); a run with no
+# recipe keeps the default v0 collection above, unchanged.
+
+# the collector appends vendor rows as its SSE stream delivers them; the
+# replay window's last rows can still be in flight when the replay returns
+# (the same lag discipline as the Tracee flush grace)
+VENDOR_LOG_FLUSH_GRACE_S = 2.0
+# the run-scope margin below the readiness probe's issuance time: the
+# probe's OWN deny row is received a few ms after the probe starts, and the
+# collector's capture clock is the host's (same kernel clock), so the
+# margin only guards write-lag jitter, never a stale run's rows
+RUN_SCOPE_MARGIN_NS = 1_000_000_000
+
+
+def gateway_readiness_probe(harness: str, cfg: dict) -> dict:
+    """Issue the runner's ONE pre-window readiness request through the
+    topology (framework/contracts.py READINESS_TOOL convention; DESIGN.md 3
+    ready(): enforcement must be PROVEN, not assumed). The deployed config
+    carries a dedicated deny rule for the reserved tool (the binding's
+    recipe declares `readiness: true`); the probe reports the refusal as
+    JSON. A refusal here proves the gateway evaluates requests; the deny
+    DECISION RECORD in the collected stream (verified after collection) is
+    the record-path half of the gate. Raises when the gateway did not
+    refuse the readiness call — the run must never start replaying against
+    an enforcement point that is not enforcing."""
+    if harness == "mock-harness":
+        proc = sh(["docker", "exec",
+                   "-e", "PYTHONDONTWRITEBYTECODE=1",   # the repo mount is ro
+                   "-w", MOCK_HARNESS_REPO_MOUNT,
+                   cfg["container"], "python3", "-m",
+                   "mock_harness.gateway_probe"], check=True)
+    elif harness == "pi":
+        proc = sh(["docker", "exec", cfg["container"], "node",
+                   "/opt/inspection/adapter/readiness-probe.mjs"],
+                  check=True)
+    else:
+        raise RuntimeError(
+            f"no readiness probe for harness {harness!r} (the ingested "
+            f"binding's readiness gate is wired for mock-harness and pi)")
+    try:
+        report = json.loads(proc.stdout.strip() or "{}")
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"readiness probe output not JSON: {exc}\n"
+                            f"{proc.stdout!r}") from exc
+    if not report.get("denied"):
+        raise RuntimeError(
+            f"enforcement readiness NOT proven: the gateway did not refuse "
+            f"the reserved readiness tool {READINESS_TOOL!r} "
+            f"({json.dumps(report)}) — the deployed config must carry the "
+            f"dedicated deny rule (DESIGN.md 3 ready())")
+    return report
+
+
+def pull_ingested_log(out_dir: Path, control: str, prefix: str, run_id: str,
+                       recipe: dict, *,
+                       probe_started_ns: int | None = None,
+                       probe_report: dict | None = None) -> Path:
+    """Collect an ingested binding's enforcement-point record per control
+    (the binding's recipe, plugins/<control>/collect.yaml):
+
+      1. cat the vendor rows from the binding's collector container (the
+         control image may be distroless; the collector mounts the slot's
+         log volume), scoped to THIS run (the volume accumulates rows across
+         runs — rows below the readiness probe's issuance time are earlier
+         runs' and are excluded, counted, never silently dropped);
+      2. run the plugin shim -> gateway/decision-records.jsonl
+         (decision-record/1; the shim's stderr problems are retained as
+         gateway/shim-problems.txt);
+      3. write the same records — minus the readiness probe's pre-window
+         record (runner plumbing, not workload traffic; it stays in
+         decision-records.jsonl for audit) — as gateway/decisions.jsonl, the
+         C1-C4 coverage input (the decision-record/1-in-decisions.jsonl
+         shape the t7 kernel control already uses, framework/reconcile.py
+         load_decisions' schema-1 branch);
+      4. copy the deployed config as gateway/policy.json (the artifact the
+         binding mounts — the fixture fingerprint hashes the same file).
+
+    The readiness gate's record half: the translated stream MUST contain a
+    deny record for the reserved READINESS_TOOL, else the run fails loudly
+    (a started container is not a ready one)."""
+    d = out_dir / "gateway"
+    d.mkdir(parents=True, exist_ok=True)
+    time.sleep(VENDOR_LOG_FLUSH_GRACE_S)
+    container = f"{prefix}-{recipe['collect_container']}"
+    proc = docker_exec(container, f"cat {recipe['vendor_log_path']} "
+                                  f"2>/dev/null", check=False)
+    rows = [line for line in (proc.stdout or "").splitlines()
+            if line.strip()]
+    if not rows:
+        raise RuntimeError(
+            f"control {control}: collector {container} returned no vendor "
+            f"rows; the collector container or its follow window may be "
+            f"down (vendor_log_path={recipe['vendor_log_path']!r})")
+    scoped, excluded = [], 0
+    if probe_started_ns is not None:
+        lo = probe_started_ns - RUN_SCOPE_MARGIN_NS
+        for line in rows:
+            try:
+                received = json.loads(line).get("received_epoch_ns") or 0
+            except json.JSONDecodeError:
+                received = 0          # kept: the shim reports it as a problem
+            if received >= lo:
+                scoped.append(line)
+            else:
+                excluded += 1
+    else:
+        scoped = rows
+    (d / recipe["vendor_log"]).write_text(
+        "\n".join(scoped) + ("\n" if scoped else ""), encoding="utf-8")
+    print(f"[{run_id}] ingested control {control}: {len(scoped)} vendor "
+          f"row(s) in this run's scope ({excluded} row(s) of earlier runs "
+          f"excluded, retained on the slot volume)", file=sys.stderr)
+
+    # the shim: vendor rows -> decision-record/1 (problems to stderr)
+    records_path = d / "decision-records.jsonl"
+    policy_path = recipe_artifact_path(control, recipe["policy"])
+    proc = sh([sys.executable, str(recipe_artifact_path(control,
+                                                        recipe["shim"])),
+               "--vendor-log", str(d / recipe["vendor_log"]),
+               "--out", str(records_path), "--run-id", run_id,
+               "--policy-file", str(policy_path),
+               "--source", recipe["vendor_log"]], check=False)
+    (d / "shim-problems.txt").write_text(proc.stderr or "",
+                                          encoding="utf-8")
+    if proc.returncode != 0:
+        raise RuntimeError(f"control {control}: shim failed "
+                            f"({proc.returncode}): {proc.stderr}")
+
+    records = [json.loads(line)
+               for line in records_path.read_text(encoding="utf-8")
+               .splitlines() if line.strip()]
+    # the readiness gate's record half: the deny decision must exist
+    readiness = [r for r in records if r.get("tool") == READINESS_TOOL]
+    if recipe.get("readiness") and (
+            not readiness or any(r.get("decision") != "deny"
+                                for r in readiness)):
+        raise RuntimeError(
+            f"enforcement readiness NOT proven: no deny decision record "
+            f"for the reserved readiness tool {READINESS_TOOL!r} in the "
+            f"collected stream ({len(readiness)} record(s), "
+            f"decisions {[r.get('decision') for r in readiness]})")
+    if probe_report is not None:
+        (d / "readiness-probe.json").write_text(
+            json.dumps(probe_report, indent=1, sort_keys=True) + "\n",
+            encoding="utf-8")
+
+    # the C1-C4 coverage input: the same records, minus the readiness
+    # probe's pre-window record (runner-issued plumbing — its decision is
+    # retained in decision-records.jsonl and its exclusion is counted here,
+    # never silent)
+    coverage_records = [r for r in records if r.get("tool") != READINESS_TOOL]
+    if len(coverage_records) != len(records):
+        print(f"[{run_id}] excluding {len(records) - len(coverage_records)} "
+              f"readiness record(s) from the coverage input (pre-window "
+              f"runner probe, retained in decision-records.jsonl)",
+              file=sys.stderr)
+    (d / "decisions.jsonl").write_text(
+        "".join(json.dumps(r, sort_keys=True) + "\n"
+                for r in coverage_records), encoding="utf-8")
+
+    # the deployed config as the run's auditable policy artifact (run_one's
+    # policy plumbing falls back to policy.json when policy.yaml is absent)
+    shutil.copyfile(policy_path, d / "policy.json")
+    return d
+
+
 def pull_control_log(out_dir: Path, design: str) -> Path:
     """T7: the enforcement-point record is the kernel CONTROL's stream —
     the control service's shim output on the control-logs volume
@@ -822,7 +997,8 @@ def assemble_sensorless(spec_path: Path, profile: dict, replay: dict,
                         gateway_log: Path | None = None,
                         gateway_policy: Path | None = None,
                         window_tolerance_ns: int = 1_000_000_000,
-                        detached_reports: dict | None = None
+                        detached_reports: dict | None = None,
+                        session_shape: str | None = None
                         ) -> tuple[dict, dict, dict]:
     """Assemble the run record + manifest for a degraded no-sensor run
     (DESIGN.md 9: "Degraded no-eBPF mode ... every output it produces is
@@ -901,6 +1077,10 @@ def assemble_sensorless(spec_path: Path, profile: dict, replay: dict,
         "prevented_classes": sorted(
             rec_mod.PREVENTED_CLASSES.get(design, set())),
         "profile": profile["profile"],
+        # the binding-declared session shape (the recipe's `session_shape`):
+        # recorded as a run fact so a re-reconcile of this run dir applies
+        # the same calibration scoping even without the binding in the loop
+        **({"session_shape": session_shape} if session_shape else {}),
         "container_id": container_id,
         "sensor": {"present": False, "mode": "no-sensor",
                    "note": NO_SENSOR_NOTE},
@@ -943,6 +1123,7 @@ def assemble_sensorless(spec_path: Path, profile: dict, replay: dict,
         "harness": harness,
         "design": design,
         "created": created,
+        **({"session_shape": session_shape} if session_shape else {}),
         "spec_sha256": run_record["spec"]["canonical_sha256"],
         "mapping_version": pinned["mapping_version"],
         "sensor_present": False,
@@ -972,10 +1153,16 @@ def assemble_sensorless(spec_path: Path, profile: dict, replay: dict,
 def run_one(harness: str, run_id: str, runs_dir: Path, timeout_s: float | None = None,
             design: str = "t0", sensor: bool = True,
             workdir: Path | None = None,
-            workload: str = DEFAULT_WORKLOAD) -> dict:
+            workload: str = DEFAULT_WORKLOAD,
+            control: str | None = None) -> dict:
     """One full run. The workload name selects the canonical trace spec
     to compile, stage and reconcile against (framework/workloads.py;
-    baseline-15 = the unchanged default)."""
+    baseline-15 = the unchanged default). control, when the run binds one
+    (the experiment layer's run descriptor), drives the per-control
+    enforcement-point collection: a binding whose recipe declares the
+    ingested path (plugins/<control>/collect.yaml) is collected through
+    its collector + shim with the readiness gate; None keeps the default
+    v0 collection unchanged."""
     cfg = harness_cfg(harness, design, workdir=workdir)
     prefix = cfg["prefix"]
     tracee = f"{prefix}-tracee"
@@ -1035,6 +1222,29 @@ def run_one(harness: str, run_id: str, runs_dir: Path, timeout_s: float | None =
             raise RuntimeError(
                 f"egress jail {name} did not apply cleanly "
                 f"(wait rc={proc.returncode}, container exit={code!r})")
+
+    # the run's control binding (plugins/<control>/collect.yaml): a recipe
+    # selects the ingested collection path (vendor rows + shim) and the
+    # readiness gate (DESIGN.md 3 ready(): enforcement proven, not assumed)
+    recipe = None
+    if control is not None and design != "t0":
+        recipe = load_collect_recipe(control, design)
+    if recipe is not None:
+        module = (recipe.get("harness_client_modules") or {}).get(harness)
+        if module:
+            cfg["gateway_client_module"] = module
+    probe_started_ns = None
+    probe_report = None
+    if recipe is not None and recipe.get("readiness"):
+        print(f"[{run_id}] gating on enforcement readiness: one pre-window "
+              f"readiness request for {READINESS_TOOL!r} through the "
+              f"topology ...", file=sys.stderr)
+        probe_started_ns = time.time_ns()
+        probe_report = gateway_readiness_probe(harness, cfg)
+        print(f"[{run_id}] readiness: the gateway refused the reserved "
+              f"tool (status {probe_report.get('status')}); the deny "
+              f"decision record is verified in the collected stream",
+              file=sys.stderr)
 
     print(f"[{run_id}] replaying {harness} ({design}) ...", file=sys.stderr)
     result, replay_log_src = trigger_replay(harness, run_id, timeout_s, cfg)  # noqa: E501
@@ -1233,7 +1443,16 @@ def run_one(harness: str, run_id: str, runs_dir: Path, timeout_s: float | None =
     pull_target_logs(out_dir / "target-logs", cfg)
 
     # enforcement-point record + coverage (t1+; T1-4 computation in runrecord)
-    if DESIGNS[design].get("enforcement_record") == "harness":
+    if recipe is not None:
+        # the bound control's ingested path (per-control collection; the
+        # window scopes the vendor rows to this run — the replay result's
+        # window is the measurement window, the probe start the pre-window
+        # scope floor)
+        gateway_dir = pull_ingested_log(
+            out_dir, control, prefix, run_id, recipe,
+            probe_started_ns=probe_started_ns,
+            probe_report=probe_report)
+    elif DESIGNS[design].get("enforcement_record") == "harness":
         gateway_dir = pull_harness_log(out_dir, harness,
                                        DESIGNS[design].get("harness_policy"),
                                        replay_dir=cfg["replay_dir"])
@@ -1250,6 +1469,11 @@ def run_one(harness: str, run_id: str, runs_dir: Path, timeout_s: float | None =
 
     # reconcile + run record (C7/C8 libraries; run-record written even on fail)
     profile = rec_mod.load_profile(HERE / "runner" / "profiles" / f"{harness}.yaml")
+    # the binding-declared gateway session shape (the recipe's
+    # `session_shape`): what the profile's http_startup_calibration pin
+    # gates on — None (no binding / no declaration) keeps the base
+    # pooled-connect range, exactly the pre-calibration path
+    session_shape = (recipe or {}).get("session_shape")
     if sensor:
         run_record, manifest, report = rr_mod.assemble(
             spec, profile, rec_mod.load_replay(out_dir / "replay-result.json"),
@@ -1263,7 +1487,8 @@ def run_one(harness: str, run_id: str, runs_dir: Path, timeout_s: float | None =
                             else None) if gateway_dir else None,
             window_tolerance_ns=int(profile.get("window_tolerance_ns", 1_000_000_000)),
             window_end_epoch_ns=f9_collection_end_ns,
-            detached_reports=f9_reports)
+            detached_reports=f9_reports,
+            session_shape=session_shape)
     else:
         # degraded no-eBPF mode: the kernel-dependent assembly is replaced
         # by the sensorless one (R1-R5 skipped-with-note, outcomes labeled
@@ -1278,7 +1503,8 @@ def run_one(harness: str, run_id: str, runs_dir: Path, timeout_s: float | None =
                             else gateway_dir / "policy.json" if (gateway_dir / "policy.json").is_file()
                             else None) if gateway_dir else None,
             window_tolerance_ns=int(profile.get("window_tolerance_ns", 1_000_000_000)),
-            detached_reports=f9_reports)
+            detached_reports=f9_reports,
+            session_shape=session_shape)
     artifacts = {
         "replay-result": out_dir / "replay-result.json",
         "replay-log": out_dir / "replay-log.jsonl",
@@ -1351,7 +1577,8 @@ def run_design(harness: str, design: str, run_id: str,
                timeout_s: float | None = None,
                sensor: bool = True,
                workdir: Path | None = None,
-               workload: str = DEFAULT_WORKLOAD) -> dict:
+               workload: str = DEFAULT_WORKLOAD,
+               control: str | None = None) -> dict:
     """Minimal programmatic entry for one full run: validate the harness +
     design pairing, then delegate to run_one with the prepared defaults.
     The CLI keeps its own argument handling and calls run_one exactly as
@@ -1363,7 +1590,11 @@ def run_design(harness: str, design: str, run_id: str,
     replays (framework/workloads.py; baseline-15 = the unchanged
     default). The writable artifacts (staging, compile cache,
     and the run outputs when runs_dir is omitted) derive from the workdir
-    (framework/workdir.py: --workdir/GUARDSCOPE_WORKDIR > cwd)."""
+    (framework/workdir.py: --workdir/GUARDSCOPE_WORKDIR > cwd). control is
+    the run's selected control binding (the experiment layer's run
+    descriptor): a binding whose collect.yaml recipe declares the ingested
+    path is collected per control with the readiness gate; None keeps the
+    default v0 collection unchanged."""
     if harness not in HARNESSES:
         raise ValueError(f"unknown harness {harness!r} "
                          f"(known: {sorted(HARNESSES)})")
@@ -1372,7 +1603,7 @@ def run_design(harness: str, design: str, run_id: str,
     return run_one(harness, run_id,
                    Path(runs_dir) if runs_dir is not None
                    else wd / "runs", timeout_s, design, sensor=sensor,
-                   workdir=wd, workload=workload)
+                   workdir=wd, workload=workload, control=control)
 
 
 # --- reproducibility (rerun) ------------------------------------------------------
@@ -1894,12 +2125,19 @@ def main() -> int:
         window_end = (int(effective["end"])
                       if isinstance(effective, dict) and effective.get("end")
                       else None)
+        # the binding-declared session shape the ORIGINAL run reconciled
+        # under (recorded as a run fact): the calibration scoping must
+        # reproduce, never silently drop — an agentgateway run re-merged
+        # without its shape would judge the session stream against the
+        # plain pooled range and fail spuriously
+        session_shape = prev_record.get("session_shape")
         detached_reports = out_mod.load_detached_reports(d)
         run_record, manifest, report = rr_mod.assemble(
             spec, profile, rec_mod.load_replay(d / "replay-result.json"),
             rec_mod.load_mapped(d / "mapped-actions.jsonl"),
             rec_mod.load_target_logs([str(d / "target-logs")]),
             cid, versions, args.harness, run_id, design=args.design,
+            session_shape=session_shape,
             gateway_log=gateway_log, gateway_policy=gateway_policy,
             window_tolerance_ns=int(profile.get("window_tolerance_ns", 1_000_000_000)),
             window_end_epoch_ns=window_end,

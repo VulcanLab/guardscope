@@ -129,7 +129,8 @@ def assemble(spec_path: Path, profile: dict, replay: dict, mapped: list[dict],
              gateway_policy: Path | None = None,
              window_tolerance_ns: int = 1_000_000_000,
              window_end_epoch_ns: int | None = None,
-             detached_reports: dict | None = None) -> tuple[dict, dict, dict]:
+             detached_reports: dict | None = None,
+             session_shape: str | None = None) -> tuple[dict, dict, dict]:
     """Run reconciliation and build (run_record, manifest, report).
 
     design != t0 additionally computes the inspection-coverage section
@@ -148,6 +149,7 @@ def assemble(spec_path: Path, profile: dict, replay: dict, mapped: list[dict],
     report = rec_mod.Reconciler(
         rec_mod.load_spec(spec_path), profile, replay, mapped,
         target_logs, container_id, design=design,
+        session_shape=session_shape,
         window_end_epoch_ns=window_end_epoch_ns).run()
 
     sys.path.insert(0, str(HERE / "trace"))
@@ -198,6 +200,12 @@ def assemble(spec_path: Path, profile: dict, replay: dict, mapped: list[dict],
         "design": design,
         "prevented_classes": sorted(rec_mod.PREVENTED_CLASSES.get(design, set())),
         "profile": profile["profile"],
+        # the binding-declared gateway session shape (the control binding
+        # recipe's `session_shape`): the fact the harness profiles'
+        # http_startup_calibration pins gate on — recorded so a
+        # re-reconciliation of this run reproduces the same calibration
+        # scoping (absent = the run's binding declared none)
+        **({"session_shape": session_shape} if session_shape else {}),
         "container_id": container_id,
         "spec": {
             "name": report["spec"]["name"],
@@ -236,6 +244,7 @@ def assemble(spec_path: Path, profile: dict, replay: dict, mapped: list[dict],
         "harness": harness,
         "design": design,
         "created": run_record["created"],
+        **({"session_shape": session_shape} if session_shape else {}),
         "spec_sha256": run_record["spec"]["canonical_sha256"],
         "mapping_version": pinned["mapping_version"],
         "reconciliation": report["status"],
@@ -285,6 +294,10 @@ def main() -> int:
                     help="decisions.jsonl from the enforcement point (t1+)")
     ap.add_argument("--gateway-policy", type=Path, default=None,
                     help="deployed gateway policy.yaml (manifest-hashed, t1+)")
+    ap.add_argument("--session-shape", default=None,
+                    help="the control binding recipe's declared gateway "
+                         "session shape (collect.yaml `session_shape`; the "
+                         "http_startup_calibration pins gate on it)")
     ap.add_argument("--window-tolerance-ns", type=int, default=1_000_000_000)
     ap.add_argument("--out-dir", type=Path, required=True)
     args = ap.parse_args()
@@ -302,7 +315,8 @@ def main() -> int:
         args.spec, profile, replay, mapped, target_logs, args.container_id,
         versions, args.harness, run_id, design=args.design,
         gateway_log=args.gateway_log, gateway_policy=args.gateway_policy,
-        window_tolerance_ns=args.window_tolerance_ns)
+        window_tolerance_ns=args.window_tolerance_ns,
+        session_shape=args.session_shape)
 
     artifacts = {
         "tracee-events": args.tracee_raw,
