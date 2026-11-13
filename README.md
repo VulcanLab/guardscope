@@ -152,6 +152,22 @@ The fixture fingerprint records the base and overlay hashes separately, so your 
 - `docs/shim-guide.md`: translating a control's vendor log into `decision-record/1` records, and verifying the translation with the L1 conformance run.
 - `docs/measure-your-control.md`: the onboarding walk-through for bringing a control to measurement: manifest, binding overlay, validation, measurement, and reading your coverage column honestly.
 
+## Citation
+
+If you use guardscope, please cite the accompanying paper, [guardscope: Measuring Which Actions Runtime Controls Check in LLM Agent Systems](https://arxiv.org/abs/2611.15223), for more details:
+
+```bibtex
+@misc{guardscope,
+      title={guardscope: Measuring Which Actions Runtime Controls Check in LLM Agent Systems},
+      author={Kentaroh Toyoda and Alex Leung and Bhuvaneswari U},
+      year={2026},
+      eprint={2611.15223},
+      archivePrefix={arXiv},
+      primaryClass={cs.AI},
+      url={https://arxiv.org/abs/2611.15223},
+}
+```
+
 ## License
 
 Apache-2.0 (see `LICENSE`).
